@@ -95,6 +95,7 @@ DATABASES = {
         'HOST': 'localhost',  # o la IP del contenedor/WSL
         'PORT': '5432',
     }
+    
 }
 
 # Password validation
