@@ -41,6 +41,7 @@ INSTALLED_APPS = [
 
     # Third party
     'rest_framework',
+    'mozilla_django_oidc',
 
     # Módulos de Global Exchange
     'apps.usuarios',
@@ -142,3 +143,10 @@ MAILERS = {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
     },
 }
+
+# Autenticación OIDC con Keycloak
+AUTHENTICATION_BACKENDS = (
+    'apps.usuarios.backends.CustomOIDCBackend',
+    'django.contrib.auth.backends.ModelBackend',
+)
+
