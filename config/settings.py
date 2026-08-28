@@ -142,3 +142,9 @@ MAILERS = {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
     },
 }
+
+
+KEYCLOAK_SERVER_URL = "http://localhost:8080/"
+KEYCLOAK_REALM = "GlobalExchange"
+KEYCLOAK_ADMIN_USER = "admin"
+KEYCLOAK_ADMIN_PASSWORD = "admin"
