@@ -15,4 +15,7 @@ urlpatterns = [
     path('api/facturacion/', include('apps.facturacion.urls')),
     path('api/notificaciones/', include('apps.notificaciones.urls')),
     path('api/reportes/', include('apps.reportes.urls')),
+
+    # Autenticación Keycloak / OpenID Connect
+    path('oidc/', include('mozilla_django_oidc.urls')),
 ]
