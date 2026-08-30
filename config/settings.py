@@ -41,6 +41,7 @@ INSTALLED_APPS = [
 
     # Third party
     'rest_framework',
+    'mozilla_django_oidc',
 
     # Módulos de Global Exchange
     'apps.usuarios',
@@ -95,6 +96,7 @@ DATABASES = {
         'HOST': 'localhost',  # o la IP del contenedor/WSL
         'PORT': '5432',
     }
+    
 }
 
 # Password validation
@@ -142,3 +144,45 @@ MAILERS = {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
     },
 }
+
+# Django REST Framework
+# https://www.django-rest-framework.org/api-guide/settings/
+
+REST_FRAMEWORK = {
+    # TODO: reemplazar por autenticación/permisos vía Keycloak (RF4) cuando
+    # esté disponible el IAM centralizado.
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.AllowAny',
+    ],
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+        'rest_framework.renderers.BrowsableAPIRenderer',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 20,
+}
+
+
+# Autenticación OIDC con Keycloak
+AUTHENTICATION_BACKENDS = (
+    'apps.usuarios.backends.CustomOIDCBackend',
+    'django.contrib.auth.backends.ModelBackend',
+)
+
+OIDC_RP_CLIENT_ID = 'django-backend'
+OIDC_RP_CLIENT_SECRET = 'tNPOCqVu0s7H09kQgrGYLhXuGCPC72bd5vYbdeZ82WEEBzsP7Zi47OJ9tsIuIvpAjLYOa4BTnVBNEw1JnKQvel'
+
+OIDC_OP_AUTHORIZATION_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/openid-connect/auth'
+OIDC_OP_TOKEN_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/openid-connect/token'
+OIDC_OP_USER_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/openid-connect/userinfo'
+OIDC_OP_JWKS_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/openid-connect/certs'
+
+OIDC_RP_SIGN_ALGO = 'RS256'
+LOGIN_REDIRECT_URL = '/'
+LOGOUT_REDIRECT_URL = '/'
+
+# Acceso administrativo a Keycloak (para creación de usuarios vía API)
+KEYCLOAK_SERVER_URL = "http://localhost:8080/"
+KEYCLOAK_REALM = "GlobalExchange"
+KEYCLOAK_ADMIN_USER = "admin"
+KEYCLOAK_ADMIN_PASSWORD = "admin"
