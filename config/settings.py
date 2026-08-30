@@ -179,3 +179,9 @@ OIDC_OP_JWKS_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/op
 OIDC_RP_SIGN_ALGO = 'RS256'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/'
+
+# Acceso administrativo a Keycloak (para creación de usuarios vía API)
+KEYCLOAK_SERVER_URL = "http://localhost:8080/"
+KEYCLOAK_REALM = "GlobalExchange"
+KEYCLOAK_ADMIN_USER = "admin"
+KEYCLOAK_ADMIN_PASSWORD = "admin"
