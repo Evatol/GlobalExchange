@@ -41,6 +41,7 @@ INSTALLED_APPS = [
 
     # Third party
     'rest_framework',
+    'mozilla_django_oidc',
 
     # Módulos de Global Exchange
     'apps.usuarios',
@@ -51,8 +52,6 @@ INSTALLED_APPS = [
     'apps.facturacion',
     'apps.notificaciones',
     'apps.reportes',
-
-    'mozilla_django_oidc',
 ]
 
 MIDDLEWARE = [
@@ -163,8 +162,9 @@ REST_FRAMEWORK = {
 }
 
 
+# Autenticación OIDC con Keycloak
 AUTHENTICATION_BACKENDS = (
-    'mozilla_django_oidc.auth.OIDCAuthenticationBackend',
+    'apps.usuarios.backends.CustomOIDCBackend',
     'django.contrib.auth.backends.ModelBackend',
 )
 
