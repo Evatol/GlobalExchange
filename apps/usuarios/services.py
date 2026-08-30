@@ -3,10 +3,12 @@ import string
 from django.conf import settings
 from keycloak import KeycloakAdmin
 
+
 def generate_random_password(length=12):
     """Genera una contraseña aleatoria y segura."""
     alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
     return ''.join(secrets.choice(alphabet) for _ in range(length))
+
 
 def create_user_in_keycloak(username, email, first_name='', last_name='', role_name='cajero', temporary=True):
     """Crea un usuario en Keycloak y le asigna un rol asignado."""
