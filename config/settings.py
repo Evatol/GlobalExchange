@@ -145,14 +145,31 @@ MAILERS = {
     },
 }
 
+# Django REST Framework
+# https://www.django-rest-framework.org/api-guide/settings/
+
+REST_FRAMEWORK = {
+    # TODO: reemplazar por autenticación/permisos vía Keycloak (RF4) cuando
+    # esté disponible el IAM centralizado.
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.AllowAny',
+    ],
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+        'rest_framework.renderers.BrowsableAPIRenderer',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 20,
+}
+
+
 AUTHENTICATION_BACKENDS = (
     'mozilla_django_oidc.auth.OIDCAuthenticationBackend',
     'django.contrib.auth.backends.ModelBackend',
 )
 
 OIDC_RP_CLIENT_ID = 'django-backend'
-OIDC_RP_CLIENT_SECRET = ('tNPOCqVu0s7H09kQgrGYLhXuGCPC72bd5vYbdeZ82WEEBzsP7Zi47OJ9tsIuIvpAjLYOa4BTnVBNEw1JnKQvel'
-                         )
+OIDC_RP_CLIENT_SECRET = 'tNPOCqVu0s7H09kQgrGYLhXuGCPC72bd5vYbdeZ82WEEBzsP7Zi47OJ9tsIuIvpAjLYOa4BTnVBNEw1JnKQvel'
 
 OIDC_OP_AUTHORIZATION_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/openid-connect/auth'
 OIDC_OP_TOKEN_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/openid-connect/token'
