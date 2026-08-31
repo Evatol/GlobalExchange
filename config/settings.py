@@ -178,6 +178,7 @@ OIDC_OP_USER_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/op
 OIDC_OP_JWKS_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/openid-connect/certs'
 
 OIDC_RP_SIGN_ALGO = 'RS256'
+LOGIN_URL = '/oidc/authenticate/'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/'
 
