@@ -12,20 +12,31 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 
 from pathlib import Path
 
+import environ
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Carga de variables de entorno desde el .env de la raíz del proyecto.
+# Cada variable define como default el valor actual de desarrollo, así el
+# proyecto sigue funcionando aunque no exista el archivo .env (AMB - Hito 3).
+env = environ.Env()
+environ.Env.read_env(BASE_DIR / '.env')
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure--+*--5n-!ctf29nkjph0m3ns@blg1430ctd2g!uknh%+#=36#8'
+SECRET_KEY = env(
+    'SECRET_KEY',
+    default='django-insecure--+*--5n-!ctf29nkjph0m3ns@blg1430ctd2g!uknh%+#=36#8',
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env.bool('DEBUG', default=True)
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=[])
 
 
 # Application definition
@@ -90,13 +101,13 @@ WSGI_APPLICATION = 'config.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'Global_Exchange',
-        'USER': 'postgres',
-        'PASSWORD': '123456',
-        'HOST': 'localhost',  # o la IP del contenedor/WSL
-        'PORT': '5432',
+        'NAME': env('DB_NAME', default='Global_Exchange'),
+        'USER': env('DB_USER', default='postgres'),
+        'PASSWORD': env('DB_PASSWORD', default='123456'),
+        'HOST': env('DB_HOST', default='localhost'),  # o la IP del contenedor/WSL
+        'PORT': env('DB_PORT', default='5432'),
     }
-    
+
 }
 
 # Password validation
@@ -187,3 +198,24 @@ KEYCLOAK_SERVER_URL = "http://localhost:8080/"
 KEYCLOAK_REALM = "GlobalExchange"
 KEYCLOAK_ADMIN_USER = "admin"
 KEYCLOAK_ADMIN_PASSWORD = "admin"
+
+
+# Endurecimiento de seguridad para producción (AMB - Hito 3).
+# Solo se aplica cuando DEBUG=False; en desarrollo estos ajustes quedan
+# desactivados para no entorpecer el trabajo local (HTTP sin TLS).
+# Cada valor puede ajustarse por variable de entorno según el despliegue.
+if not DEBUG:
+    # Forzar HTTPS y marcar las cookies como seguras.
+    SECURE_SSL_REDIRECT = env.bool('SECURE_SSL_REDIRECT', default=True)
+    SESSION_COOKIE_SECURE = env.bool('SESSION_COOKIE_SECURE', default=True)
+    CSRF_COOKIE_SECURE = env.bool('CSRF_COOKIE_SECURE', default=True)
+
+    # HTTP Strict Transport Security (1 año).
+    SECURE_HSTS_SECONDS = env.int('SECURE_HSTS_SECONDS', default=31536000)
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool(
+        'SECURE_HSTS_INCLUDE_SUBDOMAINS', default=True
+    )
+    SECURE_HSTS_PRELOAD = env.bool('SECURE_HSTS_PRELOAD', default=True)
+
+    # Detrás de un proxy inverso (Nginx, etc.) que termina TLS.
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
