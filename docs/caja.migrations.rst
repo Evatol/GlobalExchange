@@ -7,7 +7,7 @@ Submodules
 caja.migrations.0001\_initial module
 ------------------------------------
 
-.. automodule:: caja.migrations.0001_initial
+.. automodule:: apps.caja.migrations.0001_initial
    :members:
    :show-inheritance:
    :undoc-members:
@@ -15,7 +15,7 @@ caja.migrations.0001\_initial module
 Module contents
 ---------------
 
-.. automodule:: caja.migrations
+.. automodule:: apps.caja.migrations
    :members:
    :show-inheritance:
    :undoc-members:

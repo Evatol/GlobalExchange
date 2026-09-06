@@ -7,7 +7,7 @@ Submodules
 usuarios.migrations.0001\_initial module
 ----------------------------------------
 
-.. automodule:: usuarios.migrations.0001_initial
+.. automodule:: apps.usuarios.migrations.0001_initial
    :members:
    :show-inheritance:
    :undoc-members:
@@ -15,7 +15,7 @@ usuarios.migrations.0001\_initial module
 Module contents
 ---------------
 
-.. automodule:: usuarios.migrations
+.. automodule:: apps.usuarios.migrations
    :members:
    :show-inheritance:
    :undoc-members:

@@ -4,7 +4,7 @@ reportes.migrations package
 Module contents
 ---------------
 
-.. automodule:: reportes.migrations
+.. automodule:: apps.reportes.migrations
    :members:
    :show-inheritance:
    :undoc-members:

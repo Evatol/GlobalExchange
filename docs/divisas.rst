@@ -15,7 +15,7 @@ Submodules
 divisas.admin module
 --------------------
 
-.. automodule:: divisas.admin
+.. automodule:: apps.divisas.admin
    :members:
    :show-inheritance:
    :undoc-members:
@@ -23,7 +23,7 @@ divisas.admin module
 divisas.apps module
 -------------------
 
-.. automodule:: divisas.apps
+.. automodule:: apps.divisas.apps
    :members:
    :show-inheritance:
    :undoc-members:
@@ -31,7 +31,7 @@ divisas.apps module
 divisas.models module
 ---------------------
 
-.. automodule:: divisas.models
+.. automodule:: apps.divisas.models
    :members:
    :show-inheritance:
    :undoc-members:
@@ -39,7 +39,7 @@ divisas.models module
 divisas.tests module
 --------------------
 
-.. automodule:: divisas.tests
+.. automodule:: apps.divisas.tests
    :members:
    :show-inheritance:
    :undoc-members:
@@ -47,7 +47,7 @@ divisas.tests module
 divisas.urls module
 -------------------
 
-.. automodule:: divisas.urls
+.. automodule:: apps.divisas.urls
    :members:
    :show-inheritance:
    :undoc-members:
@@ -55,7 +55,7 @@ divisas.urls module
 divisas.views module
 --------------------
 
-.. automodule:: divisas.views
+.. automodule:: apps.divisas.views
    :members:
    :show-inheritance:
    :undoc-members:
@@ -63,7 +63,7 @@ divisas.views module
 Module contents
 ---------------
 
-.. automodule:: divisas
+.. automodule:: apps.divisas
    :members:
    :show-inheritance:
    :undoc-members:

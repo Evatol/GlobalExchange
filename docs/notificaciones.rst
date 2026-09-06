@@ -15,7 +15,7 @@ Submodules
 notificaciones.admin module
 ---------------------------
 
-.. automodule:: notificaciones.admin
+.. automodule:: apps.notificaciones.admin
    :members:
    :show-inheritance:
    :undoc-members:
@@ -23,7 +23,7 @@ notificaciones.admin module
 notificaciones.apps module
 --------------------------
 
-.. automodule:: notificaciones.apps
+.. automodule:: apps.notificaciones.apps
    :members:
    :show-inheritance:
    :undoc-members:
@@ -31,7 +31,7 @@ notificaciones.apps module
 notificaciones.models module
 ----------------------------
 
-.. automodule:: notificaciones.models
+.. automodule:: apps.notificaciones.models
    :members:
    :show-inheritance:
    :undoc-members:
@@ -39,7 +39,7 @@ notificaciones.models module
 notificaciones.tests module
 ---------------------------
 
-.. automodule:: notificaciones.tests
+.. automodule:: apps.notificaciones.tests
    :members:
    :show-inheritance:
    :undoc-members:
@@ -47,7 +47,7 @@ notificaciones.tests module
 notificaciones.urls module
 --------------------------
 
-.. automodule:: notificaciones.urls
+.. automodule:: apps.notificaciones.urls
    :members:
    :show-inheritance:
    :undoc-members:
@@ -55,7 +55,7 @@ notificaciones.urls module
 notificaciones.views module
 ---------------------------
 
-.. automodule:: notificaciones.views
+.. automodule:: apps.notificaciones.views
    :members:
    :show-inheritance:
    :undoc-members:
@@ -63,7 +63,7 @@ notificaciones.views module
 Module contents
 ---------------
 
-.. automodule:: notificaciones
+.. automodule:: apps.notificaciones
    :members:
    :show-inheritance:
    :undoc-members:

@@ -2,9 +2,8 @@ import os
 import sys
 import django
 
-# Agregar tanto la raíz del proyecto como la carpeta apps al sys.path
+# Raíz del proyecto en sys.path para importar apps.*
 sys.path.insert(0, os.path.abspath('../'))
-sys.path.insert(0, os.path.abspath('../apps'))
 
 os.environ['DJANGO_SETTINGS_MODULE'] = 'config.settings'
 django.setup()

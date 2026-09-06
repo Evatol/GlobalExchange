@@ -7,7 +7,7 @@ Submodules
 proyectos.migrations.0001\_initial module
 -----------------------------------------
 
-.. automodule:: proyectos.migrations.0001_initial
+.. automodule:: apps.proyectos.migrations.0001_initial
    :members:
    :show-inheritance:
    :undoc-members:
@@ -15,7 +15,7 @@ proyectos.migrations.0001\_initial module
 Module contents
 ---------------
 
-.. automodule:: proyectos.migrations
+.. automodule:: apps.proyectos.migrations
    :members:
    :show-inheritance:
    :undoc-members:
