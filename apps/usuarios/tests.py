@@ -292,3 +292,57 @@ class ProviderLogoutUrlTests(TestCase):
         url = provider_logout_url(self._request())
         self.assertIn('client_id=django-backend', url)
         self.assertNotIn('id_token_hint', url)
+
+
+class AsignacionUsuariosClientesTests(TestCase):
+    """RF42: endpoints dedicados de asignación usuario <-> cliente."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.cliente = Cliente.objects.create(**cliente_valido())
+        self.usuario = Usuario.objects.create(
+            username='op1', email='op1@example.com', nombres='Op', apellidos='Uno',
+            telefono='0981000000', direccion='Asunción',
+        )
+        self.base = f'/api/usuarios/clientes/{self.cliente.pk}/'
+
+    def test_asignar_usuario(self):
+        r = self.client.post(
+            f'{self.base}asignar-usuario/', {'usuario': self.usuario.pk}, format='json'
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        self.assertIn(self.usuario, self.cliente.usuarios.all())
+        self.assertIn(self.usuario.pk, r.data['usuarios'])
+
+    def test_asignar_usuario_inexistente_falla(self):
+        r = self.client.post(
+            f'{self.base}asignar-usuario/', {'usuario': 99999}, format='json'
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_asignar_sin_campo_usuario_falla(self):
+        r = self.client.post(f'{self.base}asignar-usuario/', {}, format='json')
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_asignar_es_idempotente(self):
+        for _ in range(2):
+            r = self.client.post(
+                f'{self.base}asignar-usuario/', {'usuario': self.usuario.pk}, format='json'
+            )
+            self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(self.cliente.usuarios.count(), 1)
+
+    def test_desasignar_usuario(self):
+        self.cliente.asociar_usuario(self.usuario)
+        r = self.client.post(
+            f'{self.base}desasignar-usuario/', {'usuario': self.usuario.pk}, format='json'
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertNotIn(self.usuario, self.cliente.usuarios.all())
+
+    def test_listar_usuarios_asignados(self):
+        self.cliente.asociar_usuario(self.usuario)
+        r = self.client.get(f'{self.base}usuarios/')
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(r.data), 1)
+        self.assertEqual(r.data[0]['username'], 'op1')
