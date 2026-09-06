@@ -15,7 +15,7 @@ Submodules
 caja.admin module
 -----------------
 
-.. automodule:: caja.admin
+.. automodule:: apps.caja.admin
    :members:
    :show-inheritance:
    :undoc-members:
@@ -23,7 +23,7 @@ caja.admin module
 caja.apps module
 ----------------
 
-.. automodule:: caja.apps
+.. automodule:: apps.caja.apps
    :members:
    :show-inheritance:
    :undoc-members:
@@ -31,7 +31,7 @@ caja.apps module
 caja.models module
 ------------------
 
-.. automodule:: caja.models
+.. automodule:: apps.caja.models
    :members:
    :show-inheritance:
    :undoc-members:
@@ -39,7 +39,7 @@ caja.models module
 caja.tests module
 -----------------
 
-.. automodule:: caja.tests
+.. automodule:: apps.caja.tests
    :members:
    :show-inheritance:
    :undoc-members:
@@ -47,7 +47,7 @@ caja.tests module
 caja.urls module
 ----------------
 
-.. automodule:: caja.urls
+.. automodule:: apps.caja.urls
    :members:
    :show-inheritance:
    :undoc-members:
@@ -55,7 +55,7 @@ caja.urls module
 caja.views module
 -----------------
 
-.. automodule:: caja.views
+.. automodule:: apps.caja.views
    :members:
    :show-inheritance:
    :undoc-members:
@@ -63,7 +63,7 @@ caja.views module
 Module contents
 ---------------
 
-.. automodule:: caja
+.. automodule:: apps.caja
    :members:
    :show-inheritance:
    :undoc-members:

@@ -7,7 +7,7 @@ Submodules
 divisas.migrations.0001\_initial module
 ---------------------------------------
 
-.. automodule:: divisas.migrations.0001_initial
+.. automodule:: apps.divisas.migrations.0001_initial
    :members:
    :show-inheritance:
    :undoc-members:
@@ -15,7 +15,7 @@ divisas.migrations.0001\_initial module
 Module contents
 ---------------
 
-.. automodule:: divisas.migrations
+.. automodule:: apps.divisas.migrations
    :members:
    :show-inheritance:
    :undoc-members:

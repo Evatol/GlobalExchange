@@ -28,3 +28,75 @@ Sesión de implementación (Claude Code): https://claude.ai/code/session_01RBzpS
 > Prompt principal: "¿Por qué la ruta del menú devuelve 404 al intentar acceder sin sesión iniciada?"
 >
 > Resultado / Impacto: Se diagnosticó que faltaba `LOGIN_URL` en `settings.py` (Django usaba el valor por defecto `/accounts/login/`, inexistente en el proyecto). Se corrigió apuntándolo a `/oidc/authenticate/`, habilitando el flujo real de login vía Keycloak — confirmado con una prueba end-to-end completa (login → Menú Principal → creación de cliente real).
+
+---
+
+## 4. Anexo Sprint 1 — Autoregistro con verificación de correo (E4-120 / E4-37)
+
+**Cambio de requerimiento** (pedido por la profesora): se reincorpora el
+autoregistro público de usuarios, ahora **con verificación de correo obligatoria**,
+usando las funciones **nativas de Keycloak** (sin formulario propio en Django).
+
+### Enlace del chat
+Sesión de implementación (Claude Code): https://claude.ai/code/session_01RBzpSEukGkkE9bqjbr5AuH
+
+### Prompts destacados y soluciones
+
+> Prompt principal: "Quiero implementar autoregistro de usuarios con verificación de
+> correo usando las funciones NATIVAS de Keycloak (no un formulario propio en Django).
+> Investigá primero cómo está gestionado hoy el realm [...] elegí el método más prolijo
+> y versionable."
+>
+> Resultado / Impacto: La IA detectó que **no existía configuración como código** del
+> realm (todo a mano en la consola web). Se crearon 3 management commands idempotentes
+> (`configure_keycloak_registration`, `configure_keycloak_logout`,
+> `configure_keycloak_locale`) que aplican la config vía la API admin de Keycloak
+> (`python-keycloak`), reutilizando el patrón de `apps/usuarios/services.py`. El App
+> Password de Gmail se pide por consola / variable de entorno, nunca se commitea.
+
+> Diagnóstico guiado: "Me registro pero no llega el correo de verificación."
+>
+> Resultado / Impacto: Se rastreó el error real en los logs del contenedor de Keycloak
+> (`UnknownHostException: smtp.gmail.com`). Causa: el contenedor en la red bridge de
+> Docker no resolvía DNS porque el host usa `systemd-resolved` (127.0.0.53) y Docker
+> descarta los nameservers loopback. Solución: `/etc/docker/daemon.json` con DNS
+> explícito. Luego apareció `534-5.7.9 Application-specific password required` — se había
+> tipeado la contraseña normal de Gmail en vez del App Password de 16 caracteres.
+
+> Prompt principal: "Al cerrar sesión me lleva de nuevo al login admin de Django, no
+> debería llevarme al login de Keycloak?"
+>
+> Resultado / Impacto: El botón "Cerrar Sesión" apuntaba a `/admin/logout/` (solo
+> cerraba la sesión de Django, no la SSO de Keycloak). Se implementó **logout OIDC
+> real**: `apps/usuarios/oidc.py::provider_logout_url` + `OIDC_OP_LOGOUT_ENDPOINT` /
+> `OIDC_OP_LOGOUT_URL_METHOD` en settings + formulario POST a `{% url 'oidc_logout' %}`
+> en el template. Ahora cierra ambas sesiones y vuelve al login de Keycloak.
+
+> Consulta: "En Keycloak 26 el registro no pide contraseña y después obliga a
+> 'Update password'. ¿Es un bug?"
+>
+> Resultado / Impacto: No es bug. Se verificó (probando con `verifyEmail` on/off) que
+> Keycloak 26.7 **omite a propósito** el campo de contraseña en el registro cuando la
+> verificación de correo está activa: crea la cuenta sin credencial y la contraseña se
+> define recién después de verificar el correo (evita cuentas con credenciales sobre
+> emails no verificados). El flujo cumple el requerimiento. Se puso además el realm en
+> **español** (UI + emails) con `configure_keycloak_locale`.
+
+> Prompt principal: "Completá el alcance de E4-120: que los roles de Keycloak se
+> reflejen en el sistema y que el bloqueo por intentos fallidos y la recuperación de
+> contraseña queden gestionados por Keycloak."
+>
+> Resultado / Impacto: (criterio 3) `configure_keycloak_roles` agrega un protocol
+> mapper al cliente OIDC que expone los roles de realm en el claim `roles`, y
+> `CustomOIDCBackend._sync_roles` los refleja en `Group` de Django + `is_staff` /
+> `is_superuser` (rol `admin`/`administrador`), recalculando en cada login. (criterio 4)
+> `configure_keycloak_registration` ahora también activa `resetPasswordAllowed` y
+> `bruteForceProtected`. Se agregaron 9 tests unitarios (27 en total).
+
+### Archivos / evidencia
+- `apps/usuarios/management/commands/configure_keycloak_*.py` — configuración de Keycloak como código (registro, roles, logout, i18n).
+- `apps/usuarios/backends.py` — sincronización de perfil + roles + acceso al admin desde los claims.
+- `apps/usuarios/oidc.py`, `config/settings.py`, `apps/usuarios/templates/usuarios/menu_principal.html` — logout OIDC.
+- `apps/usuarios/tests.py` — `CustomOIDCBackendTests`, `ProviderLogoutUrlTests`.
+- `docs/keycloak.md` — configuración del realm como código.
+- `COMO_EJECUTAR.txt` — guía de ejecución paso a paso (servicios, pruebas, troubleshooting).

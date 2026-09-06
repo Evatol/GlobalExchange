@@ -1,12 +1,15 @@
 from decimal import Decimal
 
+from django.contrib.auth.models import Group, User
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from .backends import CustomOIDCBackend
 from .models import Cliente, Usuario
+from .oidc import provider_logout_url
 
 
 def cliente_valido(**overrides):
@@ -192,3 +195,100 @@ class ClienteAPITests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
         cliente = Cliente.objects.get(pk=resp.data['id'])
         self.assertIn(usuario, cliente.usuarios.all())
+
+
+class CustomOIDCBackendTests(TestCase):
+    """E4-120: el backend OIDC sincroniza perfil, roles y acceso al admin
+    desde los claims de Keycloak."""
+
+    def setUp(self):
+        self.backend = CustomOIDCBackend()
+
+    def _user(self, **kw):
+        defaults = dict(username='u1', email='u1@example.com')
+        defaults.update(kw)
+        return User.objects.create_user(**defaults)
+
+    def test_sincroniza_perfil_basico(self):
+        user = self._user()
+        claims = {
+            'given_name': 'Ana', 'family_name': 'García',
+            'email': 'ana@example.com', 'preferred_username': 'ana',
+        }
+        self.backend._sync_user_profile(user, claims)
+        user.refresh_from_db()
+        self.assertEqual(user.first_name, 'Ana')
+        self.assertEqual(user.last_name, 'García')
+        self.assertEqual(user.email, 'ana@example.com')
+        self.assertEqual(user.username, 'ana')
+
+    def test_roles_de_keycloak_se_reflejan_en_grupos(self):
+        user = self._user()
+        self.backend._sync_user_profile(user, {'roles': ['cajero', 'analista']})
+        self.assertEqual(
+            sorted(user.groups.values_list('name', flat=True)),
+            ['analista', 'cajero'],
+        )
+
+    def test_rol_admin_otorga_acceso_al_panel(self):
+        user = self._user()
+        self.backend._sync_user_profile(user, {'roles': ['administrador']})
+        user.refresh_from_db()
+        self.assertTrue(user.is_staff)
+        self.assertTrue(user.is_superuser)
+
+    def test_sin_rol_admin_no_hay_acceso_al_panel(self):
+        user = self._user(is_staff=True, is_superuser=True)
+        self.backend._sync_user_profile(user, {'roles': ['cajero']})
+        user.refresh_from_db()
+        self.assertFalse(user.is_staff)
+        self.assertFalse(user.is_superuser)
+
+    def test_revocacion_de_rol_se_refleja(self):
+        user = self._user()
+        user.groups.add(Group.objects.create(name='cajero'))
+        self.backend._sync_user_profile(user, {'roles': ['analista']})
+        self.assertEqual(
+            list(user.groups.values_list('name', flat=True)), ['analista']
+        )
+
+    def test_roles_internos_de_keycloak_se_ignoran(self):
+        user = self._user()
+        self.backend._sync_user_profile(user, {'roles': [
+            'offline_access', 'uma_authorization',
+            'default-roles-globalexchange', 'cajero',
+        ]})
+        self.assertEqual(
+            list(user.groups.values_list('name', flat=True)), ['cajero']
+        )
+
+    def test_sin_claim_de_roles_no_toca_grupos(self):
+        user = self._user()
+        user.groups.add(Group.objects.create(name='manual'))
+        self.backend._sync_user_profile(user, {'given_name': 'X'})
+        self.assertEqual(
+            list(user.groups.values_list('name', flat=True)), ['manual']
+        )
+
+
+class ProviderLogoutUrlTests(TestCase):
+    """E4-120: la URL de logout apunta a Keycloak para cerrar la sesión SSO."""
+
+    def setUp(self):
+        self.rf = RequestFactory()
+
+    def _request(self, session=None):
+        req = self.rf.get('/')  # host por defecto: testserver
+        req.session = session or {}
+        return req
+
+    def test_incluye_id_token_hint_si_esta_en_sesion(self):
+        url = provider_logout_url(self._request({'oidc_id_token': 'TOKEN123'}))
+        self.assertIn('protocol/openid-connect/logout', url)
+        self.assertIn('id_token_hint=TOKEN123', url)
+        self.assertIn('post_logout_redirect_uri=', url)
+
+    def test_usa_client_id_si_no_hay_id_token(self):
+        url = provider_logout_url(self._request())
+        self.assertIn('client_id=django-backend', url)
+        self.assertNotIn('id_token_hint', url)

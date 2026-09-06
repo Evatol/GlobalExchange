@@ -1,17 +1,22 @@
-.. GlobalExchange documentation master file, created by
-   sphinx-quickstart on Fri Aug 28 11:12:21 2026.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
-
 GlobalExchange documentation
 ============================
 
-Add your content using ``reStructuredText`` syntax. See the
-`reStructuredText <https://www.sphinx-doc.org/en/master/usage/restructuredtext/index.html>`_
-documentation for details.
+Bienvenido a la documentación técnica del proyecto GlobalExchange.
 
+Cómo regenerar esta documentación::
+
+   pip install -r requirements-dev.txt
+   sphinx-build -b html docs docs/_build/html
 
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
+   :caption: Módulos:
 
+   usuarios
+   caja
+   divisas
+   facturacion
+   transacciones
+   notificaciones
+   proyectos
+   reportes

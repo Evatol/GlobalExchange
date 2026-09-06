@@ -15,7 +15,7 @@ Submodules
 transacciones.admin module
 --------------------------
 
-.. automodule:: transacciones.admin
+.. automodule:: apps.transacciones.admin
    :members:
    :show-inheritance:
    :undoc-members:
@@ -23,7 +23,7 @@ transacciones.admin module
 transacciones.apps module
 -------------------------
 
-.. automodule:: transacciones.apps
+.. automodule:: apps.transacciones.apps
    :members:
    :show-inheritance:
    :undoc-members:
@@ -31,7 +31,7 @@ transacciones.apps module
 transacciones.models module
 ---------------------------
 
-.. automodule:: transacciones.models
+.. automodule:: apps.transacciones.models
    :members:
    :show-inheritance:
    :undoc-members:
@@ -39,7 +39,7 @@ transacciones.models module
 transacciones.tests module
 --------------------------
 
-.. automodule:: transacciones.tests
+.. automodule:: apps.transacciones.tests
    :members:
    :show-inheritance:
    :undoc-members:
@@ -47,7 +47,7 @@ transacciones.tests module
 transacciones.urls module
 -------------------------
 
-.. automodule:: transacciones.urls
+.. automodule:: apps.transacciones.urls
    :members:
    :show-inheritance:
    :undoc-members:
@@ -55,7 +55,7 @@ transacciones.urls module
 transacciones.views module
 --------------------------
 
-.. automodule:: transacciones.views
+.. automodule:: apps.transacciones.views
    :members:
    :show-inheritance:
    :undoc-members:
@@ -63,7 +63,7 @@ transacciones.views module
 Module contents
 ---------------
 
-.. automodule:: transacciones
+.. automodule:: apps.transacciones
    :members:
    :show-inheritance:
    :undoc-members:

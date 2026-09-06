@@ -5,3 +5,5 @@ __pycache__/
 *.env
 *.rar
 *.log
+# Documentación generada por Sphinx
+docs/_build/
