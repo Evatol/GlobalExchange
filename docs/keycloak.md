@@ -39,6 +39,23 @@ venv/bin/python manage.py configure_keycloak_logout
 venv/bin/python manage.py configure_keycloak_locale
 ```
 
+## Alta de usuario por el administrador (RF1-RF3)
+
+Distinto del autoregistro: acá el **admin** crea la cuenta.
+
+```
+venv/bin/python manage.py crear_usuario_keycloak <username> <email> --rol cajero
+venv/bin/python manage.py crear_usuario_keycloak jperez jperez@x.com --nombre Juan --apellido Perez --rol analista
+```
+
+Crea el usuario en Keycloak con una **contraseña aleatoria** (`secrets`, `temporary=true`),
+le asigna un **rol de realm** y **envía la contraseña por correo** (`services.enviar_credenciales_por_correo`).
+En desarrollo el correo se imprime en la terminal (backend de consola); en producción se
+setea `EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend` y `EMAIL_HOST_PASSWORD`
+por variable de entorno.
+
+Flags: `--no-email` (no envía), `--mostrar-password` (imprime la clave en pantalla).
+
 ## Qué queda en manos de Keycloak (E4-120)
 
 - Pantallas de login y registro (no hay formularios propios en Django).

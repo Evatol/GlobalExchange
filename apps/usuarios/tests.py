@@ -1,7 +1,11 @@
 from decimal import Decimal
+from io import StringIO
+from unittest.mock import patch
 
 from django.contrib.auth.models import Group, User
+from django.core import mail
 from django.core.exceptions import ValidationError
+from django.core.management import call_command
 from django.db import IntegrityError
 from django.test import RequestFactory, TestCase
 from rest_framework import status
@@ -10,6 +14,7 @@ from rest_framework.test import APIClient
 from .backends import CustomOIDCBackend
 from .models import Cliente, Usuario
 from .oidc import provider_logout_url
+from .services import enviar_credenciales_por_correo
 
 
 def cliente_valido(**overrides):
@@ -292,3 +297,99 @@ class ProviderLogoutUrlTests(TestCase):
         url = provider_logout_url(self._request())
         self.assertIn('client_id=django-backend', url)
         self.assertNotIn('id_token_hint', url)
+
+
+class AsignacionUsuariosClientesTests(TestCase):
+    """RF42: endpoints dedicados de asignación usuario <-> cliente."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.cliente = Cliente.objects.create(**cliente_valido())
+        self.usuario = Usuario.objects.create(
+            username='op1', email='op1@example.com', nombres='Op', apellidos='Uno',
+            telefono='0981000000', direccion='Asunción',
+        )
+        self.base = f'/api/usuarios/clientes/{self.cliente.pk}/'
+
+    def test_asignar_usuario(self):
+        r = self.client.post(
+            f'{self.base}asignar-usuario/', {'usuario': self.usuario.pk}, format='json'
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        self.assertIn(self.usuario, self.cliente.usuarios.all())
+        self.assertIn(self.usuario.pk, r.data['usuarios'])
+
+    def test_asignar_usuario_inexistente_falla(self):
+        r = self.client.post(
+            f'{self.base}asignar-usuario/', {'usuario': 99999}, format='json'
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_asignar_sin_campo_usuario_falla(self):
+        r = self.client.post(f'{self.base}asignar-usuario/', {}, format='json')
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_asignar_es_idempotente(self):
+        for _ in range(2):
+            r = self.client.post(
+                f'{self.base}asignar-usuario/', {'usuario': self.usuario.pk}, format='json'
+            )
+            self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(self.cliente.usuarios.count(), 1)
+
+    def test_desasignar_usuario(self):
+        self.cliente.asociar_usuario(self.usuario)
+        r = self.client.post(
+            f'{self.base}desasignar-usuario/', {'usuario': self.usuario.pk}, format='json'
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertNotIn(self.usuario, self.cliente.usuarios.all())
+
+    def test_listar_usuarios_asignados(self):
+        self.cliente.asociar_usuario(self.usuario)
+        r = self.client.get(f'{self.base}usuarios/')
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(r.data), 1)
+        self.assertEqual(r.data[0]['username'], 'op1')
+
+
+class AltaUsuarioPorAdminTests(TestCase):
+    """RF1-RF3: alta de usuario por el administrador (crear_usuario_keycloak)."""
+
+    def test_enviar_credenciales_por_correo(self):
+        enviar_credenciales_por_correo('nuevo@example.com', 'nuevo', 'Secreta-123!')
+        self.assertEqual(len(mail.outbox), 1)
+        msg = mail.outbox[0]
+        self.assertEqual(msg.to, ['nuevo@example.com'])
+        self.assertIn('Secreta-123!', msg.body)
+        self.assertIn('nuevo', msg.body)
+
+    @patch('apps.usuarios.services.create_user_in_keycloak')
+    def test_comando_crea_en_keycloak_y_envia_correo(self, mock_create):
+        mock_create.return_value = {
+            'user_id': 'abc-123', 'username': 'jperez', 'email': 'jperez@example.com',
+            'role': 'cajero', 'generated_password': 'Rnd-Pass-9!',
+        }
+        call_command(
+            'crear_usuario_keycloak', 'jperez', 'jperez@example.com',
+            '--rol', 'cajero', '--nombre', 'Juan', stdout=StringIO(),
+        )
+        mock_create.assert_called_once()
+        _, kwargs = mock_create.call_args
+        self.assertEqual(kwargs['username'], 'jperez')
+        self.assertEqual(kwargs['role_name'], 'cajero')
+        self.assertEqual(kwargs['first_name'], 'Juan')
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn('Rnd-Pass-9!', mail.outbox[0].body)
+
+    @patch('apps.usuarios.services.create_user_in_keycloak')
+    def test_comando_no_email_no_envia(self, mock_create):
+        mock_create.return_value = {
+            'user_id': 'x', 'username': 'u', 'email': 'u@example.com',
+            'role': 'cajero', 'generated_password': 'p',
+        }
+        call_command(
+            'crear_usuario_keycloak', 'u', 'u@example.com', '--no-email',
+            stdout=StringIO(),
+        )
+        self.assertEqual(len(mail.outbox), 0)

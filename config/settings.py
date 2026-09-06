@@ -156,12 +156,23 @@ STATIC_URL = 'static/'
 
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
+# Se usa en el alta de usuario por el administrador (RF3): la contraseña
+# generada se envía al correo del usuario. Por defecto (desarrollo) el backend
+# de consola imprime el correo en la terminal; en producción se setea
+# EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend y EMAIL_HOST_PASSWORD
+# por variable de entorno (fuera del control de versiones).
 
-MAILERS = {
-    'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
-    },
-}
+EMAIL_BACKEND = env(
+    'EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend'
+)
+EMAIL_HOST = env('EMAIL_HOST', default='smtp.gmail.com')
+EMAIL_PORT = env.int('EMAIL_PORT', default=587)
+EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=True)
+EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='globalexchange314@gmail.com')
+EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
+DEFAULT_FROM_EMAIL = env(
+    'DEFAULT_FROM_EMAIL', default='GlobalExchange <globalexchange314@gmail.com>'
+)
 
 # Django REST Framework
 # https://www.django-rest-framework.org/api-guide/settings/

@@ -3,6 +3,20 @@ from rest_framework import serializers
 from .models import Cliente, Usuario
 
 
+class UsuarioResumenSerializer(serializers.ModelSerializer):
+    """Datos mínimos de un usuario, para listar los asignados a un cliente (RF42)."""
+
+    class Meta:
+        model = Usuario
+        fields = ['id', 'username', 'nombres', 'apellidos', 'email', 'estado']
+
+
+class AsignacionUsuarioSerializer(serializers.Serializer):
+    """Entrada de las acciones asignar/desasignar usuario de un cliente (RF42)."""
+
+    usuario = serializers.PrimaryKeyRelatedField(queryset=Usuario.objects.all())
+
+
 class ClienteSerializer(serializers.ModelSerializer):
     """Serializa el CRUD de clientes (E4-125), incluida la asociación
     con uno o más usuarios (RF42)."""
