@@ -1,0 +1,229 @@
+====================================================================
+ GLOBALEXCHANGE - CÓMO EJECUTAR EL PROGRAMA (PASO A PASO)
+====================================================================
+
+El sistema tiene 3 piezas que tienen que estar corriendo A LA VEZ:
+
+  1. PostgreSQL   -> base de datos          (puerto 5432)
+  2. Keycloak     -> login / autoregistro   (puerto 8080, en Docker)
+  3. Django       -> la aplicación          (puerto 8000)
+
+IMPORTANTE: entrá SIEMPRE por  http://127.0.0.1:8000
+            NO uses  http://localhost:8000  (el redirect de Keycloak
+            está atado a 127.0.0.1 y falla si usás "localhost").
+
+
+====================================================================
+ PARTE A - PREPARACIÓN (solo la primera vez, o si algo se rompió)
+====================================================================
+
+A.1 - Ubicarse en el proyecto:
+
+    cd /home/angel/Escritorio/IS2/GlobalExchange
+
+A.2 - Dependencias de Python (si el venv ya existe, saltear):
+
+    python -m venv venv
+    venv/bin/pip install -r requirements.txt
+
+A.3 - Base de datos: aplicar migraciones:
+
+    venv/bin/python manage.py migrate
+
+A.4 - (Opcional) Crear un superusuario para entrar a http://127.0.0.1:8000/admin/
+
+    venv/bin/python manage.py createsuperuser
+
+
+====================================================================
+ PARTE B - ARRANCAR LOS SERVICIOS (cada vez que vas a trabajar)
+====================================================================
+
+--------------------------------------------------------------------
+B.1 - PostgreSQL
+--------------------------------------------------------------------
+Normalmente ya arranca solo con el sistema. Para asegurarte:
+
+    sudo systemctl start postgresql
+    systemctl is-active postgresql        (tiene que decir: active)
+
+--------------------------------------------------------------------
+B.2 - Keycloak (contenedor Docker "keycloak-dev")
+--------------------------------------------------------------------
+Ver si está corriendo:
+
+    sudo docker ps
+
+  - Si aparece una línea con  keycloak-dev  -> ya está, seguí a B.3
+  - Si NO aparece:
+
+    sudo docker start keycloak-dev
+
+Esperar ~20-30 segundos y comprobar que responde:
+
+    curl -s -o /dev/null -w "%{http_code}\n" \
+      http://localhost:8080/realms/GlobalExchange/.well-known/openid-configuration
+
+  Tiene que imprimir:  200
+
+Consola de administración de Keycloak (si la necesitás):
+    URL:      http://localhost:8080/
+    usuario:  admin
+    clave:    admin
+
+--------------------------------------------------------------------
+B.3 - Django
+--------------------------------------------------------------------
+En una terminal NUEVA (esta queda abierta todo el tiempo):
+
+    cd /home/angel/Escritorio/IS2/GlobalExchange
+    venv/bin/python manage.py runserver 127.0.0.1:8000
+
+  Tiene que decir:  Starting development server at http://127.0.0.1:8000/
+
+  Si dice  "That port is already in use"  -> ya hay uno corriendo.
+  Matalo y volvé a levantarlo:
+
+    pkill -f "manage.py runserver"
+    venv/bin/python manage.py runserver 127.0.0.1:8000
+
+  NO CIERRES esta terminal mientras usás el sistema.
+
+
+====================================================================
+ PARTE C - PROBAR: AUTOREGISTRO CON VERIFICACIÓN DE CORREO
+====================================================================
+
+C.1 - Abrí una ventana de INCÓGNITO en el navegador (Ctrl+Shift+N).
+      (Así no arrastrás una sesión ya abierta.)
+
+C.2 - Entrá a:   http://127.0.0.1:8000/api/usuarios/
+
+C.3 - Te lleva al login de Keycloak. Hacé clic en  "Registrarse".
+
+C.4 - Completá el formulario:
+        - Usuario   (tiene que ser único)
+        - Email     (uno REAL al que tengas acceso; sirve cualquier dominio)
+        - Nombre
+        - Apellido
+      Y apretá  "Registrarse".
+      (En este paso NO se pide contraseña; es a propósito.)
+
+C.5 - Keycloak te dice que verifiques el correo. Todavía NO te deja entrar.
+
+C.6 - Abrí tu casilla de correo. Buscá el mail de:
+        GlobalExchange <globalexchange314@gmail.com>
+      (revisá la carpeta de SPAM, el primero suele caer ahí)
+      Hacé clic en el link de verificación.
+
+C.7 - Keycloak marca el correo como verificado y te pide DEFINIR una
+      contraseña (es la primera vez que la ponés).
+
+C.8 - Listo: quedás logueado y ves el "Panel Principal del Sistema"
+      con "Bienvenido, <tu usuario>" arriba a la derecha.
+
+      Nota: si abriste el link del correo en OTRO dispositivo/navegador,
+      ahí solo dice "verificado"; después volvé a
+      http://127.0.0.1:8000/api/usuarios/ en la compu y logueá normal.
+
+
+====================================================================
+ PARTE D - PROBAR: LOGIN Y LOGOUT
+====================================================================
+
+D.1 - En incógnito, entrá a:  http://127.0.0.1:8000/api/usuarios/
+
+D.2 - Login de Keycloak -> usuario + contraseña -> entrás al panel.
+
+D.3 - Apretá  "Cerrar Sesión"  (botón rojo arriba a la derecha).
+        - Se cierra la sesión de Django Y la de Keycloak.
+        - Terminás de nuevo en el login de Keycloak.
+        - La primera vez puede mostrarte "¿Cerrar sesión?" -> confirmá.
+
+D.4 - Comprobación: volvé a entrar a  http://127.0.0.1:8000/api/usuarios/
+      Tiene que pedirte usuario y contraseña otra vez (no entrar solo).
+
+
+====================================================================
+ PARTE E - RECONFIGURAR KEYCLOAK (solo si el realm se borró/recreó)
+====================================================================
+
+El realm "GlobalExchange" YA está configurado. Estos comandos solo hacen
+falta si se pierde esa config (por ejemplo, si se recrea el contenedor).
+Son idempotentes: se pueden correr varias veces sin problema.
+
+    cd /home/angel/Escritorio/IS2/GlobalExchange
+
+E.1 - Autoregistro + verificación de correo + SMTP:
+
+    venv/bin/python manage.py configure_keycloak_registration
+
+    Te va a pedir  "Keycloak SMTP app password:"  -> pegá el App Password
+    de 16 caracteres de la cuenta globalexchange314@gmail.com
+    (Gmail -> cuenta -> Seguridad -> Verificación en 2 pasos -> Contraseñas
+    de aplicación). NO es la contraseña normal de la cuenta.
+
+E.2 - Cierre de sesión (post-logout redirect URI):
+
+    venv/bin/python manage.py configure_keycloak_logout
+
+E.3 - Interfaz y correos en español:
+
+    venv/bin/python manage.py configure_keycloak_locale
+
+Para ver qué haría un comando sin aplicar nada, agregá  --dry-run
+
+
+====================================================================
+ PARTE F - PROBLEMAS COMUNES
+====================================================================
+
+F.1 - "That port is already in use" al levantar Django
+    -> pkill -f "manage.py runserver"   y volvé a levantarlo.
+
+F.2 - Al entrar a http://127.0.0.1:8000/  aparece el login del ADMIN de
+      Django (no el de Keycloak)
+    -> Es normal: la raíz "/" va al admin. Para el flujo de Keycloak
+       entrá por  http://127.0.0.1:8000/api/usuarios/
+
+F.3 - Me registro pero NO llega el correo de verificación
+    -> El contenedor de Keycloak necesita DNS para llegar a Gmail.
+       Verificá que exista  /etc/docker/daemon.json  con:
+
+           { "dns": ["192.168.1.1", "8.8.8.8"] }
+
+       Si no existe:
+           sudo mkdir -p /etc/docker
+           echo '{ "dns": ["192.168.1.1", "8.8.8.8"] }' | sudo tee /etc/docker/daemon.json
+           sudo systemctl restart docker
+           sudo docker start keycloak-dev
+
+    -> Revisá el error real:
+           sudo docker logs --since 10m keycloak-dev 2>&1 | grep -iE "smtp|mail|error"
+       * "UnknownHostException"          -> problema de DNS (lo de arriba)
+       * "AuthenticationFailedException" -> el App Password de Gmail está mal
+
+F.4 - "Email already exists" al registrar
+    -> Ese correo ya tiene una cuenta en Keycloak (aunque sea a medias).
+       Usá otro correo, o borrá el usuario desde la consola de Keycloak
+       (http://localhost:8080/ -> realm GlobalExchange -> Users).
+
+F.5 - Después de "Cerrar Sesión" me vuelve a loguear solo sin pedir nada
+    -> Estás usando una sesión vieja. Cerrá TODAS las pestañas del sitio
+       o usá una ventana de incógnito nueva.
+
+F.6 - Keycloak no arranca / docker pide contraseña
+    -> Los comandos  docker  necesitan  sudo  en esta máquina.
+       Siempre:  sudo docker ps  /  sudo docker start keycloak-dev
+
+
+====================================================================
+ RESUMEN RÁPIDO (para el día a día)
+====================================================================
+
+  Terminal 1:   sudo docker start keycloak-dev
+  Terminal 2:   cd /home/angel/Escritorio/IS2/GlobalExchange
+                venv/bin/python manage.py runserver 127.0.0.1:8000
+  Navegador:    http://127.0.0.1:8000/api/usuarios/   (incógnito para probar)
+
+====================================================================
