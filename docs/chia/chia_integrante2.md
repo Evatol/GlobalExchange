@@ -82,7 +82,21 @@ Sesión de implementación (Claude Code): https://claude.ai/code/session_01RBzpS
 > emails no verificados). El flujo cumple el requerimiento. Se puso además el realm en
 > **español** (UI + emails) con `configure_keycloak_locale`.
 
+> Prompt principal: "Completá el alcance de E4-120: que los roles de Keycloak se
+> reflejen en el sistema y que el bloqueo por intentos fallidos y la recuperación de
+> contraseña queden gestionados por Keycloak."
+>
+> Resultado / Impacto: (criterio 3) `configure_keycloak_roles` agrega un protocol
+> mapper al cliente OIDC que expone los roles de realm en el claim `roles`, y
+> `CustomOIDCBackend._sync_roles` los refleja en `Group` de Django + `is_staff` /
+> `is_superuser` (rol `admin`/`administrador`), recalculando en cada login. (criterio 4)
+> `configure_keycloak_registration` ahora también activa `resetPasswordAllowed` y
+> `bruteForceProtected`. Se agregaron 9 tests unitarios (27 en total).
+
 ### Archivos / evidencia
-- `apps/usuarios/management/commands/configure_keycloak_*.py` — configuración de Keycloak como código.
+- `apps/usuarios/management/commands/configure_keycloak_*.py` — configuración de Keycloak como código (registro, roles, logout, i18n).
+- `apps/usuarios/backends.py` — sincronización de perfil + roles + acceso al admin desde los claims.
 - `apps/usuarios/oidc.py`, `config/settings.py`, `apps/usuarios/templates/usuarios/menu_principal.html` — logout OIDC.
+- `apps/usuarios/tests.py` — `CustomOIDCBackendTests`, `ProviderLogoutUrlTests`.
+- `docs/keycloak.md` — configuración del realm como código.
 - `COMO_EJECUTAR.txt` — guía de ejecución paso a paso (servicios, pruebas, troubleshooting).

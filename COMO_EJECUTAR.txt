@@ -154,7 +154,8 @@ Son idempotentes: se pueden correr varias veces sin problema.
 
     cd /home/angel/Escritorio/IS2/GlobalExchange
 
-E.1 - Autoregistro + verificación de correo + SMTP:
+E.1 - Autoregistro + verificación de correo + recuperación de contraseña +
+      bloqueo por intentos fallidos + SMTP:
 
     venv/bin/python manage.py configure_keycloak_registration
 
@@ -163,11 +164,15 @@ E.1 - Autoregistro + verificación de correo + SMTP:
     (Gmail -> cuenta -> Seguridad -> Verificación en 2 pasos -> Contraseñas
     de aplicación). NO es la contraseña normal de la cuenta.
 
-E.2 - Cierre de sesión (post-logout redirect URI):
+E.2 - Roles de Keycloak reflejados en Django (mapper del claim "roles"):
+
+    venv/bin/python manage.py configure_keycloak_roles
+
+E.3 - Cierre de sesión (post-logout redirect URI):
 
     venv/bin/python manage.py configure_keycloak_logout
 
-E.3 - Interfaz y correos en español:
+E.4 - Interfaz y correos en español:
 
     venv/bin/python manage.py configure_keycloak_locale
 
