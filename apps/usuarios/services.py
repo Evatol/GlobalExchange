@@ -1,6 +1,8 @@
 import secrets
 import string
+
 from django.conf import settings
+from django.core.mail import send_mail
 from keycloak import KeycloakAdmin
 
 
@@ -8,6 +10,28 @@ def generate_random_password(length=12):
     """Genera una contraseña aleatoria y segura."""
     alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
     return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+
+def enviar_credenciales_por_correo(email, username, password):
+    """Envía al usuario su contraseña generada (RF3, alta por administrador).
+
+    El backend de correo sale de ``settings.EMAIL_BACKEND`` (consola en
+    desarrollo, SMTP en producción).
+    """
+    cuerpo = (
+        f"Hola {username},\n\n"
+        "Se creó tu cuenta en GlobalExchange.\n\n"
+        f"Usuario: {username}\n"
+        f"Contraseña temporal: {password}\n\n"
+        "Al iniciar sesión por primera vez se te pedirá cambiarla.\n"
+    )
+    send_mail(
+        subject="GlobalExchange - Credenciales de acceso",
+        message=cuerpo,
+        from_email=None,  # usa DEFAULT_FROM_EMAIL
+        recipient_list=[email],
+        fail_silently=False,
+    )
 
 
 def create_user_in_keycloak(username, email, first_name='', last_name='', role_name='cajero', temporary=True):

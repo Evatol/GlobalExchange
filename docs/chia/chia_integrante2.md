@@ -93,8 +93,20 @@ Sesión de implementación (Claude Code): https://claude.ai/code/session_01RBzpS
 > `configure_keycloak_registration` ahora también activa `resetPasswordAllowed` y
 > `bruteForceProtected`. Se agregaron 9 tests unitarios (27 en total).
 
+> Prompt principal: "Completá el alcance esperado: la demo de creación de usuario + rol
+> (enganchar create_user_in_keycloak + mandar correo) y la asignación usuarios/clientes."
+>
+> Resultado / Impacto: (asignación, RF42) acciones dedicadas en `ClienteViewSet`
+> (`asignar-usuario`, `desasignar-usuario`, `usuarios`) sobre los helpers del modelo.
+> (alta por admin, RF1-RF3) comando `crear_usuario_keycloak <user> <email> --rol` que
+> crea el usuario en Keycloak con contraseña aleatoria, le asigna el rol y **envía la
+> clave por correo**; se reemplazó el `MAILERS` (setting inexistente) por `EMAIL_BACKEND`
+> real (consola en dev, SMTP en prod por env var). +9 tests (36 en total).
+
 ### Archivos / evidencia
 - `apps/usuarios/management/commands/configure_keycloak_*.py` — configuración de Keycloak como código (registro, roles, logout, i18n).
+- `apps/usuarios/management/commands/crear_usuario_keycloak.py` — alta por administrador (RF1-RF3).
+- `apps/usuarios/views.py`, `apps/usuarios/serializers.py` — asignación usuario↔cliente (RF42).
 - `apps/usuarios/backends.py` — sincronización de perfil + roles + acceso al admin desde los claims.
 - `apps/usuarios/oidc.py`, `config/settings.py`, `apps/usuarios/templates/usuarios/menu_principal.html` — logout OIDC.
 - `apps/usuarios/tests.py` — `CustomOIDCBackendTests`, `ProviderLogoutUrlTests`.
