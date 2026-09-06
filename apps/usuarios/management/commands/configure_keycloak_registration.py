@@ -7,7 +7,9 @@ en el mismo estado. Aplica, vía la API admin de Keycloak (``python-keycloak``):
     * ``registrationAllowed = true``          -> aparece el botón "Register".
     * ``verifyEmail = true``                   -> la cuenta nace pendiente de verificar.
     * ``registrationEmailAsUsername = false``  -> el username sigue siendo un campo aparte.
-    * ``smtpServer``                           -> SMTP real para el correo de verificación.
+    * ``resetPasswordAllowed = true``          -> link "Olvidé mi contraseña" (E4-120).
+    * ``bruteForceProtected = true``           -> bloqueo por intentos fallidos (E4-120).
+    * ``smtpServer``                           -> SMTP real para verificación y recuperación.
 
 Además **verifica en modo solo lectura** que el cliente OIDC tenga un redirect URI que
 cubra la callback de Django.
@@ -48,22 +50,29 @@ REALM_FLAG_KEYS = (
     "registrationAllowed",
     "verifyEmail",
     "registrationEmailAsUsername",
+    "resetPasswordAllowed",
+    "bruteForceProtected",
     "loginWithEmailAllowed",
     "duplicateEmailsAllowed",
 )
 
-# Lo que este comando garantiza en el realm.
+# Lo que este comando garantiza en el realm. Keycloak queda a cargo de:
+# autoregistro + verificación de correo + recuperación de contraseña +
+# bloqueo por intentos fallidos (E4-120).
 EXPECTED_FLAGS = {
     "registrationAllowed": True,
     "verifyEmail": True,
     "registrationEmailAsUsername": False,
+    "resetPasswordAllowed": True,
+    "bruteForceProtected": True,
 }
 
 
 class Command(BaseCommand):
     help = (
-        "Activa el autoregistro nativo de Keycloak (registrationAllowed + verifyEmail) "
-        "y configura el SMTP del realm. Idempotente; no crea usuarios."
+        "Deja en manos de Keycloak el autoregistro, la verificación de correo, la "
+        "recuperación de contraseña y el bloqueo por intentos fallidos, y configura "
+        "el SMTP del realm. Idempotente; no crea usuarios."
     )
 
     def add_arguments(self, parser):
