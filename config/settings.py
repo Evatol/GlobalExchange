@@ -187,11 +187,18 @@ OIDC_OP_AUTHORIZATION_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/pr
 OIDC_OP_TOKEN_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/openid-connect/token'
 OIDC_OP_USER_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/openid-connect/userinfo'
 OIDC_OP_JWKS_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/openid-connect/certs'
+OIDC_OP_LOGOUT_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/openid-connect/logout'
 
 OIDC_RP_SIGN_ALGO = 'RS256'
 LOGIN_URL = '/oidc/authenticate/'
 LOGIN_REDIRECT_URL = '/'
-LOGOUT_REDIRECT_URL = '/'
+
+# Cierre de sesión: además de borrar la sesión local, cerramos la sesión SSO en
+# Keycloak (RP-initiated logout). ``provider_logout_url`` arma la URL con el
+# id_token como hint, por eso guardamos el id_token en la sesión.
+LOGOUT_REDIRECT_URL = '/api/usuarios/'
+OIDC_OP_LOGOUT_URL_METHOD = 'apps.usuarios.oidc.provider_logout_url'
+OIDC_STORE_ID_TOKEN = True
 
 # Acceso administrativo a Keycloak (para creación de usuarios vía API)
 KEYCLOAK_SERVER_URL = "http://localhost:8080/"
