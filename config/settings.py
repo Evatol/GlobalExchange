@@ -110,6 +110,13 @@ DATABASES = {
 
 }
 
+# Default primary key field type
+# https://docs.djangoproject.com/en/6.1/ref/settings/#default-auto-field
+# Coincide con el tipo con el que se crearon las tablas (migración 0001);
+# no genera migraciones y silencia los avisos models.W042.
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
 # Password validation
 # https://docs.djangoproject.com/en/6.1/ref/settings/#auth-password-validators
 
