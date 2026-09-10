@@ -43,3 +43,4 @@ class SimulacionRequestSerializer(serializers.Serializer):
                 'La cantidad debe ser mayor a cero.'
             )
         return value
+        read_only_fields = ['id']

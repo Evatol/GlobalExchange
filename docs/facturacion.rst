@@ -15,7 +15,7 @@ Submodules
 facturacion.admin module
 ------------------------
 
-.. automodule:: facturacion.admin
+.. automodule:: apps.facturacion.admin
    :members:
    :show-inheritance:
    :undoc-members:
@@ -23,7 +23,7 @@ facturacion.admin module
 facturacion.apps module
 -----------------------
 
-.. automodule:: facturacion.apps
+.. automodule:: apps.facturacion.apps
    :members:
    :show-inheritance:
    :undoc-members:
@@ -31,7 +31,7 @@ facturacion.apps module
 facturacion.models module
 -------------------------
 
-.. automodule:: facturacion.models
+.. automodule:: apps.facturacion.models
    :members:
    :show-inheritance:
    :undoc-members:
@@ -39,7 +39,7 @@ facturacion.models module
 facturacion.tests module
 ------------------------
 
-.. automodule:: facturacion.tests
+.. automodule:: apps.facturacion.tests
    :members:
    :show-inheritance:
    :undoc-members:
@@ -47,7 +47,7 @@ facturacion.tests module
 facturacion.urls module
 -----------------------
 
-.. automodule:: facturacion.urls
+.. automodule:: apps.facturacion.urls
    :members:
    :show-inheritance:
    :undoc-members:
@@ -55,7 +55,7 @@ facturacion.urls module
 facturacion.views module
 ------------------------
 
-.. automodule:: facturacion.views
+.. automodule:: apps.facturacion.views
    :members:
    :show-inheritance:
    :undoc-members:
@@ -63,7 +63,7 @@ facturacion.views module
 Module contents
 ---------------
 
-.. automodule:: facturacion
+.. automodule:: apps.facturacion
    :members:
    :show-inheritance:
    :undoc-members:

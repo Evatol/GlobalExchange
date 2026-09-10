@@ -15,7 +15,7 @@ Submodules
 reportes.admin module
 ---------------------
 
-.. automodule:: reportes.admin
+.. automodule:: apps.reportes.admin
    :members:
    :show-inheritance:
    :undoc-members:
@@ -23,7 +23,7 @@ reportes.admin module
 reportes.apps module
 --------------------
 
-.. automodule:: reportes.apps
+.. automodule:: apps.reportes.apps
    :members:
    :show-inheritance:
    :undoc-members:
@@ -31,7 +31,7 @@ reportes.apps module
 reportes.models module
 ----------------------
 
-.. automodule:: reportes.models
+.. automodule:: apps.reportes.models
    :members:
    :show-inheritance:
    :undoc-members:
@@ -39,7 +39,7 @@ reportes.models module
 reportes.tests module
 ---------------------
 
-.. automodule:: reportes.tests
+.. automodule:: apps.reportes.tests
    :members:
    :show-inheritance:
    :undoc-members:
@@ -47,7 +47,7 @@ reportes.tests module
 reportes.urls module
 --------------------
 
-.. automodule:: reportes.urls
+.. automodule:: apps.reportes.urls
    :members:
    :show-inheritance:
    :undoc-members:
@@ -55,7 +55,7 @@ reportes.urls module
 reportes.views module
 ---------------------
 
-.. automodule:: reportes.views
+.. automodule:: apps.reportes.views
    :members:
    :show-inheritance:
    :undoc-members:
@@ -63,7 +63,7 @@ reportes.views module
 Module contents
 ---------------
 
-.. automodule:: reportes
+.. automodule:: apps.reportes
    :members:
    :show-inheritance:
    :undoc-members:

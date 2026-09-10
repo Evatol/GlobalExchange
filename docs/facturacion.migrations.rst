@@ -7,7 +7,7 @@ Submodules
 facturacion.migrations.0001\_initial module
 -------------------------------------------
 
-.. automodule:: facturacion.migrations.0001_initial
+.. automodule:: apps.facturacion.migrations.0001_initial
    :members:
    :show-inheritance:
    :undoc-members:
@@ -15,7 +15,7 @@ facturacion.migrations.0001\_initial module
 Module contents
 ---------------
 
-.. automodule:: facturacion.migrations
+.. automodule:: apps.facturacion.migrations
    :members:
    :show-inheritance:
    :undoc-members:

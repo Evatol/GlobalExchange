@@ -15,7 +15,7 @@ Submodules
 proyectos.admin module
 ----------------------
 
-.. automodule:: proyectos.admin
+.. automodule:: apps.proyectos.admin
    :members:
    :show-inheritance:
    :undoc-members:
@@ -23,7 +23,7 @@ proyectos.admin module
 proyectos.apps module
 ---------------------
 
-.. automodule:: proyectos.apps
+.. automodule:: apps.proyectos.apps
    :members:
    :show-inheritance:
    :undoc-members:
@@ -31,7 +31,7 @@ proyectos.apps module
 proyectos.models module
 -----------------------
 
-.. automodule:: proyectos.models
+.. automodule:: apps.proyectos.models
    :members:
    :show-inheritance:
    :undoc-members:
@@ -39,7 +39,7 @@ proyectos.models module
 proyectos.tests module
 ----------------------
 
-.. automodule:: proyectos.tests
+.. automodule:: apps.proyectos.tests
    :members:
    :show-inheritance:
    :undoc-members:
@@ -47,7 +47,7 @@ proyectos.tests module
 proyectos.urls module
 ---------------------
 
-.. automodule:: proyectos.urls
+.. automodule:: apps.proyectos.urls
    :members:
    :show-inheritance:
    :undoc-members:
@@ -55,7 +55,7 @@ proyectos.urls module
 proyectos.views module
 ----------------------
 
-.. automodule:: proyectos.views
+.. automodule:: apps.proyectos.views
    :members:
    :show-inheritance:
    :undoc-members:
@@ -63,7 +63,7 @@ proyectos.views module
 Module contents
 ---------------
 
-.. automodule:: proyectos
+.. automodule:: apps.proyectos
    :members:
    :show-inheritance:
    :undoc-members:

@@ -1,12 +1,20 @@
 from decimal import Decimal
+from io import StringIO
+from unittest.mock import patch
 
+from django.contrib.auth.models import Group, User
+from django.core import mail
 from django.core.exceptions import ValidationError
+from django.core.management import call_command
 from django.db import IntegrityError
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from .backends import CustomOIDCBackend
 from .models import Cliente, Usuario
+from .oidc import provider_logout_url
+from .services import enviar_credenciales_por_correo
 
 
 def cliente_valido(**overrides):
@@ -192,3 +200,196 @@ class ClienteAPITests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
         cliente = Cliente.objects.get(pk=resp.data['id'])
         self.assertIn(usuario, cliente.usuarios.all())
+
+
+class CustomOIDCBackendTests(TestCase):
+    """E4-120: el backend OIDC sincroniza perfil, roles y acceso al admin
+    desde los claims de Keycloak."""
+
+    def setUp(self):
+        self.backend = CustomOIDCBackend()
+
+    def _user(self, **kw):
+        defaults = dict(username='u1', email='u1@example.com')
+        defaults.update(kw)
+        return User.objects.create_user(**defaults)
+
+    def test_sincroniza_perfil_basico(self):
+        user = self._user()
+        claims = {
+            'given_name': 'Ana', 'family_name': 'García',
+            'email': 'ana@example.com', 'preferred_username': 'ana',
+        }
+        self.backend._sync_user_profile(user, claims)
+        user.refresh_from_db()
+        self.assertEqual(user.first_name, 'Ana')
+        self.assertEqual(user.last_name, 'García')
+        self.assertEqual(user.email, 'ana@example.com')
+        self.assertEqual(user.username, 'ana')
+
+    def test_roles_de_keycloak_se_reflejan_en_grupos(self):
+        user = self._user()
+        self.backend._sync_user_profile(user, {'roles': ['cajero', 'analista']})
+        self.assertEqual(
+            sorted(user.groups.values_list('name', flat=True)),
+            ['analista', 'cajero'],
+        )
+
+    def test_rol_admin_otorga_acceso_al_panel(self):
+        user = self._user()
+        self.backend._sync_user_profile(user, {'roles': ['administrador']})
+        user.refresh_from_db()
+        self.assertTrue(user.is_staff)
+        self.assertTrue(user.is_superuser)
+
+    def test_sin_rol_admin_no_hay_acceso_al_panel(self):
+        user = self._user(is_staff=True, is_superuser=True)
+        self.backend._sync_user_profile(user, {'roles': ['cajero']})
+        user.refresh_from_db()
+        self.assertFalse(user.is_staff)
+        self.assertFalse(user.is_superuser)
+
+    def test_revocacion_de_rol_se_refleja(self):
+        user = self._user()
+        user.groups.add(Group.objects.create(name='cajero'))
+        self.backend._sync_user_profile(user, {'roles': ['analista']})
+        self.assertEqual(
+            list(user.groups.values_list('name', flat=True)), ['analista']
+        )
+
+    def test_roles_internos_de_keycloak_se_ignoran(self):
+        user = self._user()
+        self.backend._sync_user_profile(user, {'roles': [
+            'offline_access', 'uma_authorization',
+            'default-roles-globalexchange', 'cajero',
+        ]})
+        self.assertEqual(
+            list(user.groups.values_list('name', flat=True)), ['cajero']
+        )
+
+    def test_sin_claim_de_roles_no_toca_grupos(self):
+        user = self._user()
+        user.groups.add(Group.objects.create(name='manual'))
+        self.backend._sync_user_profile(user, {'given_name': 'X'})
+        self.assertEqual(
+            list(user.groups.values_list('name', flat=True)), ['manual']
+        )
+
+
+class ProviderLogoutUrlTests(TestCase):
+    """E4-120: la URL de logout apunta a Keycloak para cerrar la sesión SSO."""
+
+    def setUp(self):
+        self.rf = RequestFactory()
+
+    def _request(self, session=None):
+        req = self.rf.get('/')  # host por defecto: testserver
+        req.session = session or {}
+        return req
+
+    def test_incluye_id_token_hint_si_esta_en_sesion(self):
+        url = provider_logout_url(self._request({'oidc_id_token': 'TOKEN123'}))
+        self.assertIn('protocol/openid-connect/logout', url)
+        self.assertIn('id_token_hint=TOKEN123', url)
+        self.assertIn('post_logout_redirect_uri=', url)
+
+    def test_usa_client_id_si_no_hay_id_token(self):
+        url = provider_logout_url(self._request())
+        self.assertIn('client_id=django-backend', url)
+        self.assertNotIn('id_token_hint', url)
+
+
+class AsignacionUsuariosClientesTests(TestCase):
+    """RF42: endpoints dedicados de asignación usuario <-> cliente."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.cliente = Cliente.objects.create(**cliente_valido())
+        self.usuario = Usuario.objects.create(
+            username='op1', email='op1@example.com', nombres='Op', apellidos='Uno',
+            telefono='0981000000', direccion='Asunción',
+        )
+        self.base = f'/api/usuarios/clientes/{self.cliente.pk}/'
+
+    def test_asignar_usuario(self):
+        r = self.client.post(
+            f'{self.base}asignar-usuario/', {'usuario': self.usuario.pk}, format='json'
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.data)
+        self.assertIn(self.usuario, self.cliente.usuarios.all())
+        self.assertIn(self.usuario.pk, r.data['usuarios'])
+
+    def test_asignar_usuario_inexistente_falla(self):
+        r = self.client.post(
+            f'{self.base}asignar-usuario/', {'usuario': 99999}, format='json'
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_asignar_sin_campo_usuario_falla(self):
+        r = self.client.post(f'{self.base}asignar-usuario/', {}, format='json')
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_asignar_es_idempotente(self):
+        for _ in range(2):
+            r = self.client.post(
+                f'{self.base}asignar-usuario/', {'usuario': self.usuario.pk}, format='json'
+            )
+            self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(self.cliente.usuarios.count(), 1)
+
+    def test_desasignar_usuario(self):
+        self.cliente.asociar_usuario(self.usuario)
+        r = self.client.post(
+            f'{self.base}desasignar-usuario/', {'usuario': self.usuario.pk}, format='json'
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertNotIn(self.usuario, self.cliente.usuarios.all())
+
+    def test_listar_usuarios_asignados(self):
+        self.cliente.asociar_usuario(self.usuario)
+        r = self.client.get(f'{self.base}usuarios/')
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(r.data), 1)
+        self.assertEqual(r.data[0]['username'], 'op1')
+
+
+class AltaUsuarioPorAdminTests(TestCase):
+    """RF1-RF3: alta de usuario por el administrador (crear_usuario_keycloak)."""
+
+    def test_enviar_credenciales_por_correo(self):
+        enviar_credenciales_por_correo('nuevo@example.com', 'nuevo', 'Secreta-123!')
+        self.assertEqual(len(mail.outbox), 1)
+        msg = mail.outbox[0]
+        self.assertEqual(msg.to, ['nuevo@example.com'])
+        self.assertIn('Secreta-123!', msg.body)
+        self.assertIn('nuevo', msg.body)
+
+    @patch('apps.usuarios.services.create_user_in_keycloak')
+    def test_comando_crea_en_keycloak_y_envia_correo(self, mock_create):
+        mock_create.return_value = {
+            'user_id': 'abc-123', 'username': 'jperez', 'email': 'jperez@example.com',
+            'role': 'cajero', 'generated_password': 'Rnd-Pass-9!',
+        }
+        call_command(
+            'crear_usuario_keycloak', 'jperez', 'jperez@example.com',
+            '--rol', 'cajero', '--nombre', 'Juan', stdout=StringIO(),
+        )
+        mock_create.assert_called_once()
+        _, kwargs = mock_create.call_args
+        self.assertEqual(kwargs['username'], 'jperez')
+        self.assertEqual(kwargs['role_name'], 'cajero')
+        self.assertEqual(kwargs['first_name'], 'Juan')
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn('Rnd-Pass-9!', mail.outbox[0].body)
+
+    @patch('apps.usuarios.services.create_user_in_keycloak')
+    def test_comando_no_email_no_envia(self, mock_create):
+        mock_create.return_value = {
+            'user_id': 'x', 'username': 'u', 'email': 'u@example.com',
+            'role': 'cajero', 'generated_password': 'p',
+        }
+        call_command(
+            'crear_usuario_keycloak', 'u', 'u@example.com', '--no-email',
+            stdout=StringIO(),
+        )
+        self.assertEqual(len(mail.outbox), 0)

@@ -7,7 +7,7 @@ Submodules
 transacciones.migrations.0001\_initial module
 ---------------------------------------------
 
-.. automodule:: transacciones.migrations.0001_initial
+.. automodule:: apps.transacciones.migrations.0001_initial
    :members:
    :show-inheritance:
    :undoc-members:
@@ -15,7 +15,7 @@ transacciones.migrations.0001\_initial module
 Module contents
 ---------------
 
-.. automodule:: transacciones.migrations
+.. automodule:: apps.transacciones.migrations
    :members:
    :show-inheritance:
    :undoc-members:

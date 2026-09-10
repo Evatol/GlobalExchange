@@ -7,7 +7,7 @@ Submodules
 notificaciones.migrations.0001\_initial module
 ----------------------------------------------
 
-.. automodule:: notificaciones.migrations.0001_initial
+.. automodule:: apps.notificaciones.migrations.0001_initial
    :members:
    :show-inheritance:
    :undoc-members:
@@ -15,7 +15,7 @@ notificaciones.migrations.0001\_initial module
 Module contents
 ---------------
 
-.. automodule:: notificaciones.migrations
+.. automodule:: apps.notificaciones.migrations
    :members:
    :show-inheritance:
    :undoc-members:

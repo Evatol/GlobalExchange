@@ -40,7 +40,11 @@
                     <span class="me-3">
                         Bienvenido, <strong>{{ usuario.username }}</strong>
                     </span>
-                    <a href="/admin/logout/" class="btn btn-outline-danger btn-sm">Cerrar Sesión</a>
+                    {# Logout OIDC: cierra la sesión de Django y la sesión SSO de Keycloak (POST, requerido por mozilla-django-oidc). #}
+                    <form method="post" action="{% url 'oidc_logout' %}" class="d-inline m-0">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-danger btn-sm">Cerrar Sesión</button>
+                    </form>
                 </div>
             </div>
         </div>
