@@ -29,11 +29,26 @@ class TasaCambio(models.Model):
     origen = models.CharField(max_length=100)
     estado = models.BooleanField(default=True)
 
+    def _formatear_valor(self, valor):
+        """Formatea el valor decimal para ocultar ceros innecesarios en la vista."""
+        if valor is None:
+            return ""
+        if valor % 1 == 0:
+            return f"{int(valor):,}".replace(",", ".")
+        texto = f"{valor:.6f}".rstrip('0').rstrip('.')
+        return texto.replace(".", ",")
+
     def obtener_tasa_compra(self):
         return self.tasa_compra
 
     def obtener_tasa_venta(self):
         return self.tasa_venta
+
+    def obtener_tasa_compra_formateada(self):
+        return self._formatear_valor(self.tasa_compra)
+
+    def obtener_tasa_venta_formateada(self):
+        return self._formatear_valor(self.tasa_venta)
 
     def actualizar_tasa_compra(self, tasa):
         self.tasa_compra = tasa
@@ -44,7 +59,7 @@ class TasaCambio(models.Model):
         self.save()
 
     def __str__(self):
-        return f'{self.moneda.codigo} - {self.tasa_venta}'
+        return f'{self.moneda.codigo} - {self.obtener_tasa_venta_formateada()}'
 
 
 class Simulacion(models.Model):
