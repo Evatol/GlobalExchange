@@ -71,3 +71,17 @@ class MonedaCRUDTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.moneda.refresh_from_db()
         self.assertTrue(self.moneda.estado)
+
+    def test_filtrar_por_codigo(self):
+        Moneda.objects.create(codigo='EUR', nombre='Euro', simbolo='€')
+        response = self.client.get(self.list_url, {'codigo': 'EUR'})
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['codigo'], 'EUR')
+
+    def test_filtrar_por_estado(self):
+        Moneda.objects.create(codigo='EUR', nombre='Euro', simbolo='€', estado=False)
+        activas = self.client.get(self.list_url, {'estado': 'true'})
+        inactivas = self.client.get(self.list_url, {'estado': 'false'})
+        self.assertEqual(activas.data['count'], 1)
+        self.assertEqual(inactivas.data['count'], 1)
+        self.assertEqual(inactivas.data['results'][0]['codigo'], 'EUR')
