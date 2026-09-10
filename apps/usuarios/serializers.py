@@ -11,6 +11,14 @@ class UsuarioResumenSerializer(serializers.ModelSerializer):
         fields = ['id', 'username', 'nombres', 'apellidos', 'email', 'estado']
 
 
+class ClienteResumenSerializer(serializers.ModelSerializer):
+    """Datos mínimos de un cliente, para el selector de cliente activo (RF43)."""
+
+    class Meta:
+        model = Cliente
+        fields = ['id', 'nombre', 'documento', 'tipo', 'categoria']
+
+
 class AsignacionUsuarioSerializer(serializers.Serializer):
     """Entrada de las acciones asignar/desasignar usuario de un cliente (RF42)."""
 
