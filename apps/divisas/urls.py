@@ -1,3 +1,8 @@
-from django.urls import path
+from rest_framework.routers import DefaultRouter
 
-urlpatterns = []
+from .views import MonedaViewSet
+
+router = DefaultRouter()
+router.register('monedas', MonedaViewSet, basename='moneda')
+
+urlpatterns = router.urls
