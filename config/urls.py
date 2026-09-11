@@ -3,7 +3,8 @@ from django.urls import path, include
 from django.views.generic import RedirectView
 
 urlpatterns = [
-    path('', RedirectView.as_view(url='/admin/', permanent=False)),
+    # Redirige la raíz directamente a la pantalla pública HTML de divisas
+    path('', RedirectView.as_view(url='/api/divisas/', permanent=False)),
     path('admin/', admin.site.urls),
 
     # Módulos de la API

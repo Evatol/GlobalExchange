@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Global Exchange - Cotizaciones y Simulador</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #0f2525; color: #fff; font-family: sans-serif; }
+        .card-custom { background-color: #173333; border: none; border-radius: 10px; }
+        .table-custom { color: #fff; background-color: transparent; }
+        .btn-custom { background-color: #205c5c; color: white; }
+        .btn-custom:hover { background-color: #2b7a7a; color: white; }
+    </style>
+</head>
+<body>
+    <!-- Barra superior unificada con la marca Global Exchange y opciones de usuario -->
+    <nav class="navbar navbar-expand-lg navbar-dark px-4 py-3" style="background-color: #0b1c1c;">
+        <a class="navbar-brand fw-bold text-warning" href="#">GLOBAL EXCHANGE</a>
+        <div class="ms-auto d-flex align-items-center">
+            {% if request.user.is_authenticated %}
+                <span class="me-3">Hola, {{ request.user.username }}</span>
+                {% if request.user.is_staff or request.user.is_superuser %}
+                    <a href="/admin/" class="btn btn-outline-warning btn-sm me-2">Panel Admin</a>
+                {% endif %}
+                <form action="{% url 'admin:logout' %}?next=/" method="POST" class="d-inline">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-outline-light btn-sm">Cerrar Sesión</button>
+                </form>
+            {% else %}
+                <a href="{% url 'admin:login' %}?next=/" class="btn btn-outline-light btn-sm">Iniciar Sesión</a>
+            {% endif %}
+        </div>
+    </nav>
+
+    <div class="container my-5">
+        <h2 class="text-center mb-4">Cotizaciones del Día</h2>
+
+        <div class="row">
+            <!-- Tabla de Tasas -->
+            <div class="col-md-7 mb-4">
+                <div class="card card-custom p-4 shadow">
+                    <h4 class="mb-3">Cambio del Día</h4>
+                    <div class="table-responsive">
+                        <table class="table table-custom align-middle">
+                            <thead>
+                                <tr class="text-muted">
+                                    <th>MONEDA</th>
+                                    <th>COMPRA</th>
+                                    <th>VENTA</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for tasa in tasas %}
+                                <tr>
+                                    <td><strong>{{ tasa.moneda.codigo }}</strong> - {{ tasa.moneda.nombre }}</td>
+                                    <td>{{ tasa.tasa_compra|floatformat:2 }} <small class="text-warning">PYG</small></td>
+                                    <td>{{ tasa.tasa_venta|floatformat:2 }} <small class="text-warning">PYG</small></td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="3" class="text-center text-muted">No hay tasas activas registradas.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Simulador / Calculadora -->
+            <div class="col-md-5">
+                <div class="card card-custom p-4 shadow">
+                    <h4 class="mb-3">Calculadora de Divisas</h4>
+                    
+                    {% if error %}
+                        <div class="alert alert-danger py-2">{{ error }}</div>
+                    {% endif %}
+
+                    <form method="POST">
+                        {% csrf_token %}
+                        <div class="mb-3">
+                            <label class="form-label text-muted">Moneda a operar</label>
+                            <select name="moneda_codigo" class="form-select bg-dark text-white border-secondary" required>
+                                <option value="">Seleccione moneda...</option>
+                                {% for tasa in tasas %}
+                                    <option value="{{ tasa.moneda.codigo }}" {% if moneda_seleccionada == tasa.moneda.codigo %}selected{% endif %}>
+                                        {{ tasa.moneda.codigo }} - {{ tasa.moneda.nombre }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label text-muted">Tipo de Operación</label>
+                            <select name="tipo_operacion" class="form-select bg-dark text-white border-secondary">
+                                <option value="compra" {% if tipo_operacion == 'compra' %}selected{% endif %}>Compra</option>
+                                <option value="venta" {% if tipo_operacion == 'venta' %}selected{% endif %}>Venta</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label text-muted">Cantidad (Monto a convertir)</label>
+                            <input type="number" step="0.01" name="cantidad" value="{{ cantidad_ingresada }}" class="form-control bg-dark text-white border-secondary" placeholder="Ej. 100" required>
+                        </div>
+
+                        <button type="submit" class="btn btn-custom w-100 py-2">Calcular Conversión</button>
+                    </form>
+
+                    {% if resultado %}
+                        <div class="mt-4 p-3 bg-dark rounded border border-secondary text-center">
+                            <h5 class="text-success mb-1">Resultado de la Simulación</h5>
+                            <p class="fs-4 mb-0"><strong>{{ resultado|floatformat:2 }} <span class="text-warning">PYG</span></strong></p>
+                            <small class="text-muted">Tasa aplicada: {{ tasa_aplicada|floatformat:2 }} PYG</small>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
