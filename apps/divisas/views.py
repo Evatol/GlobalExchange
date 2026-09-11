@@ -4,7 +4,66 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from .models import TasaCambio, Simulacion
 from .serializers import TasaCambioSerializer, SimulacionRequestSerializer
+from django.shortcuts import render
+from django.views import View
+from .models import TasaCambio, Simulacion
+from decimal import Decimal
 
+class PantallaPublicaCambiosView(View):
+    """
+    Vista web tradicional (HTML) que muestra la pantalla pública de la casa de cambios,
+    las cotizaciones activas y el simulador de conversión.
+    """
+    def get(self, request):
+        # Obtener tasas activas para la tabla
+        tasas = TasaCambio.objects.filter(estado=True).select_related('moneda')
+        
+        context = {
+            'tasas': tasas,
+        }
+        return render(request, 'divisas/publica.html', context)
+
+    def post(self, request):
+        # Manejo simple del simulador desde el formulario web
+        tasas = TasaCambio.objects.filter(estado=True).select_related('moneda')
+        moneda_codigo = request.POST.get('moneda_codigo')
+        tipo_operacion = request.POST.get('tipo_operacion', 'compra')
+        
+        resultado = None
+        tasa_aplicada = None
+        error = None
+
+        try:
+            cantidad = Decimal(request.POST.get('cantidad', '0'))
+            if cantidad <= 0:
+                raise ValueError("La cantidad debe ser mayor a cero.")
+            
+            tasa_obj = tasas.filter(moneda__codigo__iexact=moneda_codigo).first()
+            if tasa_obj:
+                tasa_aplicada = tasa_obj.tasa_compra if tipo_operacion == 'compra' else tasa_obj.tasa_venta
+                resultado = cantidad * tasa_aplicada
+                
+                # Opcional: guardar simulación
+                Simulacion.objects.create(
+                    tipo_operacion=tipo_operacion,
+                    cantidad=cantidad,
+                    resultado=resultado
+                )
+            else:
+                error = "Seleccione una moneda válida."
+        except Exception as e:
+            error = str(e)
+
+        context = {
+            'tasas': tasas,
+            'resultado': resultado,
+            'tasa_aplicada': tasa_aplicada,
+            'cantidad_ingresada': request.POST.get('cantidad'),
+            'moneda_seleccionada': moneda_codigo,
+            'tipo_operacion': tipo_operacion,
+            'error': error,
+        }
+        return render(request, 'divisas/publica.html', context)
 
 class TasasPublicasView(APIView):
     """
