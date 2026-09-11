@@ -36,6 +36,14 @@ divisas.models module
    :show-inheritance:
    :undoc-members:
 
+divisas.serializers module
+---------------------------
+
+.. automodule:: apps.divisas.serializers
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 divisas.tests module
 --------------------
 

@@ -198,8 +198,15 @@ AUTHENTICATION_BACKENDS = (
     'django.contrib.auth.backends.ModelBackend',
 )
 
-OIDC_RP_CLIENT_ID = 'django-backend'
-OIDC_RP_CLIENT_SECRET = 'tNPOCqVu0s7H09kQgrGYLhXuGCPC72bd5vYbdeZ82WEEBzsP7Zi47OJ9tsIuIvpAjLYOa4BTnVBNEw1JnKQvel'
+OIDC_RP_CLIENT_ID = env('OIDC_RP_CLIENT_ID', default='django-backend')
+# El secreto real del cliente OIDC no debe quedar en el código fuente (QA -
+# Hito 4): se lee de la variable de entorno OIDC_RP_CLIENT_SECRET y, si no
+# está definida, se usa el secreto actual del realm de desarrollo como
+# default para no romper el entorno local de nadie del equipo.
+OIDC_RP_CLIENT_SECRET = env(
+    'OIDC_RP_CLIENT_SECRET',
+    default='tNPOCqVu0s7H09kQgrGYLhXuGCPC72bd5vYbdeZ82WEEBzsP7Zi47OJ9tsIuIvpAjLYOa4BTnVBNEw1JnKQvel',
+)
 
 OIDC_OP_AUTHORIZATION_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/openid-connect/auth'
 OIDC_OP_TOKEN_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/openid-connect/token'
@@ -222,11 +229,13 @@ LOGOUT_REDIRECT_URL = '/'
 OIDC_OP_LOGOUT_URL_METHOD = 'apps.usuarios.oidc.provider_logout_url'
 OIDC_STORE_ID_TOKEN = True
 
-# Acceso administrativo a Keycloak (para creación de usuarios vía API)
-KEYCLOAK_SERVER_URL = "http://localhost:8080/"
-KEYCLOAK_REALM = "GlobalExchange"
-KEYCLOAK_ADMIN_USER = "admin"
-KEYCLOAK_ADMIN_PASSWORD = "admin"
+# Acceso administrativo a Keycloak (para creación de usuarios vía API).
+# Credenciales por variable de entorno (QA - Hito 4): en el default de
+# desarrollo coinciden con el admin/admin del realm local de cada dev.
+KEYCLOAK_SERVER_URL = env('KEYCLOAK_SERVER_URL', default='http://localhost:8080/')
+KEYCLOAK_REALM = env('KEYCLOAK_REALM', default='GlobalExchange')
+KEYCLOAK_ADMIN_USER = env('KEYCLOAK_ADMIN_USER', default='admin')
+KEYCLOAK_ADMIN_PASSWORD = env('KEYCLOAK_ADMIN_PASSWORD', default='admin')
 
 
 # Endurecimiento de seguridad para producción (AMB - Hito 3).

@@ -36,6 +36,14 @@ transacciones.models module
    :show-inheritance:
    :undoc-members:
 
+transacciones.serializers module
+---------------------------------
+
+.. automodule:: apps.transacciones.serializers
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 transacciones.tests module
 --------------------------
 
