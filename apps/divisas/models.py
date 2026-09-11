@@ -20,6 +20,22 @@ class Moneda(models.Model):
         return self.codigo
 
 
+class TasaCambioQuerySet(models.QuerySet):
+    def activa_para(self, moneda_codigo):
+        """Última cotización activa de una moneda (por código), o ``None``.
+
+        Consulta única compartida por la vista pública en HTML
+        (``PantallaPublicaCambiosView``) y el simulador por API
+        (``SimuladorConversionView``), para no repetir el mismo filtro en
+        dos lugares.
+        """
+        return (
+            self.filter(moneda__codigo__iexact=moneda_codigo, estado=True)
+            .order_by('-fecha_hora')
+            .first()
+        )
+
+
 class TasaCambio(models.Model):
     id = models.AutoField(primary_key=True)
     moneda = models.ForeignKey(Moneda, on_delete=models.PROTECT, related_name='tasas')
@@ -28,6 +44,8 @@ class TasaCambio(models.Model):
     fecha_hora = models.DateTimeField(auto_now_add=True)
     origen = models.CharField(max_length=100)
     estado = models.BooleanField(default=True)
+
+    objects = TasaCambioQuerySet.as_manager()
 
     def _formatear_valor(self, valor):
         """Formatea el valor decimal para ocultar ceros innecesarios en la vista."""
