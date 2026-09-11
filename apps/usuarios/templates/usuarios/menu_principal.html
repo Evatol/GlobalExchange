@@ -37,6 +37,21 @@
 
                 <!-- Información del Usuario Autenticado -->
                 <div class="d-flex align-items-center text-white">
+
+                    {# Selector de cliente activo (RF43): solo si el usuario tiene al menos un cliente. #}
+                    {% if mis_clientes %}
+                    <form method="post" action="{% url 'seleccionar_cliente' %}" class="d-flex align-items-center me-3 m-0">
+                        {% csrf_token %}
+                        <label class="me-2 small text-white-50">Cliente:</label>
+                        <select name="cliente" class="form-select form-select-sm" onchange="this.form.submit()">
+                            {% for c in mis_clientes %}
+                            <option value="{{ c.id }}" {% if cliente_activo and c.id == cliente_activo.id %}selected{% endif %}>{{ c.nombre }}</option>
+                            {% endfor %}
+                        </select>
+                        <noscript><button type="submit" class="btn btn-sm btn-outline-light ms-1">Cambiar</button></noscript>
+                    </form>
+                    {% endif %}
+
                     <span class="me-3">
                         Bienvenido, <strong>{{ usuario.username }}</strong>
                     </span>
