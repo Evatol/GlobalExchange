@@ -45,7 +45,34 @@ class CustomOIDCBackend(OIDCAuthenticationBackend):
         self._sync_roles(user, claims)
 
         user.save()
+        self._sync_usuario_negocio(user)
         return user
+
+    @staticmethod
+    def _sync_usuario_negocio(user):
+        """Mantiene un registro ``Usuario`` (modelo de negocio) espejando al
+        ``User`` de auth, para poder asociarlo a clientes (RF42) y elegir el
+        cliente activo (RF43).
+
+        El puente es el ``username`` (ambos usan el ``preferred_username`` de
+        Keycloak). Los datos complementarios (teléfono, dirección) los edita el
+        propio usuario, así que sólo se sincronizan nombre y correo.
+        """
+        from .models import Usuario
+
+        usuario, creado = Usuario.objects.get_or_create(
+            username=user.username,
+            defaults={
+                "email": user.email or f"{user.username}@sin-correo.local",
+                "nombres": user.first_name,
+                "apellidos": user.last_name,
+            },
+        )
+        if not creado:
+            usuario.email = user.email or usuario.email
+            usuario.nombres = user.first_name or usuario.nombres
+            usuario.apellidos = user.last_name or usuario.apellidos
+            usuario.save(update_fields=["email", "nombres", "apellidos"])
 
     def _sync_roles(self, user, claims):
         """Refleja los roles de realm de Keycloak en grupos de Django y en los

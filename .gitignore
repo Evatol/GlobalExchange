@@ -3,6 +3,8 @@
 __pycache__/
 *.sqlite3
 *.env
+.env.*
+!.env.example
 *.rar
 *.log
 # Documentación generada por Sphinx

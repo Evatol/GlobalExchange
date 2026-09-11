@@ -52,6 +52,14 @@ usuarios.serializers module
    :show-inheritance:
    :undoc-members:
 
+usuarios.sesion module
+-----------------------
+
+.. automodule:: apps.usuarios.sesion
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 usuarios.views module
 ---------------------
 

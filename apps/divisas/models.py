@@ -20,6 +20,22 @@ class Moneda(models.Model):
         return self.codigo
 
 
+class TasaCambioQuerySet(models.QuerySet):
+    def activa_para(self, moneda_codigo):
+        """Última cotización activa de una moneda (por código), o ``None``.
+
+        Consulta única compartida por la vista pública en HTML
+        (``PantallaPublicaCambiosView``) y el simulador por API
+        (``SimuladorConversionView``), para no repetir el mismo filtro en
+        dos lugares.
+        """
+        return (
+            self.filter(moneda__codigo__iexact=moneda_codigo, estado=True)
+            .order_by('-fecha_hora')
+            .first()
+        )
+
+
 class TasaCambio(models.Model):
     id = models.AutoField(primary_key=True)
     moneda = models.ForeignKey(Moneda, on_delete=models.PROTECT, related_name='tasas')
@@ -29,11 +45,28 @@ class TasaCambio(models.Model):
     origen = models.CharField(max_length=100)
     estado = models.BooleanField(default=True)
 
+    objects = TasaCambioQuerySet.as_manager()
+
+    def _formatear_valor(self, valor):
+        """Formatea el valor decimal para ocultar ceros innecesarios en la vista."""
+        if valor is None:
+            return ""
+        if valor % 1 == 0:
+            return f"{int(valor):,}".replace(",", ".")
+        texto = f"{valor:.6f}".rstrip('0').rstrip('.')
+        return texto.replace(".", ",")
+
     def obtener_tasa_compra(self):
         return self.tasa_compra
 
     def obtener_tasa_venta(self):
         return self.tasa_venta
+
+    def obtener_tasa_compra_formateada(self):
+        return self._formatear_valor(self.tasa_compra)
+
+    def obtener_tasa_venta_formateada(self):
+        return self._formatear_valor(self.tasa_venta)
 
     def actualizar_tasa_compra(self, tasa):
         self.tasa_compra = tasa
@@ -44,7 +77,7 @@ class TasaCambio(models.Model):
         self.save()
 
     def __str__(self):
-        return f'{self.moneda.codigo} - {self.tasa_venta}'
+        return f'{self.moneda.codigo} - {self.obtener_tasa_venta_formateada()}'
 
 
 class Simulacion(models.Model):

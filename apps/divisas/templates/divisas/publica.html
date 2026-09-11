@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Global Exchange - Cotizaciones y Simulador</title>
+    <!-- Bootstrap 5 CSS (Licencia Libre MIT) -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+    <!-- Misma barra de navegación que el panel principal (menu_principal.html),
+         para mantener un estilo único en todo el sitio. -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="{% url 'pantalla-publica' %}">GlobalExchange</a>
+
+            <div class="d-flex align-items-center text-white">
+                {% if request.user.is_authenticated %}
+                    <span class="me-3">Bienvenido, <strong>{{ request.user.username }}</strong></span>
+                    <a href="{% url 'menu_principal' %}" class="btn btn-outline-light btn-sm me-2">Ir al Portal</a>
+                    {% if request.user.is_staff or request.user.is_superuser %}
+                        <a href="/admin/" class="btn btn-outline-light btn-sm me-2">Panel Admin</a>
+                    {% endif %}
+                    {# Logout OIDC: cierra la sesión de Django y la sesión SSO de Keycloak. #}
+                    <form action="{% url 'oidc_logout' %}" method="POST" class="d-inline m-0">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-danger btn-sm">Cerrar Sesión</button>
+                    </form>
+                {% else %}
+                    {# Login OIDC (Keycloak): next lleva al portal (menu_principal) tras autenticarse. #}
+                    <a href="{% url 'oidc_authentication_init' %}?next={% url 'menu_principal' %}" class="btn btn-outline-light btn-sm">Ingresar al Portal</a>
+                {% endif %}
+            </div>
+        </div>
+    </nav>
+
+    <div class="container my-5">
+        <div class="row">
+            <div class="col-md-12 text-center mb-4">
+                <h2>Cotizaciones del Día</h2>
+                <p class="text-muted">Tasas de cambio vigentes y calculadora de conversión.</p>
+            </div>
+        </div>
+
+        <div class="row g-4">
+            <!-- Tabla de Tasas -->
+            <div class="col-md-7">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Cambio del Día</h5>
+                        <div class="table-responsive">
+                            <table class="table align-middle mb-0">
+                                <thead>
+                                    <tr class="text-muted">
+                                        <th>MONEDA</th>
+                                        <th>COMPRA</th>
+                                        <th>VENTA</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for tasa in tasas %}
+                                    <tr>
+                                        <td><strong>{{ tasa.moneda.codigo }}</strong> - {{ tasa.moneda.nombre }}</td>
+                                        <td>{{ tasa.tasa_compra|floatformat:2 }} <small class="text-muted">PYG</small></td>
+                                        <td>{{ tasa.tasa_venta|floatformat:2 }} <small class="text-muted">PYG</small></td>
+                                    </tr>
+                                    {% empty %}
+                                    <tr>
+                                        <td colspan="3" class="text-center text-muted">No hay tasas activas registradas.</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Simulador / Calculadora -->
+            <div class="col-md-5">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Calculadora de Divisas</h5>
+
+                        {% if error %}
+                            <div class="alert alert-danger py-2">{{ error }}</div>
+                        {% endif %}
+
+                        <form method="POST">
+                            {% csrf_token %}
+                            <div class="mb-3">
+                                <label class="form-label">Moneda a operar</label>
+                                <select name="moneda_codigo" class="form-select" required>
+                                    <option value="">Seleccione moneda...</option>
+                                    {% for tasa in tasas %}
+                                        <option value="{{ tasa.moneda.codigo }}" {% if moneda_seleccionada == tasa.moneda.codigo %}selected{% endif %}>
+                                            {{ tasa.moneda.codigo }} - {{ tasa.moneda.nombre }}
+                                        </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">Tipo de Operación</label>
+                                <select name="tipo_operacion" class="form-select">
+                                    <option value="compra" {% if tipo_operacion == 'compra' %}selected{% endif %}>Compra</option>
+                                    <option value="venta" {% if tipo_operacion == 'venta' %}selected{% endif %}>Venta</option>
+                                </select>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">Cantidad (monto a convertir)</label>
+                                <input type="number" step="0.01" name="cantidad" value="{{ cantidad_ingresada }}" class="form-control" placeholder="Ej. 100" required>
+                            </div>
+
+                            <button type="submit" class="btn btn-primary w-100">Calcular Conversión</button>
+                        </form>
+
+                        {% if resultado %}
+                            <div class="mt-4 p-3 bg-light rounded border text-center">
+                                <h6 class="text-success mb-1">Resultado de la Simulación</h6>
+                                <p class="fs-4 mb-0"><strong>{{ resultado|floatformat:2 }} PYG</strong></p>
+                                <small class="text-muted">Tasa aplicada: {{ tasa_aplicada|floatformat:2 }} PYG</small>
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap 5 JS Bundle -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

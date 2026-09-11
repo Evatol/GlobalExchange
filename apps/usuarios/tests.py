@@ -393,3 +393,95 @@ class AltaUsuarioPorAdminTests(TestCase):
             stdout=StringIO(),
         )
         self.assertEqual(len(mail.outbox), 0)
+
+
+class PuenteUsuarioNegocioTests(TestCase):
+    """RF43: el backend OIDC crea un Usuario (negocio) espejando al User de auth."""
+
+    def setUp(self):
+        self.backend = CustomOIDCBackend()
+
+    def test_sync_crea_usuario_negocio(self):
+        user = User.objects.create_user('jperez', 'jperez@example.com')
+        self.backend._sync_user_profile(user, {
+            'given_name': 'Juan', 'family_name': 'Pérez',
+            'email': 'jperez@example.com', 'preferred_username': 'jperez',
+        })
+        usuario = Usuario.objects.get(username='jperez')
+        self.assertEqual(usuario.email, 'jperez@example.com')
+        self.assertEqual(usuario.nombres, 'Juan')
+
+    def test_sync_no_pisa_telefono_ni_direccion(self):
+        Usuario.objects.create(
+            username='ana', email='ana@example.com', nombres='Ana', apellidos='G',
+            telefono='0981123456', direccion='Asunción',
+        )
+        user = User.objects.create_user('ana', 'ana@example.com')
+        self.backend._sync_user_profile(user, {
+            'given_name': 'Ana María', 'family_name': 'González',
+            'email': 'ana@example.com', 'preferred_username': 'ana',
+        })
+        usuario = Usuario.objects.get(username='ana')
+        self.assertEqual(usuario.nombres, 'Ana María')
+        self.assertEqual(usuario.telefono, '0981123456')
+        self.assertEqual(usuario.direccion, 'Asunción')
+
+
+class SelectorClienteActivoTests(TestCase):
+    """RF43: selección del cliente activo en la sesión."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user('op', 'op@example.com')
+        self.usuario = Usuario.objects.create(
+            username='op', email='op@example.com', nombres='Op', apellidos='Uno',
+        )
+        self.c1 = Cliente.objects.create(nombre='Cliente Uno', documento='C1', tipo='FISICA')
+        self.c2 = Cliente.objects.create(nombre='Cliente Dos', documento='C2', tipo='FISICA')
+        self.inactivo = Cliente.objects.create(
+            nombre='Inactivo', documento='C3', tipo='FISICA', estado=False,
+        )
+        self.usuario.clientes.add(self.c1, self.c2, self.inactivo)
+        self.client.force_authenticate(user=self.user)
+
+    def test_mis_clientes_lista_solo_activos_asociados(self):
+        resp = self.client.get('/api/usuarios/mis-clientes/')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        nombres = {c['nombre'] for c in resp.data['clientes']}
+        self.assertEqual(nombres, {'Cliente Uno', 'Cliente Dos'})
+
+    def test_seleccionar_cliente_activo(self):
+        resp = self.client.post('/api/usuarios/cliente-activo/', {'cliente': self.c2.pk}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data['nombre'], 'Cliente Dos')
+        # persiste en la sesión
+        self.assertEqual(self.client.get('/api/usuarios/cliente-activo/').data['id'], self.c2.pk)
+
+    def test_no_puede_elegir_cliente_no_asociado(self):
+        ajeno = Cliente.objects.create(nombre='Ajeno', documento='C9', tipo='FISICA')
+        resp = self.client.post('/api/usuarios/cliente-activo/', {'cliente': ajeno.pk}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_auto_selecciona_si_hay_uno_solo(self):
+        self.usuario.clientes.set([self.c1])
+        resp = self.client.get('/api/usuarios/cliente-activo/')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data['id'], self.c1.pk)
+
+    def test_sin_cliente_activo_devuelve_404(self):
+        resp = self.client.get('/api/usuarios/cliente-activo/')
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_formulario_del_menu_cambia_el_cliente(self):
+        self.client.force_login(self.user)
+        self.client.post('/api/usuarios/seleccionar-cliente/', {'cliente': self.c2.pk})
+        resp = self.client.get('/api/usuarios/')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.context['cliente_activo'], self.c2)
+
+    def test_endpoints_requieren_login(self):
+        self.client.force_authenticate(user=None)
+        self.assertEqual(
+            self.client.get('/api/usuarios/mis-clientes/').status_code,
+            status.HTTP_403_FORBIDDEN,
+        )

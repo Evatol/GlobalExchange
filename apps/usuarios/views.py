@@ -1,13 +1,17 @@
-from django.shortcuts import render
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import PermissionDenied
+from django.shortcuts import redirect, render
 
 from rest_framework import status, viewsets
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from . import sesion
 from .models import Cliente
 from .serializers import (
     AsignacionUsuarioSerializer,
+    ClienteResumenSerializer,
     ClienteSerializer,
     UsuarioResumenSerializer,
 )
@@ -15,13 +19,53 @@ from .serializers import (
 
 @login_required
 def menu_principal_view(request):
-    """
-    Vista del Menú Principal conectada al estado de autenticación.
-    """
+    """Menú principal, con el selector de cliente activo (RF43)."""
     context = {
         'usuario': request.user,
+        'mis_clientes': sesion.clientes_disponibles(request),
+        'cliente_activo': sesion.get_cliente_activo(request),
     }
     return render(request, 'usuarios/menu_principal.html', context)
+
+
+@login_required
+def seleccionar_cliente_view(request):
+    """Cambia el cliente activo desde el formulario del menú (RF43)."""
+    if request.method == 'POST':
+        try:
+            sesion.set_cliente_activo(request, request.POST.get('cliente'))
+        except PermissionDenied:
+            pass  # entrada inválida: se ignora y se vuelve al menú
+    return redirect('menu_principal')
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def mis_clientes(request):
+    """Clientes a los que el usuario está asociado, y cuál está activo (RF43)."""
+    return Response({
+        'clientes': ClienteResumenSerializer(
+            sesion.clientes_disponibles(request), many=True
+        ).data,
+        'cliente_activo': getattr(sesion.get_cliente_activo(request), 'pk', None),
+    })
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def cliente_activo(request):
+    """GET: cliente activo actual. POST ``{"cliente": <id>}``: lo cambia (RF43)."""
+    if request.method == 'POST':
+        try:
+            cliente = sesion.set_cliente_activo(request, request.data.get('cliente'))
+        except PermissionDenied as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_403_FORBIDDEN)
+        return Response(ClienteResumenSerializer(cliente).data)
+
+    activo = sesion.get_cliente_activo(request)
+    if activo is None:
+        return Response({'detail': 'No hay cliente activo.'}, status=status.HTTP_404_NOT_FOUND)
+    return Response(ClienteResumenSerializer(activo).data)
 
 
 class ClienteViewSet(viewsets.ModelViewSet):

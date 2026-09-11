@@ -6,6 +6,8 @@ from apps.divisas.models import Moneda
 
 
 class MetodoPago(models.Model):
+    """Catálogo de métodos de pago admitidos (transferencia, billetera, efectivo…)."""
+
     id = models.AutoField(primary_key=True)
     nombre = models.CharField(max_length=100)
     tipo = models.CharField(max_length=50)
@@ -24,6 +26,60 @@ class MetodoPago(models.Model):
 
     def __str__(self):
         return self.nombre
+
+
+class MedioPagoCliente(models.Model):
+    """Medio de pago concreto registrado por un cliente (RF17).
+
+    Un cliente puede tener varios: una cuenta bancaria, una billetera
+    electrónica, etc. ``metodo_pago`` es el tipo (del catálogo) e
+    ``identificador`` guarda el nº de cuenta / alias de billetera / etc.
+    """
+
+    id = models.AutoField(primary_key=True)
+    cliente = models.ForeignKey(
+        Cliente, on_delete=models.CASCADE, related_name='medios_pago'
+    )
+    metodo_pago = models.ForeignKey(
+        MetodoPago, on_delete=models.PROTECT, related_name='medios_pago_cliente'
+    )
+    alias = models.CharField(
+        max_length=100,
+        help_text='Nombre corto para identificarlo (ej. "Cuenta Itaú", "Tigo Money").',
+    )
+    identificador = models.CharField(
+        max_length=100,
+        help_text='Nº de cuenta, alias de billetera o dato equivalente.',
+    )
+    titular = models.CharField(max_length=150, blank=True, default='')
+    estado = models.BooleanField('activo', default=True)
+    fecha_creacion = models.DateField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['cliente', 'alias']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['cliente', 'metodo_pago', 'identificador'],
+                name='medio_pago_cliente_unico',
+            )
+        ]
+
+    def clean(self):
+        if self.metodo_pago_id and not self.metodo_pago.estado:
+            raise ValidationError(
+                {'metodo_pago': 'El método de pago está desactivado en el catálogo.'}
+            )
+
+    def activar(self):
+        self.estado = True
+        self.save()
+
+    def desactivar(self):
+        self.estado = False
+        self.save()
+
+    def __str__(self):
+        return f'{self.cliente.nombre} - {self.alias}'
 
 
 class Transaccion(models.Model):
