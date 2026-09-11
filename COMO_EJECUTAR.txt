@@ -12,6 +12,15 @@ IMPORTANTE: entrá SIEMPRE por  http://127.0.0.1:8000
             NO uses  http://localhost:8000  (el redirect de Keycloak
             está atado a 127.0.0.1 y falla si usás "localhost").
 
+PARA EL DÍA DE LA REVISIÓN: los comandos de verificar el tag, correr las
+pruebas, compilar la documentación y arrancar el sistema desde cero ya
+están armados como scripts en  scripts/ , para no escribirlos en vivo:
+
+    ./scripts/verificar_tag.sh <tag>
+    ./scripts/pruebas.sh
+    ./scripts/documentacion.sh
+    ./scripts/arrancar_desde_cero.sh <tag> <carpeta_destino>
+
 
 ====================================================================
  PARTE A - PREPARACIÓN (solo la primera vez, o si algo se rompió)
