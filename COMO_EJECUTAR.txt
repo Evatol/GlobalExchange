@@ -137,7 +137,8 @@ D.2 - Login de Keycloak -> usuario + contraseña -> entrás al panel.
 
 D.3 - Apretá  "Cerrar Sesión"  (botón rojo arriba a la derecha).
         - Se cierra la sesión de Django Y la de Keycloak.
-        - Terminás de nuevo en el login de Keycloak.
+        - Terminás en la pantalla pública de "Cotizaciones del Día"
+          (http://127.0.0.1:8000/), no logueado.
         - La primera vez puede mostrarte "¿Cerrar sesión?" -> confirmá.
 
 D.4 - Comprobación: volvé a entrar a  http://127.0.0.1:8000/api/usuarios/
@@ -186,10 +187,22 @@ Para ver qué haría un comando sin aplicar nada, agregá  --dry-run
 F.1 - "That port is already in use" al levantar Django
     -> pkill -f "manage.py runserver"   y volvé a levantarlo.
 
-F.2 - Al entrar a http://127.0.0.1:8000/  aparece el login del ADMIN de
-      Django (no el de Keycloak)
-    -> Es normal: la raíz "/" va al admin. Para el flujo de Keycloak
-       entrá por  http://127.0.0.1:8000/api/usuarios/
+F.2 - Al entrar a http://127.0.0.1:8000/  la tabla de "Cambio del Día"
+      dice "No hay tasas activas registradas."
+    -> No es un error: esa pantalla es pública (sin login) y muestra las
+       cotizaciones que haya cargadas en la base. Si tu base está vacía,
+       cargá al menos una moneda y una cotización desde
+       http://127.0.0.1:8000/admin/ (Divisas -> Monedas / Tasa cambios),
+       o abrí  venv/bin/python manage.py shell  y pegá:
+
+           from apps.divisas.models import Moneda, TasaCambio
+           m, _ = Moneda.objects.get_or_create(
+               codigo='USD',
+               defaults={'nombre': 'Dolar estadounidense', 'simbolo': 'USD'},
+           )
+           TasaCambio.objects.create(
+               moneda=m, tasa_compra=7300, tasa_venta=7400, origen='Banco Central'
+           )
 
 F.3 - Me registro pero NO llega el correo de verificación
     -> El contenedor de Keycloak necesita DNS para llegar a Gmail.

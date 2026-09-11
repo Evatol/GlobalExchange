@@ -213,8 +213,12 @@ LOGIN_REDIRECT_URL = '/'
 
 # Cierre de sesión: además de borrar la sesión local, cerramos la sesión SSO en
 # Keycloak (RP-initiated logout). ``provider_logout_url`` arma la URL con el
-# id_token como hint, por eso guardamos el id_token en la sesión.
-LOGOUT_REDIRECT_URL = '/api/usuarios/'
+# id_token como hint, por eso guardamos el id_token en la sesión. Vuelve a la
+# pantalla pública de cotizaciones ('/'), visible sin login, en vez de
+# devolver directo al login de Keycloak. Ya cubierto por el post-logout
+# redirect URI registrado en Keycloak (comodín 'http://127.0.0.1:8000/*',
+# ver configure_keycloak_logout).
+LOGOUT_REDIRECT_URL = '/'
 OIDC_OP_LOGOUT_URL_METHOD = 'apps.usuarios.oidc.provider_logout_url'
 OIDC_STORE_ID_TOKEN = True
 
