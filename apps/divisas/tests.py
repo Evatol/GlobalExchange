@@ -1,4 +1,5 @@
 from decimal import Decimal
+from django.test import TestCase
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -266,3 +267,96 @@ class CotizacionCRUDTests(APITestCase):
         inactivas = self.client.get(self.list_url, {'estado': 'false'})
         self.assertEqual(activas.data['count'], 0)
         self.assertEqual(inactivas.data['count'], 1)
+
+
+class PantallaPublicaCambiosViewTests(TestCase):
+    """Pantalla pública en HTML (cotizaciones del día + calculadora), visible
+    sin haber iniciado sesión (RF13, RF20, RF24)."""
+
+    def setUp(self):
+        self.usd = Moneda.objects.create(
+            codigo='USD', nombre='Dólar estadounidense', simbolo='$', estado=True
+        )
+        self.tasa_usd = TasaCambio.objects.create(
+            moneda=self.usd,
+            tasa_compra=Decimal('7300.00'),
+            tasa_venta=Decimal('7400.00'),
+            origen='Banco Central',
+            estado=True,
+        )
+        self.url = reverse('pantalla-publica')
+
+    def test_accesible_sin_login(self):
+        """Un visitante anónimo puede ver la pantalla sin ser redirigido a un login."""
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTemplateUsed(response, 'divisas/publica.html')
+
+    def test_muestra_las_tasas_activas(self):
+        response = self.client.get(self.url)
+        self.assertContains(response, 'USD')
+        self.assertContains(response, '7300')
+
+    def test_login_apunta_a_keycloak_no_al_admin_de_django(self):
+        """El link de login debe ir al flujo OIDC (Keycloak), no al admin de Django."""
+        response = self.client.get(self.url)
+        contenido = response.content.decode()
+        self.assertIn(reverse('oidc_authentication_init'), contenido)
+        self.assertNotIn(reverse('admin:login'), contenido)
+
+    def test_calculadora_conversion_compra(self):
+        response = self.client.post(self.url, {
+            'moneda_codigo': 'USD',
+            'tipo_operacion': 'compra',
+            'cantidad': '100.00',
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.context['resultado'], Decimal('730000.00'))
+        self.assertIsNone(response.context['error'])
+
+    def test_calculadora_conversion_venta(self):
+        response = self.client.post(self.url, {
+            'moneda_codigo': 'USD',
+            'tipo_operacion': 'venta',
+            'cantidad': '100.00',
+        })
+        self.assertEqual(response.context['resultado'], Decimal('740000.00'))
+
+    def test_calculadora_moneda_sin_tasa_activa(self):
+        response = self.client.post(self.url, {
+            'moneda_codigo': 'EUR',
+            'tipo_operacion': 'compra',
+            'cantidad': '100.00',
+        })
+        self.assertIsNone(response.context['resultado'])
+        self.assertIn('EUR', response.context['error'])
+
+    def test_calculadora_cantidad_invalida_no_rompe_la_pagina(self):
+        """Una cantidad no numérica no debe tirar un error 500: la vista debe
+        mostrar un mensaje de validación, igual que hace el simulador por API."""
+        response = self.client.post(self.url, {
+            'moneda_codigo': 'USD',
+            'tipo_operacion': 'compra',
+            'cantidad': 'no-es-un-numero',
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsNone(response.context['resultado'])
+        self.assertIsNotNone(response.context['error'])
+
+    def test_calculadora_usa_la_misma_tasa_que_el_simulador_por_api(self):
+        """La pantalla pública y /api/divisas/simular/ deben calcular igual:
+        comparten la misma consulta (TasaCambio.objects.activa_para)."""
+        respuesta_html = self.client.post(self.url, {
+            'moneda_codigo': 'USD',
+            'tipo_operacion': 'venta',
+            'cantidad': '50.00',
+        })
+        respuesta_api = self.client.post(reverse('simulador-conversion'), {
+            'moneda_codigo': 'USD',
+            'tipo_operacion': 'venta',
+            'cantidad': '50.00',
+        })
+        self.assertEqual(
+            respuesta_html.context['resultado'],
+            Decimal(respuesta_api.data['resultado']),
+        )

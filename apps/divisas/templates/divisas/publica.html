@@ -19,15 +19,18 @@
         <div class="ms-auto d-flex align-items-center">
             {% if request.user.is_authenticated %}
                 <span class="me-3">Hola, {{ request.user.username }}</span>
+                <a href="{% url 'menu_principal' %}" class="btn btn-outline-warning btn-sm me-2">Ir al Portal</a>
                 {% if request.user.is_staff or request.user.is_superuser %}
                     <a href="/admin/" class="btn btn-outline-warning btn-sm me-2">Panel Admin</a>
                 {% endif %}
-                <form action="{% url 'admin:logout' %}?next=/" method="POST" class="d-inline">
+                {# Logout OIDC: cierra la sesión de Django y la sesión SSO de Keycloak. #}
+                <form action="{% url 'oidc_logout' %}" method="POST" class="d-inline">
                     {% csrf_token %}
                     <button type="submit" class="btn btn-outline-light btn-sm">Cerrar Sesión</button>
                 </form>
             {% else %}
-                <a href="{% url 'admin:login' %}?next=/" class="btn btn-outline-light btn-sm">Iniciar Sesión</a>
+                {# Login OIDC (Keycloak): next lleva al portal (menu_principal) tras autenticarse. #}
+                <a href="{% url 'oidc_authentication_init' %}?next={% url 'menu_principal' %}" class="btn btn-outline-light btn-sm">Ingresar al Portal</a>
             {% endif %}
         </div>
     </nav>
