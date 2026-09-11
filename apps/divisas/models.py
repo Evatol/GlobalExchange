@@ -77,3 +77,16 @@ class Simulacion(models.Model):
 
     def simular_venta(self, cantidad, tasa):
         return self.calcular_conversion(cantidad, tasa)
+
+class Cotizacion(models.Model):
+    moneda = models.CharField(max_length=10, help_text="Ej: USD, EUR, BRL")
+    tasa_compra = models.DecimalField(max_digits=10, decimal_places=2)
+    tasa_venta = models.DecimalField(max_digits=10, decimal_places=2)
+    fecha_actualizacion = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Cotización"
+        verbose_name_plural = "Cotizaciones"
+
+    def __str__(self):
+        return f"{self.moneda} - Compra: {self.tasa_compra} | Venta: {self.tasa_venta}"
