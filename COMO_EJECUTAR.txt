@@ -186,7 +186,56 @@ E.4 - Interfaz y correos en español:
 
     venv/bin/python manage.py configure_keycloak_locale
 
+E.5 - Roles de negocio (administrador, analista, usuario_final):
+
+    venv/bin/python manage.py configure_keycloak_roles_negocio
+
 Para ver qué haría un comando sin aplicar nada, agregá  --dry-run
+
+
+====================================================================
+ PARTE E2 - PROBAR: ROLES Y PERMISOS POR ROL
+====================================================================
+
+Objetivo: mostrar que el menú y los permisos cambian según el rol del
+usuario logueado (RF44/RF46/RF48), y que cada CRUD respeta ese rol.
+
+E2.1 - Crear un usuario de prueba por cada rol (se puede repetir, es
+       idempotente si el usuario ya existe va a fallar con "ya existe",
+       en ese caso pasar a otro nombre o saltear este paso):
+
+    venv/bin/python manage.py crear_usuario_keycloak admin_demo admin_demo@example.com --rol administrador --no-email --mostrar-password
+    venv/bin/python manage.py crear_usuario_keycloak analista_demo analista_demo@example.com --rol analista --no-email --mostrar-password
+    venv/bin/python manage.py crear_usuario_keycloak cliente_demo cliente_demo@example.com --rol usuario_final --no-email --mostrar-password
+
+    Anotar las contraseñas que imprime (son temporales: al loguear por
+    primera vez, Keycloak pide definir una nueva).
+
+E2.2 - Loguear con admin_demo (incógnito):
+    - Panel Principal debe mostrar TODAS las tarjetas: Divisas &
+      Cotizaciones, Operaciones de Caja, Transacciones, Mis Medios de
+      Pago, CRUD de Monedas, CRUD de Cotizaciones y Administración de
+      Roles.
+    - Entrar a "Administración de Roles": ahí se puede reasignar el rol
+      de cualquier usuario del sistema (incluidos los de prueba).
+
+E2.3 - Loguear con analista_demo (otra ventana incógnito):
+    - Ve CRUD de Monedas y CRUD de Cotizaciones, pero NO Administración
+      de Roles.
+    - Puede crear/editar una moneda o cotización.
+
+E2.4 - Loguear con cliente_demo:
+    - NO ve CRUD de Monedas, CRUD de Cotizaciones ni Administración de
+      Roles.
+    - Ve "Mis Medios de Pago", pero como no está asociado a ningún
+      cliente, la lista sale vacía y no puede crear uno (403) hasta que
+      un administrador lo asocie a un cliente vía
+      /api/usuarios/clientes/{id}/asignar-usuario/.
+
+E2.5 - Comprobación cruzada (opcional, por API): con analista_demo o
+       cliente_demo logueado, intentar por la URL directa
+       /api/divisas/monedas/ un POST de alta -> debe devolver 403 para
+       cliente_demo, 201 para analista_demo.
 
 
 ====================================================================
