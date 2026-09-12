@@ -7,6 +7,7 @@ from .views import (
     cliente_activo,
     cliente_asignar_usuario_view,
     cliente_desasignar_usuario_view,
+    cliente_editar_view,
     cliente_toggle_view,
     gestion_clientes_view,
     gestion_roles_view,
@@ -29,6 +30,7 @@ urlpatterns = [
     # Pantalla propia de gestión de Clientes (HTML), con asociación de
     # usuarios (RF42) incluida. Administrador/analista.
     path('gestion/clientes/', gestion_clientes_view, name='gestion_clientes'),
+    path('gestion/clientes/<int:pk>/editar/', cliente_editar_view, name='cliente_editar'),
     path('gestion/clientes/<int:pk>/toggle/', cliente_toggle_view, name='cliente_toggle'),
     path('gestion/clientes/<int:pk>/asignar-usuario/', cliente_asignar_usuario_view, name='cliente_asignar_usuario'),
     path(

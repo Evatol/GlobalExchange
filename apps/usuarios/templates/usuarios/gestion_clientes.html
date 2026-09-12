@@ -90,6 +90,7 @@
                                         </td>
                                         {% if puede_escribir %}
                                         <td class="text-end">
+                                            <a href="{% url 'cliente_editar' c.id %}" class="btn btn-sm btn-outline-primary mb-1">Editar</a>
                                             <form method="post" action="{% url 'cliente_toggle' c.id %}" class="m-0">
                                                 {% csrf_token %}
                                                 {% if c.estado %}

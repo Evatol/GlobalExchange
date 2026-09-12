@@ -733,3 +733,53 @@ class GestionClientesViewTests(TestCase):
         self.client.post(f'/api/usuarios/gestion/clientes/{self.cliente.id}/toggle/')
         self.cliente.refresh_from_db()
         self.assertFalse(self.cliente.estado)
+
+
+class ClienteEditarViewTests(TestCase):
+    """Edición de un cliente existente desde la pantalla de gestión."""
+
+    def setUp(self):
+        self.cliente = Cliente.objects.create(**cliente_valido())
+        self.url = f'/api/usuarios/gestion/clientes/{self.cliente.id}/editar/'
+
+    def test_prohibido_para_analista(self):
+        self.client.force_login(_usuario_con_rol('analista_ce', rol='analista'))
+        self.assertEqual(self.client.get(self.url).status_code, 403)
+
+    def test_administrador_ve_el_formulario_precargado(self):
+        self.client.force_login(_usuario_con_rol('admin_ce', rol='administrador'))
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, self.cliente.nombre)
+        self.assertContains(resp, self.cliente.documento)
+
+    def test_administrador_puede_editar(self):
+        self.client.force_login(_usuario_con_rol('admin_ce2', rol='administrador'))
+        datos = cliente_valido(
+            nombre='Comercial Guaraní Renombrado',
+            frecuencia_transacciones=7,
+            documento=self.cliente.documento,  # mismo documento, no cambia
+        )
+        resp = self.client.post(self.url, datos)
+        self.assertRedirects(resp, '/api/usuarios/gestion/clientes/')
+        self.cliente.refresh_from_db()
+        self.assertEqual(self.cliente.nombre, 'Comercial Guaraní Renombrado')
+        self.assertEqual(self.cliente.frecuencia_transacciones, 7)
+
+    def test_editar_no_borra_usuarios_asociados(self):
+        usuario = Usuario.objects.create(
+            username='op_ce', email='op_ce@example.com', nombres='Op', apellidos='CE',
+        )
+        self.cliente.asociar_usuario(usuario)
+        self.client.force_login(_usuario_con_rol('admin_ce3', rol='administrador'))
+        self.client.post(self.url, cliente_valido(documento=self.cliente.documento, nombre='Otro Nombre'))
+        self.assertIn(usuario, self.cliente.usuarios.all())
+
+    def test_no_permite_editar_a_juridica_sin_razon_social(self):
+        self.client.force_login(_usuario_con_rol('admin_ce4', rol='administrador'))
+        datos = cliente_valido(
+            documento=self.cliente.documento, tipo='JURIDICA', razon_social='',
+        )
+        resp = self.client.post(self.url, datos)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'razón social')

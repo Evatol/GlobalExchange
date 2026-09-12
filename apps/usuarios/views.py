@@ -108,6 +108,42 @@ def gestion_clientes_view(request):
 
 
 @login_required
+def cliente_editar_view(request, pk):
+    """Edita los datos de un cliente existente (E4-125): nombre, documento,
+    tipo, razón social, categoría, límites, frecuencia y preferencia de
+    cambio. Reutiliza ``ClienteSerializer`` (misma validación que el alta:
+    razón social obligatoria si es jurídica, límites no negativos). No toca
+    los usuarios asociados (eso se maneja aparte, en la pantalla de
+    listado). Solo administrador."""
+    if not tiene_rol(request.user, (ADMINISTRADOR,)):
+        raise PermissionDenied('Solo un administrador puede editar clientes.')
+
+    cliente = Cliente.objects.filter(pk=pk).first()
+    if cliente is None:
+        return redirect('gestion_clientes')
+
+    error = None
+    if request.method == 'POST':
+        serializer = ClienteSerializer(instance=cliente, data=request.POST, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return redirect('gestion_clientes')
+        error = ' '.join(
+            str(msg) for errores in serializer.errors.values() for msg in errores
+        )
+
+    context = {
+        'usuario': request.user,
+        'cliente': cliente,
+        'tipo_choices': Cliente.TIPO_CHOICES,
+        'categoria_choices': Cliente.CATEGORIA_CHOICES,
+        'preferencia_choices': Cliente.PREFERENCIA_TIPO_CAMBIO_CHOICES,
+        'error': error,
+    }
+    return render(request, 'usuarios/cliente_editar.html', context)
+
+
+@login_required
 def cliente_toggle_view(request, pk):
     """Activa/desactiva un cliente (borrado lógico) desde la pantalla de gestión."""
     if not tiene_rol(request.user, (ADMINISTRADOR,)):
