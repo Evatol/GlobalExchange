@@ -12,6 +12,7 @@ from .views import (
     gestion_clientes_view,
     gestion_roles_view,
     menu_principal_view,
+    mi_perfil_view,
     mis_clientes,
     seleccionar_cliente_view,
 )
@@ -21,6 +22,7 @@ router.register('clientes', ClienteViewSet, basename='cliente')
 
 urlpatterns = [
     path('', menu_principal_view, name='menu_principal'),
+    path('mi-perfil/', mi_perfil_view, name='mi_perfil'),
     path('seleccionar-cliente/', seleccionar_cliente_view, name='seleccionar_cliente'),
     path('mis-clientes/', mis_clientes, name='mis_clientes'),
     path('cliente-activo/', cliente_activo, name='cliente_activo'),

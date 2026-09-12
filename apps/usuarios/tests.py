@@ -783,3 +783,78 @@ class ClienteEditarViewTests(TestCase):
         resp = self.client.post(self.url, datos)
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'razón social')
+
+
+class MiPerfilViewTests(TestCase):
+    """RF9/RF10: cualquier usuario logueado edita sus propios datos
+    personales; usuario y correo quedan bloqueados."""
+
+    def setUp(self):
+        self.url = '/api/usuarios/mi-perfil/'
+        self.django_user = _usuario_con_rol('perfil_user', rol='usuario_final')
+        self.perfil = Usuario.objects.create(
+            username='perfil_user',
+            email='perfil_user@example.com',
+            nombres='Nombre Original',
+            apellidos='Apellido Original',
+            telefono='021000000',
+            direccion='Dirección Original',
+        )
+
+    def test_requiere_login(self):
+        self.assertEqual(self.client.get(self.url).status_code, 302)
+
+    def test_get_muestra_los_datos_actuales(self):
+        self.client.force_login(self.django_user)
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Nombre Original')
+        self.assertContains(resp, 'perfil_user@example.com')
+
+    def test_analista_tambien_puede_actualizar_su_perfil(self):
+        analista = _usuario_con_rol('perfil_analista', rol='analista')
+        Usuario.objects.create(
+            username='perfil_analista', email='perfil_analista@example.com',
+            nombres='A', apellidos='B',
+        )
+        self.client.force_login(analista)
+        resp = self.client.post(self.url, {
+            'nombres': 'Analista Actualizado', 'apellidos': 'B', 'telefono': '', 'direccion': '',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'se actualizaron correctamente')
+
+    def test_actualiza_nombres_apellidos_telefono_direccion(self):
+        self.client.force_login(self.django_user)
+        resp = self.client.post(self.url, {
+            'nombres': 'Nombre Nuevo',
+            'apellidos': 'Apellido Nuevo',
+            'telefono': '0981123456',
+            'direccion': 'Nueva Dirección 123',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'se actualizaron correctamente')
+        self.perfil.refresh_from_db()
+        self.assertEqual(self.perfil.nombres, 'Nombre Nuevo')
+        self.assertEqual(self.perfil.apellidos, 'Apellido Nuevo')
+        self.assertEqual(self.perfil.telefono, '0981123456')
+        self.assertEqual(self.perfil.direccion, 'Nueva Dirección 123')
+
+    def test_username_y_email_no_se_pueden_cambiar(self):
+        self.client.force_login(self.django_user)
+        self.client.post(self.url, {
+            'nombres': 'Nombre Nuevo',
+            'apellidos': 'Apellido Nuevo',
+            'username': 'otro_username',
+            'email': 'otro@example.com',
+        })
+        self.perfil.refresh_from_db()
+        self.assertEqual(self.perfil.username, 'perfil_user')
+        self.assertEqual(self.perfil.email, 'perfil_user@example.com')
+
+    def test_nombres_vacio_es_rechazado(self):
+        self.client.force_login(self.django_user)
+        resp = self.client.post(self.url, {'nombres': '', 'apellidos': 'X'})
+        self.assertEqual(resp.status_code, 200)
+        self.perfil.refresh_from_db()
+        self.assertEqual(self.perfil.nombres, 'Nombre Original')

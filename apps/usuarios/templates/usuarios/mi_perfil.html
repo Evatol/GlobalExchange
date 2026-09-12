@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GlobalExchange - Mi Perfil</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="{% url 'menu_principal' %}">GlobalExchange</a>
+            <div class="d-flex align-items-center text-white">
+                <span class="me-3">Bienvenido, <strong>{{ usuario.username }}</strong></span>
+                <a href="{% url 'menu_principal' %}" class="btn btn-outline-light btn-sm">Volver al Portal</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container my-5">
+        <div class="row justify-content-center">
+            <div class="col-md-6">
+                <div class="text-center mb-4">
+                    <h2>Mi Perfil</h2>
+                    <p class="text-muted">Tus datos personales (RF9).</p>
+                </div>
+
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        {% if exito %}
+                            <div class="alert alert-success py-2">Tus datos se actualizaron correctamente.</div>
+                        {% endif %}
+                        {% if error %}
+                            <div class="alert alert-danger py-2">{{ error }}</div>
+                        {% endif %}
+
+                        <div class="mb-3">
+                            <label class="form-label">Usuario</label>
+                            <input type="text" class="form-control" value="{{ perfil.username }}" disabled>
+                            <div class="form-text">El usuario no se puede modificar (RF10).</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Correo electrónico</label>
+                            <input type="text" class="form-control" value="{{ perfil.email }}" disabled>
+                            <div class="form-text">El correo no se puede modificar desde acá (RF10).</div>
+                        </div>
+
+                        <hr>
+
+                        <form method="post">
+                            {% csrf_token %}
+                            <div class="mb-3">
+                                <label class="form-label">Nombres</label>
+                                <input type="text" name="nombres" class="form-control" value="{{ perfil.nombres }}" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Apellidos</label>
+                                <input type="text" name="apellidos" class="form-control" value="{{ perfil.apellidos }}" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Teléfono</label>
+                                <input type="text" name="telefono" class="form-control" value="{{ perfil.telefono }}" placeholder="Opcional">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Dirección</label>
+                                <input type="text" name="direccion" class="form-control" value="{{ perfil.direccion }}" placeholder="Opcional">
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Guardar Cambios</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

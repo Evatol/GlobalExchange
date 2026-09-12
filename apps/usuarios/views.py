@@ -14,6 +14,7 @@ from .serializers import (
     AsignacionUsuarioSerializer,
     ClienteResumenSerializer,
     ClienteSerializer,
+    PerfilSerializer,
     UsuarioResumenSerializer,
 )
 
@@ -37,6 +38,38 @@ def menu_principal_view(request):
         'puede_gestionar_divisas': tiene_rol(request.user, (ADMINISTRADOR, ANALISTA)),
     }
     return render(request, 'usuarios/menu_principal.html', context)
+
+
+@login_required
+def mi_perfil_view(request):
+    """RF9/RF10: cualquier usuario logueado (sin importar su rol) actualiza
+    sus propios datos personales complementarios (nombres, apellidos,
+    teléfono, dirección). El usuario y el correo se muestran pero no se
+    pueden editar acá: quedan bloqueados para garantizar la identificación
+    única (RF10) y porque son los que vienen de Keycloak."""
+    perfil = sesion.usuario_negocio(request)
+    if perfil is None:
+        raise PermissionDenied('No se encontró tu perfil de usuario.')
+
+    error = None
+    exito = False
+    if request.method == 'POST':
+        serializer = PerfilSerializer(instance=perfil, data=request.POST, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            exito = True
+        else:
+            error = ' '.join(
+                str(msg) for errores in serializer.errors.values() for msg in errores
+            )
+
+    context = {
+        'usuario': request.user,
+        'perfil': perfil,
+        'error': error,
+        'exito': exito,
+    }
+    return render(request, 'usuarios/mi_perfil.html', context)
 
 
 @login_required
