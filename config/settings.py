@@ -208,11 +208,32 @@ OIDC_RP_CLIENT_SECRET = env(
     default='tNPOCqVu0s7H09kQgrGYLhXuGCPC72bd5vYbdeZ82WEEBzsP7Zi47OJ9tsIuIvpAjLYOa4BTnVBNEw1JnKQvel',
 )
 
-OIDC_OP_AUTHORIZATION_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/openid-connect/auth'
-OIDC_OP_TOKEN_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/openid-connect/token'
-OIDC_OP_USER_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/openid-connect/userinfo'
-OIDC_OP_JWKS_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/openid-connect/certs'
-OIDC_OP_LOGOUT_ENDPOINT = 'http://localhost:8080/realms/GlobalExchange/protocol/openid-connect/logout'
+# Acceso a Keycloak: dos URLs distintas porque, corriendo en Docker, Django y
+# el navegador de cada usuario NO ven a Keycloak en la misma dirección.
+# - KEYCLOAK_SERVER_URL: la usa el propio proceso de Django puertas adentro
+#   (intercambio de tokens, JWKS, API admin). En Docker Compose es el nombre
+#   del servicio ("http://keycloak:8080/"); corriendo todo en la máquina
+#   local coincide con KEYCLOAK_PUBLIC_URL.
+# - KEYCLOAK_PUBLIC_URL: a la que se redirige el NAVEGADOR del usuario (login,
+#   logout, Account Console). Tiene que ser una URL que la máquina de cada
+#   usuario pueda resolver, por eso en Docker sigue siendo "localhost:8080"
+#   (el puerto publicado del contenedor), nunca el nombre del servicio.
+KEYCLOAK_SERVER_URL = env('KEYCLOAK_SERVER_URL', default='http://localhost:8080/')
+KEYCLOAK_PUBLIC_URL = env('KEYCLOAK_PUBLIC_URL', default='http://localhost:8080/')
+KEYCLOAK_REALM = env('KEYCLOAK_REALM', default='GlobalExchange')
+KEYCLOAK_ADMIN_USER = env('KEYCLOAK_ADMIN_USER', default='admin')
+KEYCLOAK_ADMIN_PASSWORD = env('KEYCLOAK_ADMIN_PASSWORD', default='admin')
+
+_KC_SERVER_BASE = KEYCLOAK_SERVER_URL.rstrip('/')
+_KC_PUBLIC_BASE = KEYCLOAK_PUBLIC_URL.rstrip('/')
+
+# Los dos que arman una URL a la que redirige el navegador van con la URL
+# pública; el resto son llamadas que hace Django mismo, server-to-server.
+OIDC_OP_AUTHORIZATION_ENDPOINT = f'{_KC_PUBLIC_BASE}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/auth'
+OIDC_OP_LOGOUT_ENDPOINT = f'{_KC_PUBLIC_BASE}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/logout'
+OIDC_OP_TOKEN_ENDPOINT = f'{_KC_SERVER_BASE}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token'
+OIDC_OP_USER_ENDPOINT = f'{_KC_SERVER_BASE}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/userinfo'
+OIDC_OP_JWKS_ENDPOINT = f'{_KC_SERVER_BASE}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/certs'
 
 OIDC_RP_SIGN_ALGO = 'RS256'
 LOGIN_URL = '/oidc/authenticate/'
@@ -228,14 +249,6 @@ LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/'
 OIDC_OP_LOGOUT_URL_METHOD = 'apps.usuarios.oidc.provider_logout_url'
 OIDC_STORE_ID_TOKEN = True
-
-# Acceso administrativo a Keycloak (para creación de usuarios vía API).
-# Credenciales por variable de entorno (QA - Hito 4): en el default de
-# desarrollo coinciden con el admin/admin del realm local de cada dev.
-KEYCLOAK_SERVER_URL = env('KEYCLOAK_SERVER_URL', default='http://localhost:8080/')
-KEYCLOAK_REALM = env('KEYCLOAK_REALM', default='GlobalExchange')
-KEYCLOAK_ADMIN_USER = env('KEYCLOAK_ADMIN_USER', default='admin')
-KEYCLOAK_ADMIN_PASSWORD = env('KEYCLOAK_ADMIN_PASSWORD', default='admin')
 
 
 # Endurecimiento de seguridad para producción (AMB - Hito 3).

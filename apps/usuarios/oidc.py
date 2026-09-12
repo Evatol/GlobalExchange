@@ -39,7 +39,7 @@ def account_console_url(request):
     usuario a la pantalla nativa de Keycloak para eso, que ya valida la
     contraseña actual y aplica la política de contraseñas del realm.
     """
-    base = settings.KEYCLOAK_SERVER_URL.rstrip('/')
+    base = settings.KEYCLOAK_PUBLIC_URL.rstrip('/')
     referrer_uri = request.build_absolute_uri(reverse('menu_principal'))
     params = urlencode({
         'referrer': settings.OIDC_RP_CLIENT_ID,

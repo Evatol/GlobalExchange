@@ -1,0 +1,66 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${DB_NAME:-Global_Exchange}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-123456}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+    ports:
+      - "8080:8080"
+    volumes:
+      - keycloak_data:/opt/keycloak/data
+
+  web:
+    build: .
+    depends_on:
+      - postgres
+      - keycloak
+    environment:
+      DEBUG: ${DEBUG:-True}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-127.0.0.1,localhost}
+
+      DB_NAME: ${DB_NAME:-Global_Exchange}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-123456}
+      DB_HOST: postgres
+      DB_PORT: 5432
+
+      # Puertas adentro del contenedor, Django habla con Keycloak por el
+      # nombre del servicio; el navegador de cada uno sigue viendo Keycloak
+      # en localhost:8080 (ver el comentario en config/settings.py).
+      KEYCLOAK_SERVER_URL: http://keycloak:8080/
+      KEYCLOAK_PUBLIC_URL: http://localhost:8080/
+      KEYCLOAK_HOST: keycloak
+      KEYCLOAK_PORT: 8080
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-GlobalExchange}
+      KEYCLOAK_ADMIN_USER: ${KEYCLOAK_ADMIN_USER:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+
+      OIDC_RP_CLIENT_ID: ${OIDC_RP_CLIENT_ID:-django-backend}
+      OIDC_RP_CLIENT_SECRET: ${OIDC_RP_CLIENT_SECRET:-tNPOCqVu0s7H09kQgrGYLhXuGCPC72bd5vYbdeZ82WEEBzsP7Zi47OJ9tsIuIvpAjLYOa4BTnVBNEw1JnKQvel}
+
+      SEED_DEMO_USERS: ${SEED_DEMO_USERS:-true}
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+
+volumes:
+  postgres_data:
+  keycloak_data:

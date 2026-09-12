@@ -294,6 +294,68 @@ F.6 - Keycloak no arranca / docker pide contraseña
 
 
 ====================================================================
+ PARTE G - CORRER TODO CON DOCKER (para que el equipo pruebe sin instalar nada)
+====================================================================
+
+Pensado para cualquiera del equipo que solo quiera PROBAR el sistema (no
+para el desarrollo del día a día, que sigue siendo Partes A-F). Con esto
+NO hace falta instalar Python, PostgreSQL ni Keycloak a mano: todo corre
+en 3 contenedores (Postgres + Keycloak + Django) y el realm de Keycloak
+se configura solo (roles, cliente OIDC, español, 3 usuarios de prueba).
+
+Requisito: tener Docker y Docker Compose instalados.
+
+G.1 - Una sola vez, clonar el repo y pararse en la rama que se quiera
+      probar:
+
+    git clone <URL-del-repo> GlobalExchange
+    cd GlobalExchange
+
+G.2 - Levantar todo:
+
+    docker compose up --build
+
+    La primera vez tarda unos minutos (baja las imágenes, instala
+    dependencias, arranca Keycloak, aplica migraciones y configura el
+    realm). Vas a ver en la terminal los pasos de configuración de
+    Keycloak corriendo solos. Al final queda "Watching for file changes
+    with StatReloader" -> ya está arriba.
+
+G.3 - Entrar al sistema:
+
+    Navegador -> http://localhost:8000/
+
+    Ya hay 3 usuarios de prueba, uno por rol, con la misma contraseña
+    fija "Demo1234!":
+
+        admin_demo      (administrador)
+        analista_demo   (analista)
+        cliente_demo    (usuario_final)
+
+    Sirven para probar el menú y los permisos según el rol (ver PARTE E2
+    más arriba: la lógica es la misma, solo que acá los usuarios ya están
+    creados de entrada).
+
+G.4 - Apagar todo:
+
+    docker compose down          (los datos quedan guardados)
+    docker compose down -v       (borra también la base y el realm: la
+                                   próxima vez arranca 100% de cero)
+
+Notas:
+  - El autoregistro con verificación de correo (PARTE C) NO queda
+    configurado automáticamente porque necesita un App Password de Gmail
+    real. Si alguien lo necesita, con el stack arriba:
+        docker compose exec web python manage.py configure_keycloak_registration
+  - Si 5432, 8080 u 8000 ya están ocupados en tu máquina (por ejemplo
+    porque además tenés el entorno local de las Partes A-F corriendo),
+    paralos primero o cambiá los puertos publicados en docker-compose.yml.
+  - Los comandos de configuración de Keycloak (configure_keycloak_*) son
+    idempotentes: volver a levantar el stack no rompe nada aunque el
+    realm ya haya sido configurado en un arranque anterior.
+
+
+====================================================================
  RESUMEN RÁPIDO (para el día a día)
 ====================================================================
 
