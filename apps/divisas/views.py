@@ -294,6 +294,30 @@ def gestion_monedas_view(request):
 
 
 @login_required
+def moneda_editar_view(request, pk):
+    """Edita el código, nombre y símbolo de una moneda existente. Reutiliza
+    ``MonedaSerializer`` (misma validación que el alta: código único).
+    Solo administrador/analista."""
+    _exige_administrador_o_analista(request.user)
+    moneda = Moneda.objects.filter(pk=pk).first()
+    if moneda is None:
+        return redirect('gestion_monedas')
+
+    error = None
+    if request.method == 'POST':
+        serializer = MonedaSerializer(instance=moneda, data=request.POST, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return redirect('gestion_monedas')
+        error = ' '.join(
+            str(msg) for errores in serializer.errors.values() for msg in errores
+        )
+
+    context = {'usuario': request.user, 'moneda': moneda, 'error': error}
+    return render(request, 'divisas/moneda_editar.html', context)
+
+
+@login_required
 def moneda_toggle_view(request, pk):
     """Activa/desactiva una moneda desde la pantalla de gestión (borrado lógico)."""
     _exige_administrador_o_analista(request.user)
@@ -333,6 +357,40 @@ def gestion_cotizaciones_view(request):
         'error': error,
     }
     return render(request, 'divisas/gestion_cotizaciones.html', context)
+
+
+@login_required
+def cotizacion_editar_view(request, pk):
+    """Edita una cotización existente (moneda, tasas, origen, estado).
+    Reutiliza ``TasaCambioSerializer`` (misma validación: la venta no puede
+    ser menor a la compra) y, si queda activa, desactiva las demás activas
+    de esa misma moneda (igual que al crear). Solo administrador/analista."""
+    _exige_administrador_o_analista(request.user)
+    cotizacion = TasaCambio.objects.select_related('moneda').filter(pk=pk).first()
+    if cotizacion is None:
+        return redirect('gestion_cotizaciones')
+
+    error = None
+    if request.method == 'POST':
+        serializer = TasaCambioSerializer(instance=cotizacion, data=request.POST, partial=True)
+        if serializer.is_valid():
+            cotizacion = serializer.save()
+            if cotizacion.estado:
+                TasaCambio.objects.filter(
+                    moneda=cotizacion.moneda, estado=True
+                ).exclude(pk=cotizacion.pk).update(estado=False)
+            return redirect('gestion_cotizaciones')
+        error = ' '.join(
+            str(msg) for errores in serializer.errors.values() for msg in errores
+        )
+
+    context = {
+        'usuario': request.user,
+        'cotizacion': cotizacion,
+        'monedas': Moneda.objects.filter(estado=True).order_by('codigo'),
+        'error': error,
+    }
+    return render(request, 'divisas/cotizacion_editar.html', context)
 
 
 @login_required

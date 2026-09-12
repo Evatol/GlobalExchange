@@ -62,6 +62,7 @@
                                             {% endif %}
                                         </td>
                                         <td class="text-end">
+                                            <a href="{% url 'cotizacion_editar' c.id %}" class="btn btn-sm btn-outline-primary">Editar</a>
                                             <form method="post" action="{% url 'cotizacion_toggle' c.id %}" class="d-inline m-0">
                                                 {% csrf_token %}
                                                 {% if c.estado %}

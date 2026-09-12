@@ -302,3 +302,80 @@ class GestionMediosPagoViewTests(TestCase):
         self.client.post(f'/api/transacciones/gestion/medios-pago-cliente/{self.medio_ajeno.id}/toggle/')
         self.medio_ajeno.refresh_from_db()
         self.assertTrue(self.medio_ajeno.estado)  # no cambio, no era suyo
+
+
+class MetodoPagoEditarViewTests(TestCase):
+    """Edición de un método de pago existente."""
+
+    def setUp(self):
+        self.metodo = MetodoPago.objects.create(nombre='Transferencia', tipo='BANCO')
+        self.url = f'/api/transacciones/gestion/metodos-pago/{self.metodo.id}/editar/'
+
+    def test_prohibido_para_analista(self):
+        self.client.force_login(_usuario_con_rol('analista_mpe', rol='analista'))
+        self.assertEqual(self.client.get(self.url).status_code, 403)
+
+    def test_administrador_puede_editar(self):
+        self.client.force_login(_usuario_con_rol('admin_mpe', rol='administrador'))
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Transferencia')
+
+        resp = self.client.post(self.url, {'nombre': 'Transferencia Bancaria', 'tipo': 'BANCO', 'estado': 'on'})
+        self.assertRedirects(resp, '/api/transacciones/gestion/metodos-pago/')
+        self.metodo.refresh_from_db()
+        self.assertEqual(self.metodo.nombre, 'Transferencia Bancaria')
+
+
+class MedioPagoEditarViewTests(TestCase):
+    """Edición de un medio de pago existente, respetando el alcance por
+    cliente activo (usuario_final no puede editar el de otro cliente)."""
+
+    def setUp(self):
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
+        self.cliente_propio = _cliente(nombre='Cliente Propio', documento='P3')
+        self.cliente_ajeno = _cliente(nombre='Cliente Ajeno', documento='A3')
+
+        self.user_final = _usuario_con_rol('final_mpe', rol='usuario_final')
+        usuario_negocio = Usuario.objects.create(
+            username='final_mpe', email='fmpe@example.com', nombres='F', apellidos='M',
+        )
+        usuario_negocio.clientes.add(self.cliente_propio)
+
+        self.medio_propio = MedioPagoCliente.objects.create(
+            cliente=self.cliente_propio, metodo_pago=self.metodo, alias='Mio', identificador='1',
+        )
+        self.medio_ajeno = MedioPagoCliente.objects.create(
+            cliente=self.cliente_ajeno, metodo_pago=self.metodo, alias='Ajeno', identificador='2',
+        )
+
+    def test_usuario_final_puede_editar_el_suyo(self):
+        self.client.force_login(self.user_final)
+        url = f'/api/transacciones/gestion/medios-pago-cliente/{self.medio_propio.id}/editar/'
+        resp = self.client.post(url, {
+            'metodo_pago': self.metodo.id, 'alias': 'Mio Renombrado',
+            'identificador': '1', 'titular': '', 'estado': 'on',
+        })
+        self.assertRedirects(resp, '/api/transacciones/gestion/medios-pago-cliente/')
+        self.medio_propio.refresh_from_db()
+        self.assertEqual(self.medio_propio.alias, 'Mio Renombrado')
+
+    def test_usuario_final_no_puede_editar_el_de_otro_cliente(self):
+        self.client.force_login(self.user_final)
+        url = f'/api/transacciones/gestion/medios-pago-cliente/{self.medio_ajeno.id}/editar/'
+        resp = self.client.get(url)
+        # no esta en su alcance -> lo manda de vuelta al listado sin tocar nada
+        self.assertRedirects(resp, '/api/transacciones/gestion/medios-pago-cliente/')
+        self.medio_ajeno.refresh_from_db()
+        self.assertEqual(self.medio_ajeno.alias, 'Ajeno')
+
+    def test_administrador_puede_editar_cualquiera(self):
+        self.client.force_login(_usuario_con_rol('admin_mpe2', rol='administrador'))
+        url = f'/api/transacciones/gestion/medios-pago-cliente/{self.medio_ajeno.id}/editar/'
+        resp = self.client.post(url, {
+            'metodo_pago': self.metodo.id, 'alias': 'Ajeno Editado',
+            'identificador': '2', 'titular': '', 'estado': 'on',
+        })
+        self.assertRedirects(resp, '/api/transacciones/gestion/medios-pago-cliente/')
+        self.medio_ajeno.refresh_from_db()
+        self.assertEqual(self.medio_ajeno.alias, 'Ajeno Editado')

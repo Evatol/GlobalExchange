@@ -142,6 +142,30 @@ def gestion_metodos_pago_view(request):
 
 
 @login_required
+def metodo_pago_editar_view(request, pk):
+    """Edita el nombre/tipo de un método de pago del catálogo. Reutiliza
+    ``MetodoPagoSerializer``. Solo administrador."""
+    if not tiene_rol(request.user, (ADMINISTRADOR,)):
+        raise DjangoPermissionDenied('Esta sección es solo para administradores.')
+    metodo = MetodoPago.objects.filter(pk=pk).first()
+    if metodo is None:
+        return redirect('gestion_metodos_pago')
+
+    error = None
+    if request.method == 'POST':
+        serializer = MetodoPagoSerializer(instance=metodo, data=request.POST, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return redirect('gestion_metodos_pago')
+        error = ' '.join(
+            str(msg) for errores in serializer.errors.values() for msg in errores
+        )
+
+    context = {'usuario': request.user, 'metodo': metodo, 'error': error}
+    return render(request, 'transacciones/metodo_pago_editar.html', context)
+
+
+@login_required
 def metodo_pago_toggle_view(request, pk):
     """Activa/desactiva un método de pago del catálogo."""
     if not tiene_rol(request.user, (ADMINISTRADOR,)):
@@ -194,6 +218,46 @@ def gestion_medios_pago_view(request):
         'error': error,
     }
     return render(request, 'transacciones/gestion_medios_pago.html', context)
+
+
+@login_required
+def medio_pago_editar_view(request, pk):
+    """Edita un medio de pago existente (alias, identificador, titular,
+    método de pago). Respeta el mismo alcance que el listado/alta:
+    administrador/analista pueden editar cualquiera; el resto solo los del
+    cliente activo de su sesión, y el ``cliente`` se mantiene siempre el
+    mismo (no se puede "mover" un medio de pago a otro cliente desde acá).
+    Reutiliza ``MedioPagoClienteSerializer``."""
+    ve_todos = tiene_rol(request.user, (ADMINISTRADOR, ANALISTA))
+    medios = MedioPagoCliente.objects.select_related('cliente', 'metodo_pago')
+    if not ve_todos:
+        cliente_activo = sesion.get_cliente_activo(request)
+        medios = medios.filter(cliente=cliente_activo) if cliente_activo else medios.none()
+
+    medio = medios.filter(pk=pk).first()
+    if medio is None:
+        return redirect('gestion_medios_pago')
+
+    error = None
+    if request.method == 'POST':
+        datos = request.POST.copy()
+        datos['cliente'] = medio.cliente_id  # nunca se reasigna a otro cliente desde acá
+        serializer = MedioPagoClienteSerializer(instance=medio, data=datos, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return redirect('gestion_medios_pago')
+        error = ' '.join(
+            str(msg) for errores in serializer.errors.values() for msg in errores
+        )
+
+    context = {
+        'usuario': request.user,
+        'medio': medio,
+        'metodos': MetodoPago.objects.filter(estado=True).order_by('nombre'),
+        've_todos': ve_todos,
+        'error': error,
+    }
+    return render(request, 'transacciones/medio_pago_editar.html', context)
 
 
 @login_required
