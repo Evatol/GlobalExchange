@@ -27,12 +27,6 @@
                     <li class="nav-item">
                         <a class="nav-link" href="/api/divisas/">Divisas y Tasas</a>
                     </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="/api/caja/">Cajas y Sucursales</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="/api/transacciones/">Transacciones</a>
-                    </li>
                     {% if puede_gestionar_divisas %}
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'gestion_monedas' %}">CRUD Monedas</a>
@@ -101,26 +95,6 @@
                         <h5 class="card-title">Divisas & Cotizaciones</h5>
                         <p class="card-text">Consulta y gestión de tasas de cambio vigentes.</p>
                         <a href="/api/divisas/" class="btn btn-primary w-100">Ver Cotizaciones</a>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-md-4">
-                <div class="card h-100 shadow-sm border-0">
-                    <div class="card-body text-center">
-                        <h5 class="card-title">Operaciones de Caja</h5>
-                        <p class="card-text">Manejo de sucursales, cajas y desglose de billetes.</p>
-                        <a href="/api/caja/" class="btn btn-primary w-100">Ir a Cajas</a>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-md-4">
-                <div class="card h-100 shadow-sm border-0">
-                    <div class="card-body text-center">
-                        <h5 class="card-title">Transacciones</h5>
-                        <p class="card-text">Compra, venta y medios de pago de clientes.</p>
-                        <a href="/api/transacciones/" class="btn btn-primary w-100">Ver Operaciones</a>
                     </div>
                 </div>
             </div>
