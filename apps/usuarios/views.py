@@ -52,23 +52,64 @@ def mi_perfil_view(request):
     if perfil is None:
         raise PermissionDenied('No se encontró tu perfil de usuario.')
 
-    error = None
-    exito = False
+    error_datos = None
+    exito_datos = False
     if request.method == 'POST':
         serializer = PerfilSerializer(instance=perfil, data=request.POST, partial=True)
         if serializer.is_valid():
             serializer.save()
-            exito = True
+            exito_datos = True
         else:
-            error = ' '.join(
+            error_datos = ' '.join(
                 str(msg) for errores in serializer.errors.values() for msg in errores
             )
 
     context = {
         'usuario': request.user,
         'perfil': perfil,
-        'error': error,
-        'exito': exito,
+        'error_datos': error_datos,
+        'exito_datos': exito_datos,
+        'cambiar_password_url': account_console_url(request),
+    }
+    return render(request, 'usuarios/mi_perfil.html', context)
+
+
+@login_required
+def cambiar_password_view(request):
+    """RF9: cambio de la contraseña propia sin salir de la aplicación.
+
+    La contraseña vive en Keycloak, no en Django; ``services.cambiar_password``
+    verifica la actual con un login directo contra Keycloak antes de
+    aplicar la nueva (ver docstring de ese servicio)."""
+    perfil = sesion.usuario_negocio(request)
+    if perfil is None:
+        raise PermissionDenied('No se encontró tu perfil de usuario.')
+
+    error_password = None
+    exito_password = False
+    if request.method == 'POST':
+        actual = request.POST.get('password_actual', '')
+        nueva = request.POST.get('password_nueva', '')
+        confirmacion = request.POST.get('password_confirmacion', '')
+
+        if not actual or not nueva:
+            error_password = 'Completá tu contraseña actual y la nueva contraseña.'
+        elif nueva != confirmacion:
+            error_password = 'La confirmación no coincide con la nueva contraseña.'
+        else:
+            try:
+                services.cambiar_password(perfil.username, actual, nueva)
+                exito_password = True
+            except services.PasswordActualIncorrecta:
+                error_password = 'Tu contraseña actual es incorrecta.'
+            except services.NoSePudoActualizarPassword as exc:
+                error_password = str(exc)
+
+    context = {
+        'usuario': request.user,
+        'perfil': perfil,
+        'error_password': error_password,
+        'exito_password': exito_password,
         'cambiar_password_url': account_console_url(request),
     }
     return render(request, 'usuarios/mi_perfil.html', context)

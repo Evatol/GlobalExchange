@@ -867,3 +867,101 @@ class MiPerfilViewTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.perfil.refresh_from_db()
         self.assertEqual(self.perfil.nombres, 'Nombre Original')
+
+
+class CambiarPasswordViewTests(TestCase):
+    """RF9: cambio de la contraseña propia desde Mi Perfil, sin salir de la
+    aplicación. La llamada real a Keycloak se mockea: la lógica de
+    verificación ya se prueba por separado en CambiarPasswordServiceTests."""
+
+    def setUp(self):
+        self.url = '/api/usuarios/mi-perfil/cambiar-password/'
+        self.django_user = _usuario_con_rol('cambiopass_user', rol='usuario_final')
+        Usuario.objects.create(
+            username='cambiopass_user', email='cambiopass_user@example.com',
+            nombres='A', apellidos='B',
+        )
+
+    def test_requiere_login(self):
+        self.assertEqual(self.client.post(self.url, {}).status_code, 302)
+
+    def test_campos_vacios_son_rechazados(self):
+        self.client.force_login(self.django_user)
+        resp = self.client.post(self.url, {'password_actual': '', 'password_nueva': ''})
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Completá tu contraseña actual')
+
+    def test_confirmacion_no_coincide(self):
+        self.client.force_login(self.django_user)
+        resp = self.client.post(self.url, {
+            'password_actual': 'actual123', 'password_nueva': 'nueva123', 'password_confirmacion': 'otra123',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'no coincide')
+
+    @patch('apps.usuarios.views.services.cambiar_password')
+    def test_password_actual_incorrecta(self, mock_cambiar):
+        mock_cambiar.side_effect = services_module.PasswordActualIncorrecta()
+        self.client.force_login(self.django_user)
+        resp = self.client.post(self.url, {
+            'password_actual': 'mala', 'password_nueva': 'nueva123', 'password_confirmacion': 'nueva123',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'contraseña actual es incorrecta')
+
+    @patch('apps.usuarios.views.services.cambiar_password')
+    def test_password_no_cumple_politica(self, mock_cambiar):
+        mock_cambiar.side_effect = services_module.NoSePudoActualizarPassword('mensaje del realm')
+        self.client.force_login(self.django_user)
+        resp = self.client.post(self.url, {
+            'password_actual': 'actual123', 'password_nueva': 'x', 'password_confirmacion': 'x',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'mensaje del realm')
+
+    @patch('apps.usuarios.views.services.cambiar_password')
+    def test_cambio_exitoso(self, mock_cambiar):
+        self.client.force_login(self.django_user)
+        resp = self.client.post(self.url, {
+            'password_actual': 'actual123', 'password_nueva': 'nueva123', 'password_confirmacion': 'nueva123',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'se actualizó correctamente')
+        mock_cambiar.assert_called_once_with('cambiopass_user', 'actual123', 'nueva123')
+
+
+class CambiarPasswordServiceTests(TestCase):
+    """Pruebas unitarias de apps.usuarios.services.cambiar_password contra
+    un KeycloakOpenID/KeycloakAdmin simulados."""
+
+    @patch('apps.usuarios.services._keycloak_openid')
+    def test_password_actual_incorrecta_lanza_excepcion_propia(self, mock_openid_factory):
+        from keycloak.exceptions import KeycloakAuthenticationError
+        mock_openid_factory.return_value.token.side_effect = KeycloakAuthenticationError()
+        with self.assertRaises(services_module.PasswordActualIncorrecta):
+            services_module.cambiar_password('juan', 'mala', 'nueva123')
+
+    @patch('apps.usuarios.services._keycloak_admin')
+    @patch('apps.usuarios.services._keycloak_openid')
+    def test_usuario_inexistente_lanza_excepcion_propia(self, mock_openid_factory, mock_admin_factory):
+        mock_admin_factory.return_value.get_user_id.return_value = None
+        with self.assertRaises(services_module.NoSePudoActualizarPassword):
+            services_module.cambiar_password('fantasma', 'actual123', 'nueva123')
+
+    @patch('apps.usuarios.services._keycloak_admin')
+    @patch('apps.usuarios.services._keycloak_openid')
+    def test_politica_de_password_rechazada(self, mock_openid_factory, mock_admin_factory):
+        from keycloak.exceptions import KeycloakPutError
+        mock_admin_factory.return_value.get_user_id.return_value = 'uid-1'
+        mock_admin_factory.return_value.set_user_password.side_effect = KeycloakPutError()
+        with self.assertRaises(services_module.NoSePudoActualizarPassword):
+            services_module.cambiar_password('juan', 'actual123', 'x')
+
+    @patch('apps.usuarios.services._keycloak_admin')
+    @patch('apps.usuarios.services._keycloak_openid')
+    def test_cambio_exitoso_llama_set_user_password(self, mock_openid_factory, mock_admin_factory):
+        mock_admin_factory.return_value.get_user_id.return_value = 'uid-1'
+        services_module.cambiar_password('juan', 'actual123', 'nueva123')
+        mock_admin_factory.return_value.set_user_password.assert_called_once_with(
+            'uid-1', 'nueva123', temporary=False,
+        )

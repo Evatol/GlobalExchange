@@ -26,13 +26,13 @@
                     <p class="text-muted">Tus datos personales.</p>
                 </div>
 
-                <div class="card shadow-sm border-0">
+                <div class="card shadow-sm border-0 mb-4">
                     <div class="card-body">
-                        {% if exito %}
+                        {% if exito_datos %}
                             <div class="alert alert-success py-2">Tus datos se actualizaron correctamente.</div>
                         {% endif %}
-                        {% if error %}
-                            <div class="alert alert-danger py-2">{{ error }}</div>
+                        {% if error_datos %}
+                            <div class="alert alert-danger py-2">{{ error_datos }}</div>
                         {% endif %}
 
                         <div class="mb-3">
@@ -48,7 +48,7 @@
 
                         <hr>
 
-                        <form method="post">
+                        <form method="post" action="{% url 'mi_perfil' %}">
                             {% csrf_token %}
                             <div class="mb-3">
                                 <label class="form-label">Nombres</label>
@@ -68,17 +68,41 @@
                             </div>
                             <button type="submit" class="btn btn-primary w-100">Guardar Cambios</button>
                         </form>
+                    </div>
+                </div>
 
-                        <hr>
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Cambiar Contraseña</h5>
 
-                        <div class="text-center">
-                            <p class="text-muted small mb-2">
-                                Tu contraseña se gestiona directamente en Keycloak.
-                            </p>
-                            <a href="{{ cambiar_password_url }}" target="_blank" rel="noopener" class="btn btn-outline-secondary w-100">
-                                Cambiar Contraseña
-                            </a>
-                        </div>
+                        {% if exito_password %}
+                            <div class="alert alert-success py-2">Tu contraseña se actualizó correctamente.</div>
+                        {% endif %}
+                        {% if error_password %}
+                            <div class="alert alert-danger py-2">{{ error_password }}</div>
+                        {% endif %}
+
+                        <form method="post" action="{% url 'cambiar_password' %}">
+                            {% csrf_token %}
+                            <div class="mb-3">
+                                <label class="form-label">Contraseña actual</label>
+                                <input type="password" name="password_actual" class="form-control" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Contraseña nueva</label>
+                                <input type="password" name="password_nueva" class="form-control" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Confirmar contraseña nueva</label>
+                                <input type="password" name="password_confirmacion" class="form-control" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Actualizar Contraseña</button>
+                        </form>
+
+                        <p class="text-muted small text-center mt-3 mb-0">
+                            ¿Preferís hacerlo desde Keycloak?
+                            <a href="{{ cambiar_password_url }}" target="_blank" rel="noopener">Abrí tu cuenta ahí</a>.
+                        </p>
                     </div>
                 </div>
             </div>

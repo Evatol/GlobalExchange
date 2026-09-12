@@ -4,6 +4,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     ClienteViewSet,
     asignar_rol_view,
+    cambiar_password_view,
     cliente_activo,
     cliente_asignar_usuario_view,
     cliente_desasignar_usuario_view,
@@ -23,6 +24,7 @@ router.register('clientes', ClienteViewSet, basename='cliente')
 urlpatterns = [
     path('', menu_principal_view, name='menu_principal'),
     path('mi-perfil/', mi_perfil_view, name='mi_perfil'),
+    path('mi-perfil/cambiar-password/', cambiar_password_view, name='cambiar_password'),
     path('seleccionar-cliente/', seleccionar_cliente_view, name='seleccionar_cliente'),
     path('mis-clientes/', mis_clientes, name='mis_clientes'),
     path('cliente-activo/', cliente_activo, name='cliente_activo'),

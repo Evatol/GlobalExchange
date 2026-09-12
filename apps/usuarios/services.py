@@ -3,7 +3,8 @@ import string
 
 from django.conf import settings
 from django.core.mail import send_mail
-from keycloak import KeycloakAdmin
+from keycloak import KeycloakAdmin, KeycloakOpenID
+from keycloak.exceptions import KeycloakAuthenticationError, KeycloakError
 
 
 def generate_random_password(length=12):
@@ -100,6 +101,57 @@ def asignar_rol_negocio(username, rol):
         admin.assign_realm_roles(user_id=user_id, roles=[role])
 
     return rol
+
+
+class PasswordActualIncorrecta(Exception):
+    """La contraseña actual ingresada no coincide con la de Keycloak."""
+
+
+class NoSePudoActualizarPassword(Exception):
+    """Keycloak rechazó la nueva contraseña (política del realm) u ocurrió
+    otro error al actualizarla."""
+
+
+def _keycloak_openid():
+    """Cliente OIDC para verificar credenciales (mismo patrón que
+    ``_keycloak_admin``, pero sin privilegios de administrador)."""
+    return KeycloakOpenID(
+        server_url=settings.KEYCLOAK_SERVER_URL,
+        realm_name=settings.KEYCLOAK_REALM,
+        client_id=settings.OIDC_RP_CLIENT_ID,
+        client_secret_key=settings.OIDC_RP_CLIENT_SECRET,
+        verify=True,
+    )
+
+
+def cambiar_password(username, password_actual, password_nueva):
+    """Cambia la contraseña propia de ``username`` (RF9), sin salir de la
+    aplicación.
+
+    La contraseña vive en Keycloak, no en Django (el modelo ``Usuario`` no
+    tiene ningún campo de contraseña). Para no reemplazar la validación de
+    Keycloak por una propia, la contraseña actual se verifica con un login
+    directo (Resource Owner Password Credentials, requiere "Direct Access
+    Grants" habilitado en el cliente OIDC -- ver
+    ``configure_keycloak_direct_grants``) y recién si es válida se actualiza
+    con la API admin.
+    """
+    try:
+        _keycloak_openid().token(username=username, password=password_actual)
+    except KeycloakAuthenticationError:
+        raise PasswordActualIncorrecta() from None
+
+    admin = _keycloak_admin()
+    user_id = admin.get_user_id(username)
+    if not user_id:
+        raise NoSePudoActualizarPassword(f"No existe el usuario '{username}' en Keycloak.")
+
+    try:
+        admin.set_user_password(user_id, password_nueva, temporary=False)
+    except KeycloakError as exc:
+        raise NoSePudoActualizarPassword(
+            "La nueva contraseña no cumple con la política de contraseñas del realm."
+        ) from exc
 
 
 def create_user_in_keycloak(username, email, first_name='', last_name='', role_name='cajero', temporary=True):
