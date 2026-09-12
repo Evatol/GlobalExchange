@@ -811,6 +811,15 @@ class MiPerfilViewTests(TestCase):
         self.assertContains(resp, 'Nombre Original')
         self.assertContains(resp, 'perfil_user@example.com')
 
+    def test_muestra_link_para_cambiar_contrasena_en_keycloak(self):
+        self.client.force_login(self.django_user)
+        resp = self.client.get(self.url)
+        self.assertIn('cambiar_password_url', resp.context)
+        url = resp.context['cambiar_password_url']
+        self.assertIn('/realms/', url)
+        self.assertIn('/account/', url)
+        self.assertContains(resp, 'Cambiar Contraseña')
+
     def test_analista_tambien_puede_actualizar_su_perfil(self):
         analista = _usuario_con_rol('perfil_analista', rol='analista')
         Usuario.objects.create(

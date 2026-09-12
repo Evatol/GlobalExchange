@@ -9,6 +9,7 @@ from rest_framework.response import Response
 
 from . import services, sesion
 from .models import Cliente, Usuario
+from .oidc import account_console_url
 from .permissions import ADMINISTRADOR, ANALISTA, ClientesPermission, tiene_rol
 from .serializers import (
     AsignacionUsuarioSerializer,
@@ -68,6 +69,7 @@ def mi_perfil_view(request):
         'perfil': perfil,
         'error': error,
         'exito': exito,
+        'cambiar_password_url': account_console_url(request),
     }
     return render(request, 'usuarios/mi_perfil.html', context)
 

@@ -3,6 +3,7 @@
 from urllib.parse import urlencode
 
 from django.conf import settings
+from django.urls import reverse
 
 
 def provider_logout_url(request):
@@ -27,3 +28,21 @@ def provider_logout_url(request):
         params['client_id'] = settings.OIDC_RP_CLIENT_ID
 
     return f'{settings.OIDC_OP_LOGOUT_ENDPOINT}?{urlencode(params)}'
+
+
+def account_console_url(request):
+    """URL de la Account Console nativa de Keycloak.
+
+    La contraseña del usuario vive en Keycloak, no en Django (el modelo
+    ``Usuario`` no tiene ningún campo de contraseña), así que el cambio de
+    contraseña (RF9) no se implementa con un formulario propio: se manda al
+    usuario a la pantalla nativa de Keycloak para eso, que ya valida la
+    contraseña actual y aplica la política de contraseñas del realm.
+    """
+    base = settings.KEYCLOAK_SERVER_URL.rstrip('/')
+    referrer_uri = request.build_absolute_uri(reverse('menu_principal'))
+    params = urlencode({
+        'referrer': settings.OIDC_RP_CLIENT_ID,
+        'referrer_uri': referrer_uri,
+    })
+    return f'{base}/realms/{settings.KEYCLOAK_REALM}/account/?{params}'
