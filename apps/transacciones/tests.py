@@ -1,7 +1,8 @@
+from django.contrib.auth.models import Group, User
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.usuarios.models import Cliente
+from apps.usuarios.models import Cliente, Usuario
 from .models import MedioPagoCliente, MetodoPago
 
 
@@ -11,10 +12,21 @@ def _cliente(**kw):
     return Cliente.objects.create(**datos)
 
 
+def _usuario_con_rol(username, rol=None, **kwargs):
+    """Usuario de Django con un rol de negocio (grupo), para probar permisos
+    sin depender de un login real por Keycloak."""
+    user = User.objects.create_user(username, **kwargs)
+    if rol:
+        grupo, _ = Group.objects.get_or_create(name=rol)
+        user.groups.add(grupo)
+    return user
+
+
 class MetodoPagoCRUDTests(APITestCase):
     """RF102: catálogo de métodos de pago."""
 
     def setUp(self):
+        self.client.force_authenticate(user=_usuario_con_rol('admin_metodo', rol='administrador'))
         self.url = '/api/transacciones/metodos-pago/'
         self.metodo = MetodoPago.objects.create(nombre='Transferencia', tipo='BANCO')
 
@@ -42,6 +54,7 @@ class MedioPagoClienteCRUDTests(APITestCase):
     """RF17: medios de pago de un cliente."""
 
     def setUp(self):
+        self.client.force_authenticate(user=_usuario_con_rol('admin_mediopago', rol='administrador'))
         self.url = '/api/transacciones/medios-pago-cliente/'
         self.cliente = _cliente()
         self.otro_cliente = _cliente(nombre='Otro', documento='999')
@@ -112,3 +125,99 @@ class MedioPagoClienteCRUDTests(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.medio.refresh_from_db()
         self.assertTrue(self.medio.estado)
+
+
+class PermisosMetodoPagoTests(APITestCase):
+    """Catálogo de métodos de pago: lectura libre, solo administrador escribe."""
+
+    def setUp(self):
+        self.url = '/api/transacciones/metodos-pago/'
+        self.payload = {'nombre': 'Cheque', 'tipo': 'CHEQUE'}
+
+    def test_lectura_libre(self):
+        self.assertEqual(self.client.get(self.url).status_code, status.HTTP_200_OK)
+
+    def test_analista_no_puede_crear(self):
+        self.client.force_authenticate(user=_usuario_con_rol('analista_mp', rol='analista'))
+        resp = self.client.post(self.url, self.payload)
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_administrador_puede_crear(self):
+        self.client.force_authenticate(user=_usuario_con_rol('admin_mp', rol='administrador'))
+        resp = self.client.post(self.url, self.payload)
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+
+
+class PermisosMedioPagoClienteTests(APITestCase):
+    """RF17/RF43: usuario_final solo ve/gestiona los medios de pago del
+    cliente activo de su sesión; administrador ve todos."""
+
+    def setUp(self):
+        from apps.usuarios.sesion import SESSION_KEY
+        self.SESSION_KEY = SESSION_KEY
+
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
+        self.cliente_propio = _cliente(nombre='Cliente Propio', documento='P1')
+        self.cliente_ajeno = _cliente(nombre='Cliente Ajeno', documento='A1')
+
+        self.user_final = _usuario_con_rol('final_x', rol='usuario_final')
+        usuario_negocio = Usuario.objects.create(
+            username='final_x', email='final_x@example.com',
+            nombres='Final', apellidos='X',
+        )
+        usuario_negocio.clientes.add(self.cliente_propio)
+
+        self.medio_propio = MedioPagoCliente.objects.create(
+            cliente=self.cliente_propio, metodo_pago=self.metodo,
+            alias='Mio', identificador='111',
+        )
+        self.medio_ajeno = MedioPagoCliente.objects.create(
+            cliente=self.cliente_ajeno, metodo_pago=self.metodo,
+            alias='Ajeno', identificador='222',
+        )
+        self.url = '/api/transacciones/medios-pago-cliente/'
+
+    def _fijar_cliente_activo(self, cliente):
+        session = self.client.session
+        session[self.SESSION_KEY] = cliente.pk
+        session.save()
+
+    def test_usuario_final_solo_ve_los_suyos(self):
+        self.client.force_authenticate(user=self.user_final)
+        self._fijar_cliente_activo(self.cliente_propio)
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        alias = {m['alias'] for m in resp.data['results']}
+        self.assertEqual(alias, {'Mio'})
+
+    def test_usuario_final_crea_siempre_para_su_propio_cliente(self):
+        self.client.force_authenticate(user=self.user_final)
+        self._fijar_cliente_activo(self.cliente_propio)
+        resp = self.client.post(self.url, {
+            'cliente': self.cliente_ajeno.pk,  # intenta colarse en otro cliente
+            'metodo_pago': self.metodo.pk,
+            'alias': 'Intento', 'identificador': '999',
+        })
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        creado = MedioPagoCliente.objects.get(alias='Intento')
+        self.assertEqual(creado.cliente, self.cliente_propio)  # se ignoro lo que mando
+
+    def test_usuario_final_sin_ningun_cliente_asociado_no_puede_crear(self):
+        # A diferencia de self.user_final (que tiene un solo cliente y por
+        # eso RF43 se lo auto-selecciona), este usuario no tiene ninguno.
+        sin_cliente = _usuario_con_rol('sin_cliente', rol='usuario_final')
+        self.client.force_authenticate(user=sin_cliente)
+        resp = self.client.post(self.url, {
+            'cliente': self.cliente_propio.pk, 'metodo_pago': self.metodo.pk,
+            'alias': 'x', 'identificador': 'y',
+        })
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_administrador_ve_todos(self):
+        self.client.force_authenticate(user=_usuario_con_rol('admin_mediopago2', rol='administrador'))
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.data['count'], 2)
+
+    def test_anonimo_no_tiene_acceso(self):
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)

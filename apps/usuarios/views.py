@@ -9,6 +9,7 @@ from rest_framework.response import Response
 
 from . import services, sesion
 from .models import Cliente
+from .permissions import ADMINISTRADOR, ANALISTA, ClientesPermission, tiene_rol
 from .serializers import (
     AsignacionUsuarioSerializer,
     ClienteResumenSerializer,
@@ -26,12 +27,14 @@ def _es_administrador(user):
 
 @login_required
 def menu_principal_view(request):
-    """Menú principal, con el selector de cliente activo (RF43)."""
+    """Menú principal, con el selector de cliente activo (RF43) y los
+    accesos a cada CRUD según el rol de quien inició sesión."""
     context = {
         'usuario': request.user,
         'mis_clientes': sesion.clientes_disponibles(request),
         'cliente_activo': sesion.get_cliente_activo(request),
         'es_administrador': _es_administrador(request.user),
+        'puede_gestionar_divisas': tiene_rol(request.user, (ADMINISTRADOR, ANALISTA)),
     }
     return render(request, 'usuarios/menu_principal.html', context)
 
@@ -111,6 +114,11 @@ class ClienteViewSet(viewsets.ModelViewSet):
     Permite filtrar por ``tipo``, ``categoria``, ``estado`` y
     ``preferencia_tipo_cambio`` vía querystring para la segmentación de datos.
 
+    Permisos: consulta para ``administrador``/``analista``; alta, edición,
+    eliminación y asignación de usuarios solo para ``administrador``.
+    ``usuario_final`` no tiene acceso acá (opera sobre sus propios clientes
+    vía ``/mis-clientes/`` y ``/cliente-activo/``).
+
     Además, acciones dedicadas para la asignación de usuarios a un cliente (RF42):
 
     * ``GET  /api/usuarios/clientes/{id}/usuarios/``            -> lista los asignados.
@@ -120,6 +128,7 @@ class ClienteViewSet(viewsets.ModelViewSet):
 
     queryset = Cliente.objects.all().prefetch_related('usuarios')
     serializer_class = ClienteSerializer
+    permission_classes = [ClientesPermission]
 
     FILTROS = ('tipo', 'categoria', 'estado', 'preferencia_tipo_cambio')
 

@@ -18,6 +18,16 @@ from .oidc import provider_logout_url
 from .services import enviar_credenciales_por_correo
 
 
+def _usuario_con_rol(username, rol=None, **kwargs):
+    """Usuario de Django con un rol de negocio (grupo), para probar permisos
+    sin depender de un login real por Keycloak."""
+    user = User.objects.create_user(username, **kwargs)
+    if rol:
+        grupo, _ = Group.objects.get_or_create(name=rol)
+        user.groups.add(grupo)
+    return user
+
+
 def cliente_valido(**overrides):
     datos = dict(
         nombre='Comercial Guaraní',
@@ -121,6 +131,7 @@ class ClienteAPITests(TestCase):
 
     def setUp(self):
         self.client = APIClient()
+        self.client.force_authenticate(user=_usuario_con_rol('admin_cliente', rol='administrador'))
         self.url = '/api/usuarios/clientes/'
 
     def test_crear_cliente(self):
@@ -305,6 +316,7 @@ class AsignacionUsuariosClientesTests(TestCase):
 
     def setUp(self):
         self.client = APIClient()
+        self.client.force_authenticate(user=_usuario_con_rol('admin_asignacion', rol='administrador'))
         self.cliente = Cliente.objects.create(**cliente_valido())
         self.usuario = Usuario.objects.create(
             username='op1', email='op1@example.com', nombres='Op', apellidos='Uno',
@@ -608,3 +620,62 @@ class AsignarRolNegocioServiceTests(TestCase):
         por_username = {u['username']: u['rol'] for u in usuarios}
         self.assertEqual(por_username['juan'], 'administrador')
         self.assertIsNone(por_username['ana'])
+
+
+class PermisosClienteTests(TestCase):
+    """CRUD de Clientes: lectura para administrador/analista, escritura solo
+    para administrador; usuario_final no tiene acceso."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.cliente = Cliente.objects.create(**cliente_valido())
+        self.url = '/api/usuarios/clientes/'
+
+    def test_anonimo_no_tiene_acceso(self):
+        self.assertEqual(self.client.get(self.url).status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_usuario_final_no_tiene_acceso(self):
+        self.client.force_authenticate(user=_usuario_con_rol('final_cli', rol='usuario_final'))
+        self.assertEqual(self.client.get(self.url).status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_analista_puede_leer_pero_no_escribir(self):
+        self.client.force_authenticate(user=_usuario_con_rol('analista_cli', rol='analista'))
+        self.assertEqual(self.client.get(self.url).status_code, status.HTTP_200_OK)
+        resp = self.client.post(self.url, cliente_valido(documento='999'), format='json')
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_administrador_puede_leer_y_escribir(self):
+        self.client.force_authenticate(user=_usuario_con_rol('admin_cli', rol='administrador'))
+        self.assertEqual(self.client.get(self.url).status_code, status.HTTP_200_OK)
+        resp = self.client.post(self.url, cliente_valido(documento='999'), format='json')
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+
+
+class MenuDinamicoPorRolTests(TestCase):
+    """El menú principal muestra distintos accesos según el rol (pedido de
+    la profesora en la revisión de Sprint 2)."""
+
+    def test_usuario_final_no_ve_crud_de_divisas_ni_roles(self):
+        self.client.force_login(_usuario_con_rol('final_menu', rol='usuario_final'))
+        resp = self.client.get('/api/usuarios/')
+        html = resp.content.decode()
+        self.assertNotIn('CRUD de Monedas', html)
+        self.assertNotIn('CRUD de Cotizaciones', html)
+        self.assertNotIn('Administración de Roles', html)
+        self.assertIn('Mis Medios de Pago', html)
+
+    def test_analista_ve_crud_de_divisas_pero_no_roles(self):
+        self.client.force_login(_usuario_con_rol('analista_menu', rol='analista'))
+        resp = self.client.get('/api/usuarios/')
+        html = resp.content.decode()
+        self.assertIn('CRUD de Monedas', html)
+        self.assertIn('CRUD de Cotizaciones', html)
+        self.assertNotIn('Administración de Roles', html)
+
+    def test_administrador_ve_todo(self):
+        self.client.force_login(_usuario_con_rol('admin_menu', rol='administrador', is_staff=True))
+        resp = self.client.get('/api/usuarios/')
+        html = resp.content.decode()
+        self.assertIn('CRUD de Monedas', html)
+        self.assertIn('CRUD de Cotizaciones', html)
+        self.assertIn('Administración de Roles', html)

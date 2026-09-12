@@ -33,6 +33,17 @@
                     <li class="nav-item">
                         <a class="nav-link" href="/api/transacciones/">Transacciones</a>
                     </li>
+                    {% if puede_gestionar_divisas %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="/api/divisas/monedas/">CRUD Monedas</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/api/divisas/cotizaciones/">CRUD Cotizaciones</a>
+                    </li>
+                    {% endif %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="/api/transacciones/medios-pago-cliente/">Mis Medios de Pago</a>
+                    </li>
                     {% if es_administrador %}
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'gestion_roles' %}">Administración de Roles</a>
@@ -110,6 +121,39 @@
                     </div>
                 </div>
             </div>
+
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">Mis Medios de Pago</h5>
+                        <p class="card-text">Alta y gestión de tus medios de pago (RF17).</p>
+                        <a href="/api/transacciones/medios-pago-cliente/" class="btn btn-primary w-100">Ver Medios de Pago</a>
+                    </div>
+                </div>
+            </div>
+
+            {# Solo visible para 'administrador'/'analista' (RF21/RF22). #}
+            {% if puede_gestionar_divisas %}
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">CRUD de Monedas</h5>
+                        <p class="card-text">Alta, edición y baja del catálogo de divisas.</p>
+                        <a href="/api/divisas/monedas/" class="btn btn-primary w-100">Gestionar Monedas</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">CRUD de Cotizaciones</h5>
+                        <p class="card-text">Ajuste manual de tasas de compra y venta.</p>
+                        <a href="/api/divisas/cotizaciones/" class="btn btn-primary w-100">Gestionar Cotizaciones</a>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
 
             {# Solo visible para el rol 'administrador' (RF46/RF48). #}
             {% if es_administrador %}

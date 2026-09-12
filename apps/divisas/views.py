@@ -6,6 +6,8 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.usuarios.permissions import SoloAdministradorOAnalistaEscriben
+
 from .models import Moneda, Simulacion, TasaCambio
 from .serializers import (
     MonedaSerializer,
@@ -17,6 +19,9 @@ from .serializers import (
 class MonedaViewSet(viewsets.ModelViewSet):
     """CRUD de monedas / divisas (E4-137).
 
+    Cualquiera puede consultar; crear/editar/desactivar/reactivar requiere
+    rol ``administrador`` o ``analista`` (RF21/RF22).
+
     Listar, crear, ver y editar sobre ``/api/divisas/monedas/``. El ``DELETE`` no
     elimina el registro: hace un **borrado lógico** (``estado = False``). Para
     reactivar una moneda: ``POST /api/divisas/monedas/{id}/activar/``.
@@ -26,6 +31,7 @@ class MonedaViewSet(viewsets.ModelViewSet):
 
     queryset = Moneda.objects.all().order_by('codigo')
     serializer_class = MonedaSerializer
+    permission_classes = [SoloAdministradorOAnalistaEscriben]
 
     FILTROS = ('codigo', 'estado')
 
@@ -81,6 +87,7 @@ class CotizacionViewSet(viewsets.ModelViewSet):
 
     queryset = TasaCambio.objects.all().select_related('moneda').order_by('-fecha_hora')
     serializer_class = TasaCambioSerializer
+    permission_classes = [SoloAdministradorOAnalistaEscriben]
 
     def get_queryset(self):
         queryset = super().get_queryset()

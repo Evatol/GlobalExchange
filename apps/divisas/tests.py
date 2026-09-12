@@ -1,9 +1,20 @@
 from decimal import Decimal
+from django.contrib.auth.models import Group, User
 from django.test import TestCase
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 from .models import Moneda, TasaCambio
+
+
+def _usuario_con_rol(username, rol=None, **kwargs):
+    """Usuario de Django con un rol de negocio (grupo), para probar permisos
+    sin depender de un login real por Keycloak."""
+    user = User.objects.create_user(username, **kwargs)
+    if rol:
+        grupo, _ = Group.objects.get_or_create(name=rol)
+        user.groups.add(grupo)
+    return user
 
 
 class DivisasApiTests(APITestCase):
@@ -71,6 +82,7 @@ class DivisasApiTests(APITestCase):
 class MonedaCRUDTests(APITestCase):
 
     def setUp(self):
+        self.client.force_authenticate(user=_usuario_con_rol('admin_moneda', rol='administrador'))
         self.moneda = Moneda.objects.create(
             codigo='USD',
             nombre='Dólar estadounidense',
@@ -155,6 +167,7 @@ class CotizacionCRUDTests(APITestCase):
     """CRUD de cotizaciones (E4-26), implementado sobre TasaCambio."""
 
     def setUp(self):
+        self.client.force_authenticate(user=_usuario_con_rol('admin_cotiz', rol='administrador'))
         self.usd = Moneda.objects.create(
             codigo='USD', nombre='Dólar estadounidense', simbolo='$', estado=True
         )
@@ -360,3 +373,45 @@ class PantallaPublicaCambiosViewTests(TestCase):
             respuesta_html.context['resultado'],
             Decimal(respuesta_api.data['resultado']),
         )
+
+
+class PermisosMonedaCotizacionTests(APITestCase):
+    """Monedas y Cotizaciones: lectura libre, escritura solo para
+    administrador/analista (RF21/RF22)."""
+
+    def setUp(self):
+        self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        self.monedas_url = reverse('moneda-list')
+        self.cotizaciones_url = reverse('cotizacion-list')
+        self.payload_moneda = {'codigo': 'EUR', 'nombre': 'Euro', 'simbolo': '€'}
+        self.payload_cotizacion = {
+            'moneda': self.moneda.id, 'tasa_compra': '7300', 'tasa_venta': '7400',
+            'origen': 'Banco Central',
+        }
+
+    def test_lectura_libre_sin_login(self):
+        self.assertEqual(self.client.get(self.monedas_url).status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.get(self.cotizaciones_url).status_code, status.HTTP_200_OK)
+
+    def test_anonimo_no_puede_crear(self):
+        resp = self.client.post(self.monedas_url, self.payload_moneda)
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_usuario_final_no_puede_crear(self):
+        self.client.force_authenticate(user=_usuario_con_rol('cliente_x', rol='usuario_final'))
+        resp = self.client.post(self.monedas_url, self.payload_moneda)
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+        resp = self.client.post(self.cotizaciones_url, self.payload_cotizacion)
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_analista_puede_crear(self):
+        self.client.force_authenticate(user=_usuario_con_rol('analista_x', rol='analista'))
+        resp = self.client.post(self.monedas_url, self.payload_moneda)
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        resp = self.client.post(self.cotizaciones_url, self.payload_cotizacion)
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+
+    def test_administrador_puede_crear(self):
+        self.client.force_authenticate(user=_usuario_con_rol('admin_x', rol='administrador'))
+        resp = self.client.post(self.monedas_url, self.payload_moneda)
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
