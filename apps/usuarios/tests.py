@@ -679,3 +679,57 @@ class MenuDinamicoPorRolTests(TestCase):
         self.assertIn('CRUD de Monedas', html)
         self.assertIn('CRUD de Cotizaciones', html)
         self.assertIn('Administración de Roles', html)
+
+
+class GestionClientesViewTests(TestCase):
+    """Pantalla propia del CRUD de Clientes con asociación de usuarios
+    (en vez de la API navegable)."""
+
+    def setUp(self):
+        self.cliente = Cliente.objects.create(**cliente_valido())
+        self.usuario = Usuario.objects.create(
+            username='op_gc', email='op_gc@example.com', nombres='Op', apellidos='GC',
+        )
+        self.url = '/api/usuarios/gestion/clientes/'
+
+    def test_requiere_login(self):
+        self.assertEqual(self.client.get(self.url).status_code, 302)
+
+    def test_prohibido_para_usuario_final(self):
+        self.client.force_login(_usuario_con_rol('final_gc', rol='usuario_final'))
+        self.assertEqual(self.client.get(self.url).status_code, 403)
+
+    def test_analista_ve_pero_no_puede_crear_ni_asociar(self):
+        self.client.force_login(_usuario_con_rol('analista_gc', rol='analista'))
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, cliente_valido()['nombre'])
+        self.assertFalse(resp.context['puede_escribir'])
+
+        # intenta crear igual, por las dudas: debe rechazarse con 403
+        resp = self.client.post(self.url, cliente_valido(documento='999'))
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(Cliente.objects.filter(documento='999').exists())
+
+    def test_administrador_puede_crear_cliente(self):
+        self.client.force_login(_usuario_con_rol('admin_gc', rol='administrador'))
+        resp = self.client.post(self.url, cliente_valido(documento='999', nombre='Otro'))
+        self.assertRedirects(resp, self.url)
+        self.assertTrue(Cliente.objects.filter(documento='999').exists())
+
+    def test_administrador_puede_asociar_y_desasociar_usuario(self):
+        self.client.force_login(_usuario_con_rol('admin_gc2', rol='administrador'))
+        asignar_url = f'/api/usuarios/gestion/clientes/{self.cliente.id}/asignar-usuario/'
+        resp = self.client.post(asignar_url, {'usuario': self.usuario.id})
+        self.assertRedirects(resp, self.url)
+        self.assertIn(self.usuario, self.cliente.usuarios.all())
+
+        desasignar_url = f'/api/usuarios/gestion/clientes/{self.cliente.id}/desasignar-usuario/{self.usuario.id}/'
+        self.client.post(desasignar_url)
+        self.assertNotIn(self.usuario, self.cliente.usuarios.all())
+
+    def test_toggle(self):
+        self.client.force_login(_usuario_con_rol('admin_gc3', rol='administrador'))
+        self.client.post(f'/api/usuarios/gestion/clientes/{self.cliente.id}/toggle/')
+        self.cliente.refresh_from_db()
+        self.assertFalse(self.cliente.estado)

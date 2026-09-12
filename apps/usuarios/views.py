@@ -8,7 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from . import services, sesion
-from .models import Cliente
+from .models import Cliente, Usuario
 from .permissions import ADMINISTRADOR, ANALISTA, ClientesPermission, tiene_rol
 from .serializers import (
     AsignacionUsuarioSerializer,
@@ -65,6 +65,83 @@ def asignar_rol_view(request):
         if username and rol in services.ROLES_NEGOCIO:
             services.asignar_rol_negocio(username, rol)
     return redirect('gestion_roles')
+
+
+@login_required
+def gestion_clientes_view(request):
+    """Pantalla propia del CRUD de Clientes (E4-125), con la asociación de
+    usuarios (RF42) en la misma pantalla. Reutiliza ``ClienteSerializer``
+    para no duplicar validaciones (razón social obligatoria para jurídica,
+    límites no negativos, etc.).
+
+    Consulta: administrador o analista. Crear/editar/activar/desactivar y
+    asociar/desasociar usuarios: solo administrador.
+    """
+    if not tiene_rol(request.user, (ADMINISTRADOR, ANALISTA)):
+        raise PermissionDenied('Esta sección es solo para administrador o analista.')
+
+    puede_escribir = tiene_rol(request.user, (ADMINISTRADOR,))
+
+    error = None
+    if request.method == 'POST':
+        if not puede_escribir:
+            raise PermissionDenied('Solo un administrador puede crear clientes.')
+        serializer = ClienteSerializer(data=request.POST)
+        if serializer.is_valid():
+            serializer.save()
+            return redirect('gestion_clientes')
+        error = ' '.join(
+            str(msg) for errores in serializer.errors.values() for msg in errores
+        )
+
+    context = {
+        'usuario': request.user,
+        'clientes': Cliente.objects.all().prefetch_related('usuarios').order_by('nombre'),
+        'todos_usuarios': Usuario.objects.all().order_by('username'),
+        'puede_escribir': puede_escribir,
+        'tipo_choices': Cliente.TIPO_CHOICES,
+        'categoria_choices': Cliente.CATEGORIA_CHOICES,
+        'preferencia_choices': Cliente.PREFERENCIA_TIPO_CAMBIO_CHOICES,
+        'error': error,
+    }
+    return render(request, 'usuarios/gestion_clientes.html', context)
+
+
+@login_required
+def cliente_toggle_view(request, pk):
+    """Activa/desactiva un cliente (borrado lógico) desde la pantalla de gestión."""
+    if not tiene_rol(request.user, (ADMINISTRADOR,)):
+        raise PermissionDenied('Solo un administrador puede activar/desactivar clientes.')
+    cliente = Cliente.objects.filter(pk=pk).first()
+    if cliente is not None:
+        cliente.estado = not cliente.estado
+        cliente.save()
+    return redirect('gestion_clientes')
+
+
+@login_required
+def cliente_asignar_usuario_view(request, pk):
+    """Asocia un usuario existente a un cliente (RF42), desde la pantalla de gestión."""
+    if not tiene_rol(request.user, (ADMINISTRADOR,)):
+        raise PermissionDenied('Solo un administrador puede asociar usuarios.')
+    cliente = Cliente.objects.filter(pk=pk).first()
+    if cliente is not None and request.method == 'POST':
+        usuario = Usuario.objects.filter(pk=request.POST.get('usuario')).first()
+        if usuario is not None:
+            cliente.asociar_usuario(usuario)
+    return redirect('gestion_clientes')
+
+
+@login_required
+def cliente_desasignar_usuario_view(request, pk, usuario_id):
+    """Quita la asociación de un usuario a un cliente (RF42)."""
+    if not tiene_rol(request.user, (ADMINISTRADOR,)):
+        raise PermissionDenied('Solo un administrador puede desasociar usuarios.')
+    cliente = Cliente.objects.filter(pk=pk).first()
+    usuario = Usuario.objects.filter(pk=usuario_id).first()
+    if cliente is not None and usuario is not None:
+        cliente.desasociar_usuario(usuario)
+    return redirect('gestion_clientes')
 
 
 @login_required

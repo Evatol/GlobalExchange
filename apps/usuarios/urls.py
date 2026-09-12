@@ -5,6 +5,10 @@ from .views import (
     ClienteViewSet,
     asignar_rol_view,
     cliente_activo,
+    cliente_asignar_usuario_view,
+    cliente_desasignar_usuario_view,
+    cliente_toggle_view,
+    gestion_clientes_view,
     gestion_roles_view,
     menu_principal_view,
     mis_clientes,
@@ -21,5 +25,16 @@ urlpatterns = [
     path('cliente-activo/', cliente_activo, name='cliente_activo'),
     path('roles/', gestion_roles_view, name='gestion_roles'),
     path('roles/asignar/', asignar_rol_view, name='asignar_rol'),
+
+    # Pantalla propia de gestión de Clientes (HTML), con asociación de
+    # usuarios (RF42) incluida. Administrador/analista.
+    path('gestion/clientes/', gestion_clientes_view, name='gestion_clientes'),
+    path('gestion/clientes/<int:pk>/toggle/', cliente_toggle_view, name='cliente_toggle'),
+    path('gestion/clientes/<int:pk>/asignar-usuario/', cliente_asignar_usuario_view, name='cliente_asignar_usuario'),
+    path(
+        'gestion/clientes/<int:pk>/desasignar-usuario/<int:usuario_id>/',
+        cliente_desasignar_usuario_view,
+        name='cliente_desasignar_usuario',
+    ),
     *router.urls,
 ]

@@ -29,6 +29,9 @@
                     </li>
                     {% if puede_gestionar_divisas %}
                     <li class="nav-item">
+                        <a class="nav-link" href="{% url 'gestion_clientes' %}">CRUD Clientes</a>
+                    </li>
+                    <li class="nav-item">
                         <a class="nav-link" href="{% url 'gestion_monedas' %}">CRUD Monedas</a>
                     </li>
                     <li class="nav-item">
@@ -109,8 +112,18 @@
                 </div>
             </div>
 
-            {# Solo visible para 'administrador'/'analista' (RF21/RF22). #}
+            {# Solo visible para 'administrador'/'analista'. #}
             {% if puede_gestionar_divisas %}
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">CRUD de Clientes</h5>
+                        <p class="card-text">Alta de clientes y asociación de usuarios (E4-125/RF42).</p>
+                        <a href="{% url 'gestion_clientes' %}" class="btn btn-primary w-100">Gestionar Clientes</a>
+                    </div>
+                </div>
+            </div>
+
             <div class="col-md-4">
                 <div class="card h-100 shadow-sm border-0">
                     <div class="card-body text-center">
