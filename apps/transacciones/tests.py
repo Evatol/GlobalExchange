@@ -1,4 +1,5 @@
 from django.contrib.auth.models import Group, User
+from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -221,3 +222,83 @@ class PermisosMedioPagoClienteTests(APITestCase):
     def test_anonimo_no_tiene_acceso(self):
         resp = self.client.get(self.url)
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class GestionMetodosPagoViewTests(TestCase):
+    """Pantalla propia del catálogo de métodos de pago (en vez de la API navegable)."""
+
+    def setUp(self):
+        self.metodo = MetodoPago.objects.create(nombre='Transferencia', tipo='BANCO')
+        self.url = '/api/transacciones/gestion/metodos-pago/'
+
+    def test_prohibido_para_analista(self):
+        self.client.force_login(_usuario_con_rol('analista_gmp', rol='analista'))
+        self.assertEqual(self.client.get(self.url).status_code, 403)
+
+    def test_administrador_ve_el_listado_y_puede_crear(self):
+        self.client.force_login(_usuario_con_rol('admin_gmp', rol='administrador'))
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Transferencia')
+
+        resp = self.client.post(self.url, {'nombre': 'Efectivo', 'tipo': 'CASH', 'estado': 'on'})
+        self.assertRedirects(resp, self.url)
+        self.assertTrue(MetodoPago.objects.filter(nombre='Efectivo').exists())
+
+    def test_toggle(self):
+        self.client.force_login(_usuario_con_rol('admin_gmp2', rol='administrador'))
+        self.client.post(f'/api/transacciones/gestion/metodos-pago/{self.metodo.id}/toggle/')
+        self.metodo.refresh_from_db()
+        self.assertFalse(self.metodo.estado)
+
+
+class GestionMediosPagoViewTests(TestCase):
+    """Pantalla propia de "Mis Medios de Pago" (en vez de la API navegable)."""
+
+    def setUp(self):
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
+        self.cliente_propio = _cliente(nombre='Cliente Propio', documento='P2')
+        self.cliente_ajeno = _cliente(nombre='Cliente Ajeno', documento='A2')
+
+        self.user_final = _usuario_con_rol('final_gmedios', rol='usuario_final')
+        usuario_negocio = Usuario.objects.create(
+            username='final_gmedios', email='fg@example.com', nombres='F', apellidos='G',
+        )
+        usuario_negocio.clientes.add(self.cliente_propio)
+
+        self.medio_propio = MedioPagoCliente.objects.create(
+            cliente=self.cliente_propio, metodo_pago=self.metodo, alias='Mio', identificador='1',
+        )
+        self.medio_ajeno = MedioPagoCliente.objects.create(
+            cliente=self.cliente_ajeno, metodo_pago=self.metodo, alias='Ajeno', identificador='2',
+        )
+        self.url = '/api/transacciones/gestion/medios-pago-cliente/'
+
+    def test_usuario_final_solo_ve_los_suyos_y_crea_para_si_mismo(self):
+        self.client.force_login(self.user_final)
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Mio')
+        self.assertNotContains(resp, 'Ajeno')
+
+        resp = self.client.post(self.url, {
+            'cliente': self.cliente_ajeno.pk,  # se ignora, se fuerza el propio
+            'metodo_pago': self.metodo.pk, 'alias': 'Nuevo', 'identificador': '999',
+        })
+        self.assertRedirects(resp, self.url)
+        creado = MedioPagoCliente.objects.get(alias='Nuevo')
+        self.assertEqual(creado.cliente, self.cliente_propio)
+
+    def test_administrador_ve_todos_con_columna_cliente(self):
+        self.client.force_login(_usuario_con_rol('admin_gmedios', rol='administrador'))
+        resp = self.client.get(self.url)
+        self.assertContains(resp, 'Mio')
+        self.assertContains(resp, 'Ajeno')
+        self.assertContains(resp, 'Cliente Propio')
+
+    def test_toggle_respeta_el_alcance(self):
+        self.client.force_login(self.user_final)
+        # intenta desactivar el medio de OTRO cliente
+        self.client.post(f'/api/transacciones/gestion/medios-pago-cliente/{self.medio_ajeno.id}/toggle/')
+        self.medio_ajeno.refresh_from_db()
+        self.assertTrue(self.medio_ajeno.estado)  # no cambio, no era suyo

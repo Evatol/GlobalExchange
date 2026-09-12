@@ -7,6 +7,10 @@ from .views import (
     PantallaPublicaCambiosView,
     SimuladorConversionView,
     TasasPublicasView,
+    cotizacion_toggle_view,
+    gestion_cotizaciones_view,
+    gestion_monedas_view,
+    moneda_toggle_view,
 )
 
 router = DefaultRouter()
@@ -21,4 +25,11 @@ urlpatterns = [
     # Endpoints de API (JSON)
     path('tasas/', TasasPublicasView.as_view(), name='tasas-publicas'),
     path('simular/', SimuladorConversionView.as_view(), name='simulador-conversion'),
+
+    # Pantallas propias de gestión (HTML), en vez de la API navegable de DRF.
+    # Solo administrador/analista (RF21/RF22).
+    path('gestion/monedas/', gestion_monedas_view, name='gestion_monedas'),
+    path('gestion/monedas/<int:pk>/toggle/', moneda_toggle_view, name='moneda_toggle'),
+    path('gestion/cotizaciones/', gestion_cotizaciones_view, name='gestion_cotizaciones'),
+    path('gestion/cotizaciones/<int:pk>/toggle/', cotizacion_toggle_view, name='cotizacion_toggle'),
 ] + router.urls

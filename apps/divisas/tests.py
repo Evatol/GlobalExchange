@@ -415,3 +415,93 @@ class PermisosMonedaCotizacionTests(APITestCase):
         self.client.force_authenticate(user=_usuario_con_rol('admin_x', rol='administrador'))
         resp = self.client.post(self.monedas_url, self.payload_moneda)
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+
+
+class GestionMonedasViewTests(TestCase):
+    """Pantalla propia del CRUD de Monedas (en vez de la API navegable)."""
+
+    def setUp(self):
+        self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        self.url = reverse('gestion_monedas')
+
+    def test_requiere_login(self):
+        self.assertEqual(self.client.get(self.url).status_code, 302)
+
+    def test_prohibido_para_usuario_final(self):
+        self.client.force_login(_usuario_con_rol('final_gm', rol='usuario_final'))
+        self.assertEqual(self.client.get(self.url).status_code, 403)
+
+    def test_analista_ve_el_listado(self):
+        self.client.force_login(_usuario_con_rol('analista_gm', rol='analista'))
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTemplateUsed(resp, 'divisas/gestion_monedas.html')
+        self.assertContains(resp, 'USD')
+
+    def test_administrador_puede_crear(self):
+        self.client.force_login(_usuario_con_rol('admin_gm', rol='administrador'))
+        resp = self.client.post(self.url, {
+            'codigo': 'EUR', 'nombre': 'Euro', 'simbolo': '€', 'estado': 'on',
+        })
+        self.assertRedirects(resp, self.url)
+        self.assertTrue(Moneda.objects.filter(codigo='EUR').exists())
+
+    def test_toggle_desactiva_y_reactiva(self):
+        self.client.force_login(_usuario_con_rol('admin_gm2', rol='administrador'))
+        toggle_url = reverse('moneda_toggle', args=[self.moneda.id])
+        self.client.post(toggle_url)
+        self.moneda.refresh_from_db()
+        self.assertFalse(self.moneda.estado)
+        self.client.post(toggle_url)
+        self.moneda.refresh_from_db()
+        self.assertTrue(self.moneda.estado)
+
+
+class GestionCotizacionesViewTests(TestCase):
+    """Pantalla propia del CRUD de Cotizaciones (en vez de la API navegable)."""
+
+    def setUp(self):
+        self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        self.cotizacion = TasaCambio.objects.create(
+            moneda=self.moneda, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
+            origen='Banco Central',
+        )
+        self.url = reverse('gestion_cotizaciones')
+
+    def test_prohibido_para_usuario_final(self):
+        self.client.force_login(_usuario_con_rol('final_gc', rol='usuario_final'))
+        self.assertEqual(self.client.get(self.url).status_code, 403)
+
+    def test_administrador_puede_crear_y_desactiva_la_anterior(self):
+        self.client.force_login(_usuario_con_rol('admin_gc', rol='administrador'))
+        resp = self.client.post(self.url, {
+            'moneda': self.moneda.id, 'tasa_compra': '7350', 'tasa_venta': '7450',
+            'origen': 'Test', 'estado': 'on',
+        })
+        self.assertRedirects(resp, self.url)
+        self.cotizacion.refresh_from_db()
+        self.assertFalse(self.cotizacion.estado)
+        self.assertEqual(
+            TasaCambio.objects.filter(moneda=self.moneda, estado=True).count(), 1,
+        )
+
+    def test_no_permite_venta_menor_a_compra(self):
+        self.client.force_login(_usuario_con_rol('admin_gc2', rol='administrador'))
+        resp = self.client.post(self.url, {
+            'moneda': self.moneda.id, 'tasa_compra': '7400', 'tasa_venta': '7300',
+            'origen': 'Test',
+        })
+        self.assertEqual(resp.status_code, 200)  # se queda en la pantalla con el error
+        self.assertContains(resp, 'no puede ser menor')
+
+    def test_toggle_activa_desactivando_las_demas_de_la_moneda(self):
+        otra = TasaCambio.objects.create(
+            moneda=self.moneda, tasa_compra=Decimal('1'), tasa_venta=Decimal('2'),
+            origen='x', estado=False,
+        )
+        self.client.force_login(_usuario_con_rol('admin_gc3', rol='administrador'))
+        self.client.post(reverse('cotizacion_toggle', args=[otra.id]))
+        otra.refresh_from_db()
+        self.cotizacion.refresh_from_db()
+        self.assertTrue(otra.estado)
+        self.assertFalse(self.cotizacion.estado)
