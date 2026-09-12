@@ -24,9 +24,9 @@
                 <h2>{% if ve_todos %}Medios de Pago de Clientes{% else %}Mis Medios de Pago{% endif %}</h2>
                 <p class="text-muted">
                     {% if ve_todos %}
-                        Medios de pago registrados por cualquier cliente (RF17).
+                        Medios de pago registrados por cualquier cliente.
                     {% else %}
-                        Medios de pago del cliente activo{% if cliente_activo %}: <strong>{{ cliente_activo.nombre }}</strong>{% endif %} (RF17).
+                        Medios de pago del cliente activo{% if cliente_activo %}: <strong>{{ cliente_activo.nombre }}</strong>{% endif %}.
                     {% endif %}
                 </p>
             </div>
