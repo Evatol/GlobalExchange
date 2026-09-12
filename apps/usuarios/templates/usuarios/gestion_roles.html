@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GlobalExchange - Administración de Roles</title>
+    <!-- Bootstrap 5 CSS (Licencia Libre MIT) -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+    <!-- Misma barra de navegación que el resto del sistema. -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="{% url 'menu_principal' %}">GlobalExchange</a>
+            <div class="d-flex align-items-center text-white">
+                <span class="me-3">Bienvenido, <strong>{{ usuario.username }}</strong></span>
+                <a href="{% url 'menu_principal' %}" class="btn btn-outline-light btn-sm">Volver al Portal</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container my-5">
+        <div class="row">
+            <div class="col-md-12 text-center mb-4">
+                <h2>Administración de Roles</h2>
+                <p class="text-muted">
+                    Asigná el rol de negocio de cada usuario del sistema (RF46 / RF48).
+                    Cambia recién al próximo inicio de sesión de esa persona.
+                </p>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-12">
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table align-middle mb-0">
+                                <thead>
+                                    <tr class="text-muted">
+                                        <th>Usuario</th>
+                                        <th>Email</th>
+                                        <th>Rol actual</th>
+                                        <th>Nuevo rol</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for u in usuarios %}
+                                    <tr>
+                                        <td><strong>{{ u.username }}</strong></td>
+                                        <td>{{ u.email }}</td>
+                                        <td>
+                                            {% if u.rol %}
+                                                <span class="badge bg-primary">{{ u.rol }}</span>
+                                            {% else %}
+                                                <span class="badge bg-secondary">sin rol</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <form method="post" action="{% url 'asignar_rol' %}" class="d-flex align-items-center gap-2 m-0">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="username" value="{{ u.username }}">
+                                                <select name="rol" class="form-select form-select-sm">
+                                                    {% for r in roles_disponibles %}
+                                                    <option value="{{ r }}" {% if u.rol == r %}selected{% endif %}>{{ r }}</option>
+                                                    {% endfor %}
+                                                </select>
+                                                <button type="submit" class="btn btn-sm btn-primary">Guardar</button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                    {% empty %}
+                                    <tr>
+                                        <td colspan="4" class="text-center text-muted">No hay usuarios registrados en Keycloak.</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap 5 JS Bundle -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

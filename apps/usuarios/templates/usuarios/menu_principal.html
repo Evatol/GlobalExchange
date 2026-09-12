@@ -33,6 +33,11 @@
                     <li class="nav-item">
                         <a class="nav-link" href="/api/transacciones/">Transacciones</a>
                     </li>
+                    {% if es_administrador %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'gestion_roles' %}">Administración de Roles</a>
+                    </li>
+                    {% endif %}
                 </ul>
 
                 <!-- Información del Usuario Autenticado -->
@@ -105,6 +110,19 @@
                     </div>
                 </div>
             </div>
+
+            {# Solo visible para el rol 'administrador' (RF46/RF48). #}
+            {% if es_administrador %}
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">Administración de Roles</h5>
+                        <p class="card-text">Asignar el rol de cada usuario del sistema.</p>
+                        <a href="{% url 'gestion_roles' %}" class="btn btn-primary w-100">Gestionar Roles</a>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
         </div>
     </div>
 

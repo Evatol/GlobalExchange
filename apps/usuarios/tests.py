@@ -11,6 +11,7 @@ from django.test import RequestFactory, TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from . import services as services_module
 from .backends import CustomOIDCBackend
 from .models import Cliente, Usuario
 from .oidc import provider_logout_url
@@ -485,3 +486,125 @@ class SelectorClienteActivoTests(TestCase):
             self.client.get('/api/usuarios/mis-clientes/').status_code,
             status.HTTP_403_FORBIDDEN,
         )
+
+
+class GestionRolesTests(TestCase):
+    """RF46/RF48: pantalla de administración de roles (solo para el rol
+    'administrador', reflejado como is_staff por CustomOIDCBackend)."""
+
+    def setUp(self):
+        self.admin = User.objects.create_user('admin_demo', 'admin@example.com', is_staff=True)
+        self.no_admin = User.objects.create_user('cliente_demo', 'cliente@example.com')
+
+    @patch('apps.usuarios.services.listar_usuarios_con_roles')
+    def test_accesible_para_administrador(self, mock_listar):
+        mock_listar.return_value = [
+            {'id': '1', 'username': 'analista_demo', 'email': 'a@example.com', 'rol': 'analista'},
+        ]
+        self.client.force_login(self.admin)
+        resp = self.client.get('/api/usuarios/roles/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTemplateUsed(resp, 'usuarios/gestion_roles.html')
+        self.assertEqual(resp.context['usuarios'][0]['username'], 'analista_demo')
+
+    def test_prohibido_para_no_administrador(self):
+        self.client.force_login(self.no_admin)
+        resp = self.client.get('/api/usuarios/roles/')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_requiere_login(self):
+        resp = self.client.get('/api/usuarios/roles/')
+        self.assertEqual(resp.status_code, 302)  # redirige al login
+
+    @patch('apps.usuarios.services.asignar_rol_negocio')
+    def test_asignar_rol_llama_al_servicio(self, mock_asignar):
+        self.client.force_login(self.admin)
+        resp = self.client.post('/api/usuarios/roles/asignar/', {
+            'username': 'analista_demo', 'rol': 'analista',
+        })
+        self.assertRedirects(resp, '/api/usuarios/roles/')
+        mock_asignar.assert_called_once_with('analista_demo', 'analista')
+
+    @patch('apps.usuarios.services.asignar_rol_negocio')
+    def test_asignar_rol_ignora_rol_invalido(self, mock_asignar):
+        self.client.force_login(self.admin)
+        self.client.post('/api/usuarios/roles/asignar/', {
+            'username': 'analista_demo', 'rol': 'super-hacker',
+        })
+        mock_asignar.assert_not_called()
+
+    @patch('apps.usuarios.services.asignar_rol_negocio')
+    def test_asignar_rol_prohibido_para_no_administrador(self, mock_asignar):
+        self.client.force_login(self.no_admin)
+        resp = self.client.post('/api/usuarios/roles/asignar/', {
+            'username': 'analista_demo', 'rol': 'analista',
+        })
+        self.assertEqual(resp.status_code, 403)
+        mock_asignar.assert_not_called()
+
+
+class AsignarRolNegocioServiceTests(TestCase):
+    """Pruebas unitarias de la lógica de apps.usuarios.services.asignar_rol_negocio
+    y listar_usuarios_con_roles, contra un KeycloakAdmin simulado."""
+
+    def test_rol_invalido_lanza_value_error(self):
+        with self.assertRaises(ValueError):
+            services_module.asignar_rol_negocio('quien-sea', 'no-existe')
+
+    @patch('apps.usuarios.services._keycloak_admin')
+    def test_usuario_inexistente_lanza_value_error(self, mock_admin_factory):
+        mock_admin = mock_admin_factory.return_value
+        mock_admin.get_user_id.return_value = None
+        with self.assertRaises(ValueError):
+            services_module.asignar_rol_negocio('fantasma', 'analista')
+
+    @patch('apps.usuarios.services._keycloak_admin')
+    def test_quita_el_rol_anterior_y_asigna_el_nuevo(self, mock_admin_factory):
+        mock_admin = mock_admin_factory.return_value
+        mock_admin.get_user_id.return_value = 'uid-1'
+        mock_admin.get_realm_roles_of_user.return_value = [
+            {'name': 'analista', 'id': 'r-analista'},
+            {'name': 'default-roles-globalexchange', 'id': 'r-default'},
+        ]
+        mock_admin.get_realm_role.return_value = {'name': 'administrador', 'id': 'r-admin'}
+
+        resultado = services_module.asignar_rol_negocio('juan', 'administrador')
+
+        self.assertEqual(resultado, 'administrador')
+        mock_admin.delete_realm_roles_of_user.assert_called_once_with(
+            user_id='uid-1', roles=[{'name': 'analista', 'id': 'r-analista'}],
+        )
+        mock_admin.assign_realm_roles.assert_called_once_with(
+            user_id='uid-1', roles=[{'name': 'administrador', 'id': 'r-admin'}],
+        )
+
+    @patch('apps.usuarios.services._keycloak_admin')
+    def test_no_reasigna_si_ya_tiene_ese_rol(self, mock_admin_factory):
+        mock_admin = mock_admin_factory.return_value
+        mock_admin.get_user_id.return_value = 'uid-1'
+        mock_admin.get_realm_roles_of_user.return_value = [
+            {'name': 'analista', 'id': 'r-analista'},
+        ]
+
+        services_module.asignar_rol_negocio('juan', 'analista')
+
+        mock_admin.delete_realm_roles_of_user.assert_not_called()
+        mock_admin.assign_realm_roles.assert_not_called()
+
+    @patch('apps.usuarios.services._keycloak_admin')
+    def test_listar_usuarios_con_roles_detecta_el_rol_de_negocio(self, mock_admin_factory):
+        mock_admin = mock_admin_factory.return_value
+        mock_admin.get_users.return_value = [
+            {'id': 'uid-1', 'username': 'juan', 'email': 'juan@example.com'},
+            {'id': 'uid-2', 'username': 'ana', 'email': 'ana@example.com'},
+        ]
+        mock_admin.get_realm_roles_of_user.side_effect = [
+            [{'name': 'default-roles-globalexchange'}, {'name': 'administrador'}],
+            [{'name': 'offline_access'}],  # sin rol de negocio todavia
+        ]
+
+        usuarios = services_module.listar_usuarios_con_roles()
+
+        por_username = {u['username']: u['rol'] for u in usuarios}
+        self.assertEqual(por_username['juan'], 'administrador')
+        self.assertIsNone(por_username['ana'])

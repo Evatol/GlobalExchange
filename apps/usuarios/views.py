@@ -7,7 +7,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from . import sesion
+from . import services, sesion
 from .models import Cliente
 from .serializers import (
     AsignacionUsuarioSerializer,
@@ -17,6 +17,13 @@ from .serializers import (
 )
 
 
+def _es_administrador(user):
+    """El rol 'administrador' de Keycloak se refleja como is_staff
+    (ver CustomOIDCBackend._sync_roles), así que alcanza con chequear eso:
+    no depende de ningún username en particular."""
+    return user.is_authenticated and user.is_staff
+
+
 @login_required
 def menu_principal_view(request):
     """Menú principal, con el selector de cliente activo (RF43)."""
@@ -24,8 +31,37 @@ def menu_principal_view(request):
         'usuario': request.user,
         'mis_clientes': sesion.clientes_disponibles(request),
         'cliente_activo': sesion.get_cliente_activo(request),
+        'es_administrador': _es_administrador(request.user),
     }
     return render(request, 'usuarios/menu_principal.html', context)
+
+
+@login_required
+def gestion_roles_view(request):
+    """Pantalla para que un administrador asigne el rol de negocio de cada
+    usuario del sistema (RF46 desasignar / RF48 asignar)."""
+    if not _es_administrador(request.user):
+        raise PermissionDenied('Esta sección es solo para administradores.')
+    context = {
+        'usuario': request.user,
+        'usuarios': services.listar_usuarios_con_roles(),
+        'roles_disponibles': services.ROLES_NEGOCIO,
+    }
+    return render(request, 'usuarios/gestion_roles.html', context)
+
+
+@login_required
+def asignar_rol_view(request):
+    """Aplica, desde el formulario de la pantalla de gestión de roles, el
+    rol elegido para un usuario puntual."""
+    if not _es_administrador(request.user):
+        raise PermissionDenied('Esta sección es solo para administradores.')
+    if request.method == 'POST':
+        username = request.POST.get('username')
+        rol = request.POST.get('rol')
+        if username and rol in services.ROLES_NEGOCIO:
+            services.asignar_rol_negocio(username, rol)
+    return redirect('gestion_roles')
 
 
 @login_required
