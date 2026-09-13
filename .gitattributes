@@ -1,0 +1,6 @@
+# Los scripts de shell tienen que mantener saltos de línea LF pase lo que
+# pase: si Windows los convierte a CRLF al hacer checkout (comportamiento
+# por defecto de Git ahí con core.autocrlf=true), el shebang (#!/bin/sh)
+# queda como "#!/bin/sh\r", Linux no lo reconoce y Docker falla con
+# "exec ...: no such file or directory" al levantar el contenedor.
+*.sh text eol=lf
