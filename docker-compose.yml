@@ -21,6 +21,14 @@ services:
     environment:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      # Sin esto, Keycloak calcula el "issuer" de los tokens en base al
+      # Host que haya usado CADA pedido (dev mode): el navegador le pega
+      # por "localhost:8080" pero Django, adentro del contenedor, por
+      # "keycloak:8080" -- dos issuers distintos para la MISMA sesion, y
+      # Keycloak termina rechazando el token con 401 al pedir /userinfo.
+      # Fijar el hostname hace que sea siempre el mismo, sin importar por
+      # que URL entre cada pedido.
+      KC_HOSTNAME: http://localhost:8080
     ports:
       - "8080:8080"
     volumes:
