@@ -356,6 +356,30 @@ Notas:
 
 
 ====================================================================
+ PARTE G.5 - AMBIENTE DE "PRODUCCIÓN" (Hito 5 / Sprint 3 - AMB)
+====================================================================
+
+Es un archivo de Docker Compose aparte (no reemplaza al de la Parte G):
+usa DEBUG=False, un servidor real (gunicorn) en vez de runserver, y sirve
+los archivos estáticos (CSS/JS del admin, etc.) con WhiteNoise en vez de
+depender de que Django los sirva en modo debug.
+
+    docker compose -f docker-compose.prod.yml up --build
+
+No lo corras a la vez que el de la Parte G (docker-compose.yml): compiten
+por los mismos puertos (5432, 8080, 8000).
+
+Limitación conocida y a propósito: NO hay HTTPS real acá (no tenemos
+dominio ni certificado), así que SECURE_SSL_REDIRECT, SESSION_COOKIE_SECURE
+y CSRF_COOKIE_SECURE quedan en False. Si esto se desplegara en un servidor
+de verdad con dominio y TLS (por ejemplo detrás de un proxy Nginx/Caddy con
+certificado), esas 3 variables deberían pasar a True — está documentado
+así en el propio docker-compose.prod.yml.
+
+Para apagarlo: docker compose -f docker-compose.prod.yml down [-v]
+
+
+====================================================================
  RESUMEN RÁPIDO (para el día a día)
 ====================================================================
 

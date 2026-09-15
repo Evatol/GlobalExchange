@@ -28,6 +28,12 @@ wait_for "${KEYCLOAK_HOST:-keycloak}" "${KEYCLOAK_PORT:-8080}" "Keycloak"
 
 python manage.py migrate --noinput
 
+# En producción (DEBUG=False) no hay runserver sirviendo los estáticos: hay
+# que juntarlos para que WhiteNoise los sirva. En desarrollo no hace falta.
+if [ "${DEBUG:-True}" != "True" ]; then
+    python manage.py collectstatic --noinput
+fi
+
 # Deja el realm de Keycloak configurado (roles, mapper de roles, idioma,
 # direct access grants, post-logout redirect). Todos idempotentes: correrlos
 # de nuevo en cada arranque no rompe nada. No incluye autoregistro/SMTP

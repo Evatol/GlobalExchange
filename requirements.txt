@@ -9,6 +9,8 @@ deprecation==2.1.0
 Django==5.2.17
 django-environ==0.14.0
 djangorestframework==3.18.0
+gunicorn==23.0.0
+whitenoise==6.10.0
 h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1
