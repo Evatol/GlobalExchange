@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.contrib.auth.models import Group, User
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -567,3 +568,50 @@ class OperarDivisaAPITests(APITestCase):
             'medio_pago_id': self.medio.id,
         })
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class TransaccionCancelacionPorCambioDeTasaTests(TestCase):
+    """E4-28: la transacción se cancela sola si la cotización cambió entre
+    que se creó y que se intenta confirmar/pagar."""
+
+    def setUp(self):
+        self.usuario = Usuario.objects.create(
+            username='testuser_e428', email='test_e428@mail.com',
+            nombres='Test', apellidos='User',
+        )
+        self.cliente = _cliente(nombre='Cliente E4-28', documento='E428')
+        self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$', estado=True)
+        self.tasa_cambio_obj = TasaCambio.objects.create(
+            moneda=self.moneda, tasa_compra=Decimal('7300.00'), tasa_venta=Decimal('7400.00'),
+            origen='Banco Central', estado=True,
+        )
+        self.metodo_pago = MetodoPago.objects.create(nombre='Efectivo', tipo='Fisico', estado=True)
+
+    def _transaccion_pendiente(self):
+        return Transaccion.objects.create(
+            usuario=self.usuario, cliente=self.cliente, moneda=self.moneda,
+            metodo_pago=self.metodo_pago, tipo='COMPRA', cantidad=Decimal('10.00'),
+            tasa_cambio=Decimal('7300.00'), modalidad='DIGITAL',
+        )
+
+    def test_cancelar_transaccion_si_cambia_tasa(self):
+        transaccion = self._transaccion_pendiente()
+
+        # Simulamos que la tasa de compra cambia antes de confirmar
+        self.tasa_cambio_obj.tasa_compra = Decimal('7450.00')
+        self.tasa_cambio_obj.save()
+
+        with self.assertRaises(ValidationError):
+            transaccion.confirmar()
+
+        transaccion.refresh_from_db()
+        self.assertEqual(transaccion.estado, 'CANCELADA')
+
+    def test_confirma_normal_si_la_tasa_no_cambio(self):
+        transaccion = self._transaccion_pendiente()
+
+        transaccion.confirmar()
+
+        transaccion.refresh_from_db()
+        self.assertEqual(transaccion.estado, 'EXITOSA')
+        self.assertGreater(transaccion.monto_total, Decimal('0'))

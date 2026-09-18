@@ -156,6 +156,20 @@ class Transaccion(models.Model):
     def confirmar(self):
         if not self.validar():
             raise ValidationError('La transacción no es válida.')
+        
+        # Obtenemos la tasa de cambio vigente desde el modelo TasaCambio asociado
+        tasa_obj = self.moneda.tasas.filter(estado=True).order_by('-fecha_hora').first()
+        if not tasa_obj:
+            raise ValidationError('No hay una tasa de cambio vigente para esta moneda.')
+        
+        tasa_actual = tasa_obj.tasa_compra if self.tipo == 'COMPRA' else tasa_obj.tasa_venta
+        
+        # Verificamos si la tasa cambió desde que se creó la transacción
+        if self.tasa_cambio != tasa_actual:
+            self.estado = 'CANCELADA'
+            self.save()
+            raise ValidationError('La transacción ha sido cancelada porque la tasa de cambio ha sufrido modificaciones.')
+
         self.calcular_monto_total()
         self.estado = 'EXITOSA'
         self.save()
