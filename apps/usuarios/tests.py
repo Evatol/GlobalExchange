@@ -11,10 +11,21 @@ from django.test import RequestFactory, TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from . import services as services_module
 from .backends import CustomOIDCBackend
 from .models import Cliente, Usuario
 from .oidc import provider_logout_url
 from .services import enviar_credenciales_por_correo
+
+
+def _usuario_con_rol(username, rol=None, **kwargs):
+    """Usuario de Django con un rol de negocio (grupo), para probar permisos
+    sin depender de un login real por Keycloak."""
+    user = User.objects.create_user(username, **kwargs)
+    if rol:
+        grupo, _ = Group.objects.get_or_create(name=rol)
+        user.groups.add(grupo)
+    return user
 
 
 def cliente_valido(**overrides):
@@ -120,6 +131,7 @@ class ClienteAPITests(TestCase):
 
     def setUp(self):
         self.client = APIClient()
+        self.client.force_authenticate(user=_usuario_con_rol('admin_cliente', rol='administrador'))
         self.url = '/api/usuarios/clientes/'
 
     def test_crear_cliente(self):
@@ -304,6 +316,7 @@ class AsignacionUsuariosClientesTests(TestCase):
 
     def setUp(self):
         self.client = APIClient()
+        self.client.force_authenticate(user=_usuario_con_rol('admin_asignacion', rol='administrador'))
         self.cliente = Cliente.objects.create(**cliente_valido())
         self.usuario = Usuario.objects.create(
             username='op1', email='op1@example.com', nombres='Op', apellidos='Uno',
@@ -484,4 +497,475 @@ class SelectorClienteActivoTests(TestCase):
         self.assertEqual(
             self.client.get('/api/usuarios/mis-clientes/').status_code,
             status.HTTP_403_FORBIDDEN,
+        )
+
+
+class GestionRolesTests(TestCase):
+    """RF46/RF48: pantalla de administración de roles (solo para el rol
+    'administrador', reflejado como is_staff por CustomOIDCBackend)."""
+
+    def setUp(self):
+        self.admin = User.objects.create_user('admin_demo', 'admin@example.com', is_staff=True)
+        self.no_admin = User.objects.create_user('cliente_demo', 'cliente@example.com')
+
+    @patch('apps.usuarios.services.listar_usuarios_con_roles')
+    def test_accesible_para_administrador(self, mock_listar):
+        mock_listar.return_value = [
+            {'id': '1', 'username': 'analista_demo', 'email': 'a@example.com', 'rol': 'analista'},
+        ]
+        self.client.force_login(self.admin)
+        resp = self.client.get('/api/usuarios/roles/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTemplateUsed(resp, 'usuarios/gestion_roles.html')
+        self.assertEqual(resp.context['usuarios'][0]['username'], 'analista_demo')
+
+    def test_prohibido_para_no_administrador(self):
+        self.client.force_login(self.no_admin)
+        resp = self.client.get('/api/usuarios/roles/')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_requiere_login(self):
+        resp = self.client.get('/api/usuarios/roles/')
+        self.assertEqual(resp.status_code, 302)  # redirige al login
+
+    @patch('apps.usuarios.services.asignar_rol_negocio')
+    def test_asignar_rol_llama_al_servicio(self, mock_asignar):
+        self.client.force_login(self.admin)
+        resp = self.client.post('/api/usuarios/roles/asignar/', {
+            'username': 'analista_demo', 'rol': 'analista',
+        })
+        # fetch_redirect_response=False: no seguir el redirect. La pantalla de
+        # destino (gestion_roles_view) llama a listar_usuarios_con_roles(),
+        # que no está mockeado acá (sí lo está en test_accesible_para_administrador)
+        # y en CI no hay Keycloak disponible para responderle.
+        self.assertRedirects(resp, '/api/usuarios/roles/', fetch_redirect_response=False)
+        mock_asignar.assert_called_once_with('analista_demo', 'analista')
+
+    @patch('apps.usuarios.services.asignar_rol_negocio')
+    def test_asignar_rol_ignora_rol_invalido(self, mock_asignar):
+        self.client.force_login(self.admin)
+        self.client.post('/api/usuarios/roles/asignar/', {
+            'username': 'analista_demo', 'rol': 'super-hacker',
+        })
+        mock_asignar.assert_not_called()
+
+    @patch('apps.usuarios.services.asignar_rol_negocio')
+    def test_asignar_rol_prohibido_para_no_administrador(self, mock_asignar):
+        self.client.force_login(self.no_admin)
+        resp = self.client.post('/api/usuarios/roles/asignar/', {
+            'username': 'analista_demo', 'rol': 'analista',
+        })
+        self.assertEqual(resp.status_code, 403)
+        mock_asignar.assert_not_called()
+
+
+class AsignarRolNegocioServiceTests(TestCase):
+    """Pruebas unitarias de la lógica de apps.usuarios.services.asignar_rol_negocio
+    y listar_usuarios_con_roles, contra un KeycloakAdmin simulado."""
+
+    def test_rol_invalido_lanza_value_error(self):
+        with self.assertRaises(ValueError):
+            services_module.asignar_rol_negocio('quien-sea', 'no-existe')
+
+    @patch('apps.usuarios.services._keycloak_admin')
+    def test_usuario_inexistente_lanza_value_error(self, mock_admin_factory):
+        mock_admin = mock_admin_factory.return_value
+        mock_admin.get_user_id.return_value = None
+        with self.assertRaises(ValueError):
+            services_module.asignar_rol_negocio('fantasma', 'analista')
+
+    @patch('apps.usuarios.services._keycloak_admin')
+    def test_quita_el_rol_anterior_y_asigna_el_nuevo(self, mock_admin_factory):
+        mock_admin = mock_admin_factory.return_value
+        mock_admin.get_user_id.return_value = 'uid-1'
+        mock_admin.get_realm_roles_of_user.return_value = [
+            {'name': 'analista', 'id': 'r-analista'},
+            {'name': 'default-roles-globalexchange', 'id': 'r-default'},
+        ]
+        mock_admin.get_realm_role.return_value = {'name': 'administrador', 'id': 'r-admin'}
+
+        resultado = services_module.asignar_rol_negocio('juan', 'administrador')
+
+        self.assertEqual(resultado, 'administrador')
+        mock_admin.delete_realm_roles_of_user.assert_called_once_with(
+            user_id='uid-1', roles=[{'name': 'analista', 'id': 'r-analista'}],
+        )
+        mock_admin.assign_realm_roles.assert_called_once_with(
+            user_id='uid-1', roles=[{'name': 'administrador', 'id': 'r-admin'}],
+        )
+
+    @patch('apps.usuarios.services._keycloak_admin')
+    def test_no_reasigna_si_ya_tiene_ese_rol(self, mock_admin_factory):
+        mock_admin = mock_admin_factory.return_value
+        mock_admin.get_user_id.return_value = 'uid-1'
+        mock_admin.get_realm_roles_of_user.return_value = [
+            {'name': 'analista', 'id': 'r-analista'},
+        ]
+
+        services_module.asignar_rol_negocio('juan', 'analista')
+
+        mock_admin.delete_realm_roles_of_user.assert_not_called()
+        mock_admin.assign_realm_roles.assert_not_called()
+
+    @patch('apps.usuarios.services._keycloak_admin')
+    def test_listar_usuarios_con_roles_detecta_el_rol_de_negocio(self, mock_admin_factory):
+        mock_admin = mock_admin_factory.return_value
+        mock_admin.get_users.return_value = [
+            {'id': 'uid-1', 'username': 'juan', 'email': 'juan@example.com'},
+            {'id': 'uid-2', 'username': 'ana', 'email': 'ana@example.com'},
+        ]
+        mock_admin.get_realm_roles_of_user.side_effect = [
+            [{'name': 'default-roles-globalexchange'}, {'name': 'administrador'}],
+            [{'name': 'offline_access'}],  # sin rol de negocio todavia
+        ]
+
+        usuarios = services_module.listar_usuarios_con_roles()
+
+        por_username = {u['username']: u['rol'] for u in usuarios}
+        self.assertEqual(por_username['juan'], 'administrador')
+        self.assertIsNone(por_username['ana'])
+
+
+class PermisosClienteTests(TestCase):
+    """CRUD de Clientes: lectura para administrador/analista, escritura solo
+    para administrador; usuario_final no tiene acceso."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.cliente = Cliente.objects.create(**cliente_valido())
+        self.url = '/api/usuarios/clientes/'
+
+    def test_anonimo_no_tiene_acceso(self):
+        self.assertEqual(self.client.get(self.url).status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_usuario_final_no_tiene_acceso(self):
+        self.client.force_authenticate(user=_usuario_con_rol('final_cli', rol='usuario_final'))
+        self.assertEqual(self.client.get(self.url).status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_analista_puede_leer_pero_no_escribir(self):
+        self.client.force_authenticate(user=_usuario_con_rol('analista_cli', rol='analista'))
+        self.assertEqual(self.client.get(self.url).status_code, status.HTTP_200_OK)
+        resp = self.client.post(self.url, cliente_valido(documento='999'), format='json')
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_administrador_puede_leer_y_escribir(self):
+        self.client.force_authenticate(user=_usuario_con_rol('admin_cli', rol='administrador'))
+        self.assertEqual(self.client.get(self.url).status_code, status.HTTP_200_OK)
+        resp = self.client.post(self.url, cliente_valido(documento='999'), format='json')
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+
+
+class MenuDinamicoPorRolTests(TestCase):
+    """El menú principal muestra distintos accesos según el rol (pedido de
+    la profesora en la revisión de Sprint 2)."""
+
+    def test_usuario_final_no_ve_crud_de_divisas_ni_roles(self):
+        self.client.force_login(_usuario_con_rol('final_menu', rol='usuario_final'))
+        resp = self.client.get('/api/usuarios/')
+        html = resp.content.decode()
+        self.assertNotIn('CRUD de Monedas', html)
+        self.assertNotIn('CRUD de Cotizaciones', html)
+        self.assertNotIn('Administración de Roles', html)
+        self.assertIn('Mis Medios de Pago', html)
+
+    def test_analista_ve_crud_de_divisas_pero_no_roles(self):
+        self.client.force_login(_usuario_con_rol('analista_menu', rol='analista'))
+        resp = self.client.get('/api/usuarios/')
+        html = resp.content.decode()
+        self.assertIn('CRUD de Monedas', html)
+        self.assertIn('CRUD de Cotizaciones', html)
+        self.assertNotIn('Administración de Roles', html)
+
+    def test_administrador_ve_todo(self):
+        self.client.force_login(_usuario_con_rol('admin_menu', rol='administrador', is_staff=True))
+        resp = self.client.get('/api/usuarios/')
+        html = resp.content.decode()
+        self.assertIn('CRUD de Monedas', html)
+        self.assertIn('CRUD de Cotizaciones', html)
+        self.assertIn('Administración de Roles', html)
+
+
+class GestionClientesViewTests(TestCase):
+    """Pantalla propia del CRUD de Clientes con asociación de usuarios
+    (en vez de la API navegable)."""
+
+    def setUp(self):
+        self.cliente = Cliente.objects.create(**cliente_valido())
+        self.usuario = Usuario.objects.create(
+            username='op_gc', email='op_gc@example.com', nombres='Op', apellidos='GC',
+        )
+        self.url = '/api/usuarios/gestion/clientes/'
+
+    def test_requiere_login(self):
+        self.assertEqual(self.client.get(self.url).status_code, 302)
+
+    def test_prohibido_para_usuario_final(self):
+        self.client.force_login(_usuario_con_rol('final_gc', rol='usuario_final'))
+        self.assertEqual(self.client.get(self.url).status_code, 403)
+
+    def test_analista_ve_pero_no_puede_crear_ni_asociar(self):
+        self.client.force_login(_usuario_con_rol('analista_gc', rol='analista'))
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, cliente_valido()['nombre'])
+        self.assertFalse(resp.context['puede_escribir'])
+
+        # intenta crear igual, por las dudas: debe rechazarse con 403
+        resp = self.client.post(self.url, cliente_valido(documento='999'))
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(Cliente.objects.filter(documento='999').exists())
+
+    def test_administrador_puede_crear_cliente(self):
+        self.client.force_login(_usuario_con_rol('admin_gc', rol='administrador'))
+        resp = self.client.post(self.url, cliente_valido(documento='999', nombre='Otro'))
+        self.assertRedirects(resp, self.url)
+        self.assertTrue(Cliente.objects.filter(documento='999').exists())
+
+    def test_administrador_puede_asociar_y_desasociar_usuario(self):
+        self.client.force_login(_usuario_con_rol('admin_gc2', rol='administrador'))
+        asignar_url = f'/api/usuarios/gestion/clientes/{self.cliente.id}/asignar-usuario/'
+        resp = self.client.post(asignar_url, {'usuario': self.usuario.id})
+        self.assertRedirects(resp, self.url)
+        self.assertIn(self.usuario, self.cliente.usuarios.all())
+
+        desasignar_url = f'/api/usuarios/gestion/clientes/{self.cliente.id}/desasignar-usuario/{self.usuario.id}/'
+        self.client.post(desasignar_url)
+        self.assertNotIn(self.usuario, self.cliente.usuarios.all())
+
+    def test_toggle(self):
+        self.client.force_login(_usuario_con_rol('admin_gc3', rol='administrador'))
+        self.client.post(f'/api/usuarios/gestion/clientes/{self.cliente.id}/toggle/')
+        self.cliente.refresh_from_db()
+        self.assertFalse(self.cliente.estado)
+
+
+class ClienteEditarViewTests(TestCase):
+    """Edición de un cliente existente desde la pantalla de gestión."""
+
+    def setUp(self):
+        self.cliente = Cliente.objects.create(**cliente_valido())
+        self.url = f'/api/usuarios/gestion/clientes/{self.cliente.id}/editar/'
+
+    def test_prohibido_para_analista(self):
+        self.client.force_login(_usuario_con_rol('analista_ce', rol='analista'))
+        self.assertEqual(self.client.get(self.url).status_code, 403)
+
+    def test_administrador_ve_el_formulario_precargado(self):
+        self.client.force_login(_usuario_con_rol('admin_ce', rol='administrador'))
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, self.cliente.nombre)
+        self.assertContains(resp, self.cliente.documento)
+
+    def test_administrador_puede_editar(self):
+        self.client.force_login(_usuario_con_rol('admin_ce2', rol='administrador'))
+        datos = cliente_valido(
+            nombre='Comercial Guaraní Renombrado',
+            frecuencia_transacciones=7,
+            documento=self.cliente.documento,  # mismo documento, no cambia
+        )
+        resp = self.client.post(self.url, datos)
+        self.assertRedirects(resp, '/api/usuarios/gestion/clientes/')
+        self.cliente.refresh_from_db()
+        self.assertEqual(self.cliente.nombre, 'Comercial Guaraní Renombrado')
+        self.assertEqual(self.cliente.frecuencia_transacciones, 7)
+
+    def test_editar_no_borra_usuarios_asociados(self):
+        usuario = Usuario.objects.create(
+            username='op_ce', email='op_ce@example.com', nombres='Op', apellidos='CE',
+        )
+        self.cliente.asociar_usuario(usuario)
+        self.client.force_login(_usuario_con_rol('admin_ce3', rol='administrador'))
+        self.client.post(self.url, cliente_valido(documento=self.cliente.documento, nombre='Otro Nombre'))
+        self.assertIn(usuario, self.cliente.usuarios.all())
+
+    def test_no_permite_editar_a_juridica_sin_razon_social(self):
+        self.client.force_login(_usuario_con_rol('admin_ce4', rol='administrador'))
+        datos = cliente_valido(
+            documento=self.cliente.documento, tipo='JURIDICA', razon_social='',
+        )
+        resp = self.client.post(self.url, datos)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'razón social')
+
+
+class MiPerfilViewTests(TestCase):
+    """RF9/RF10: cualquier usuario logueado edita sus propios datos
+    personales; usuario y correo quedan bloqueados."""
+
+    def setUp(self):
+        self.url = '/api/usuarios/mi-perfil/'
+        self.django_user = _usuario_con_rol('perfil_user', rol='usuario_final')
+        self.perfil = Usuario.objects.create(
+            username='perfil_user',
+            email='perfil_user@example.com',
+            nombres='Nombre Original',
+            apellidos='Apellido Original',
+            telefono='021000000',
+            direccion='Dirección Original',
+        )
+
+    def test_requiere_login(self):
+        self.assertEqual(self.client.get(self.url).status_code, 302)
+
+    def test_get_muestra_los_datos_actuales(self):
+        self.client.force_login(self.django_user)
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Nombre Original')
+        self.assertContains(resp, 'perfil_user@example.com')
+
+    def test_muestra_link_para_cambiar_contrasena_en_keycloak(self):
+        self.client.force_login(self.django_user)
+        resp = self.client.get(self.url)
+        self.assertIn('cambiar_password_url', resp.context)
+        url = resp.context['cambiar_password_url']
+        self.assertIn('/realms/', url)
+        self.assertIn('/account/', url)
+        self.assertContains(resp, 'Cambiar Contraseña')
+
+    def test_analista_tambien_puede_actualizar_su_perfil(self):
+        analista = _usuario_con_rol('perfil_analista', rol='analista')
+        Usuario.objects.create(
+            username='perfil_analista', email='perfil_analista@example.com',
+            nombres='A', apellidos='B',
+        )
+        self.client.force_login(analista)
+        resp = self.client.post(self.url, {
+            'nombres': 'Analista Actualizado', 'apellidos': 'B', 'telefono': '', 'direccion': '',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'se actualizaron correctamente')
+
+    def test_actualiza_nombres_apellidos_telefono_direccion(self):
+        self.client.force_login(self.django_user)
+        resp = self.client.post(self.url, {
+            'nombres': 'Nombre Nuevo',
+            'apellidos': 'Apellido Nuevo',
+            'telefono': '0981123456',
+            'direccion': 'Nueva Dirección 123',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'se actualizaron correctamente')
+        self.perfil.refresh_from_db()
+        self.assertEqual(self.perfil.nombres, 'Nombre Nuevo')
+        self.assertEqual(self.perfil.apellidos, 'Apellido Nuevo')
+        self.assertEqual(self.perfil.telefono, '0981123456')
+        self.assertEqual(self.perfil.direccion, 'Nueva Dirección 123')
+
+    def test_username_y_email_no_se_pueden_cambiar(self):
+        self.client.force_login(self.django_user)
+        self.client.post(self.url, {
+            'nombres': 'Nombre Nuevo',
+            'apellidos': 'Apellido Nuevo',
+            'username': 'otro_username',
+            'email': 'otro@example.com',
+        })
+        self.perfil.refresh_from_db()
+        self.assertEqual(self.perfil.username, 'perfil_user')
+        self.assertEqual(self.perfil.email, 'perfil_user@example.com')
+
+    def test_nombres_vacio_es_rechazado(self):
+        self.client.force_login(self.django_user)
+        resp = self.client.post(self.url, {'nombres': '', 'apellidos': 'X'})
+        self.assertEqual(resp.status_code, 200)
+        self.perfil.refresh_from_db()
+        self.assertEqual(self.perfil.nombres, 'Nombre Original')
+
+
+class CambiarPasswordViewTests(TestCase):
+    """RF9: cambio de la contraseña propia desde Mi Perfil, sin salir de la
+    aplicación. La llamada real a Keycloak se mockea: la lógica de
+    verificación ya se prueba por separado en CambiarPasswordServiceTests."""
+
+    def setUp(self):
+        self.url = '/api/usuarios/mi-perfil/cambiar-password/'
+        self.django_user = _usuario_con_rol('cambiopass_user', rol='usuario_final')
+        Usuario.objects.create(
+            username='cambiopass_user', email='cambiopass_user@example.com',
+            nombres='A', apellidos='B',
+        )
+
+    def test_requiere_login(self):
+        self.assertEqual(self.client.post(self.url, {}).status_code, 302)
+
+    def test_campos_vacios_son_rechazados(self):
+        self.client.force_login(self.django_user)
+        resp = self.client.post(self.url, {'password_actual': '', 'password_nueva': ''})
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Completá tu contraseña actual')
+
+    def test_confirmacion_no_coincide(self):
+        self.client.force_login(self.django_user)
+        resp = self.client.post(self.url, {
+            'password_actual': 'actual123', 'password_nueva': 'nueva123', 'password_confirmacion': 'otra123',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'no coincide')
+
+    @patch('apps.usuarios.views.services.cambiar_password')
+    def test_password_actual_incorrecta(self, mock_cambiar):
+        mock_cambiar.side_effect = services_module.PasswordActualIncorrecta()
+        self.client.force_login(self.django_user)
+        resp = self.client.post(self.url, {
+            'password_actual': 'mala', 'password_nueva': 'nueva123', 'password_confirmacion': 'nueva123',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'contraseña actual es incorrecta')
+
+    @patch('apps.usuarios.views.services.cambiar_password')
+    def test_password_no_cumple_politica(self, mock_cambiar):
+        mock_cambiar.side_effect = services_module.NoSePudoActualizarPassword('mensaje del realm')
+        self.client.force_login(self.django_user)
+        resp = self.client.post(self.url, {
+            'password_actual': 'actual123', 'password_nueva': 'x', 'password_confirmacion': 'x',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'mensaje del realm')
+
+    @patch('apps.usuarios.views.services.cambiar_password')
+    def test_cambio_exitoso(self, mock_cambiar):
+        self.client.force_login(self.django_user)
+        resp = self.client.post(self.url, {
+            'password_actual': 'actual123', 'password_nueva': 'nueva123', 'password_confirmacion': 'nueva123',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'se actualizó correctamente')
+        mock_cambiar.assert_called_once_with('cambiopass_user', 'actual123', 'nueva123')
+
+
+class CambiarPasswordServiceTests(TestCase):
+    """Pruebas unitarias de apps.usuarios.services.cambiar_password contra
+    un KeycloakOpenID/KeycloakAdmin simulados."""
+
+    @patch('apps.usuarios.services._keycloak_openid')
+    def test_password_actual_incorrecta_lanza_excepcion_propia(self, mock_openid_factory):
+        from keycloak.exceptions import KeycloakAuthenticationError
+        mock_openid_factory.return_value.token.side_effect = KeycloakAuthenticationError()
+        with self.assertRaises(services_module.PasswordActualIncorrecta):
+            services_module.cambiar_password('juan', 'mala', 'nueva123')
+
+    @patch('apps.usuarios.services._keycloak_admin')
+    @patch('apps.usuarios.services._keycloak_openid')
+    def test_usuario_inexistente_lanza_excepcion_propia(self, mock_openid_factory, mock_admin_factory):
+        mock_admin_factory.return_value.get_user_id.return_value = None
+        with self.assertRaises(services_module.NoSePudoActualizarPassword):
+            services_module.cambiar_password('fantasma', 'actual123', 'nueva123')
+
+    @patch('apps.usuarios.services._keycloak_admin')
+    @patch('apps.usuarios.services._keycloak_openid')
+    def test_politica_de_password_rechazada(self, mock_openid_factory, mock_admin_factory):
+        from keycloak.exceptions import KeycloakPutError
+        mock_admin_factory.return_value.get_user_id.return_value = 'uid-1'
+        mock_admin_factory.return_value.set_user_password.side_effect = KeycloakPutError()
+        with self.assertRaises(services_module.NoSePudoActualizarPassword):
+            services_module.cambiar_password('juan', 'actual123', 'x')
+
+    @patch('apps.usuarios.services._keycloak_admin')
+    @patch('apps.usuarios.services._keycloak_openid')
+    def test_cambio_exitoso_llama_set_user_password(self, mock_openid_factory, mock_admin_factory):
+        mock_admin_factory.return_value.get_user_id.return_value = 'uid-1'
+        services_module.cambiar_password('juan', 'actual123', 'nueva123')
+        mock_admin_factory.return_value.set_user_password.assert_called_once_with(
+            'uid-1', 'nueva123', temporary=False,
         )

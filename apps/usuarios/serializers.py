@@ -11,6 +11,20 @@ class UsuarioResumenSerializer(serializers.ModelSerializer):
         fields = ['id', 'username', 'nombres', 'apellidos', 'email', 'estado']
 
 
+class PerfilSerializer(serializers.ModelSerializer):
+    """Datos personales que el propio usuario puede actualizar (RF9):
+    nombres, apellidos, teléfono y dirección. ``username`` y ``email`` a
+    propósito no forman parte de este serializer: quedan bloqueados para
+    garantizar la identificación única (RF10)."""
+
+    telefono = serializers.CharField(max_length=30, required=False, allow_blank=True)
+    direccion = serializers.CharField(max_length=200, required=False, allow_blank=True)
+
+    class Meta:
+        model = Usuario
+        fields = ['nombres', 'apellidos', 'telefono', 'direccion']
+
+
 class ClienteResumenSerializer(serializers.ModelSerializer):
     """Datos mínimos de un cliente, para el selector de cliente activo (RF43)."""
 

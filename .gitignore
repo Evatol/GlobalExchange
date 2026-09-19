@@ -9,3 +9,6 @@ __pycache__/
 *.log
 # Documentación generada por Sphinx
 docs/_build/
+# Estáticos juntados por collectstatic (AMB) — se regeneran en el contenedor
+staticfiles/*
+!staticfiles/.gitkeep

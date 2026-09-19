@@ -1,0 +1,85 @@
+# Ambiente de "producción" (AMB - Hito 5): DEBUG=False, gunicorn en vez de
+# runserver, estáticos servidos por WhiteNoise, sin montar el código fuente
+# (corre la imagen tal cual quedó armada, no lo que haya en el disco local).
+#
+# Uso:
+#   docker compose -f docker-compose.prod.yml up --build
+#
+# Es un archivo aparte de docker-compose.yml (no un "override"): no están
+# pensados para correr los dos a la vez sobre el mismo proyecto.
+#
+# Limitación conocida y documentada: no hay HTTPS real acá (no tenemos
+# dominio ni certificado). Por eso SECURE_SSL_REDIRECT/SESSION_COOKIE_SECURE/
+# CSRF_COOKIE_SECURE quedan en False -- si esto se desplegara en un servidor
+# de verdad con un dominio y TLS (ej. detrás de un proxy Nginx/Caddy con
+# certificado), estas tres variables deberían pasar a True.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${DB_NAME:-Global_Exchange}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-123456}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_HOSTNAME: http://localhost:8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - keycloak_prod_data:/opt/keycloak/data
+
+  web:
+    build: .
+    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3
+    depends_on:
+      - postgres
+      - keycloak
+    environment:
+      DEBUG: "False"
+      ALLOWED_HOSTS: 127.0.0.1,localhost
+      # SECRET_KEY propia (distinta de la de desarrollo). En un despliegue
+      # real esto se pasa por variable de entorno fuera de git, no
+      # hardcodeado en el compose.
+      SECRET_KEY: ${SECRET_KEY:-Cw6D2Y8YtGjqjLQ3jXk9zR7bVwXeHkNq4pTsA1mFdE0uJhCsQ2}
+
+      DB_NAME: ${DB_NAME:-Global_Exchange}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-123456}
+      DB_HOST: postgres
+      DB_PORT: 5432
+
+      KEYCLOAK_SERVER_URL: http://keycloak:8080/
+      KEYCLOAK_PUBLIC_URL: http://localhost:8080/
+      KEYCLOAK_HOST: keycloak
+      KEYCLOAK_PORT: 8080
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-GlobalExchange}
+      KEYCLOAK_ADMIN_USER: ${KEYCLOAK_ADMIN_USER:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+
+      OIDC_RP_CLIENT_ID: ${OIDC_RP_CLIENT_ID:-django-backend}
+      OIDC_RP_CLIENT_SECRET: ${OIDC_RP_CLIENT_SECRET:-tNPOCqVu0s7H09kQgrGYLhXuGCPC72bd5vYbdeZ82WEEBzsP7Zi47OJ9tsIuIvpAjLYOa4BTnVBNEw1JnKQvel}
+
+      SEED_DEMO_USERS: ${SEED_DEMO_USERS:-true}
+
+      # Sin TLS real en este ambiente (ver nota arriba del archivo).
+      SECURE_SSL_REDIRECT: "False"
+      SESSION_COOKIE_SECURE: "False"
+      CSRF_COOKIE_SECURE: "False"
+    ports:
+      - "8000:8000"
+
+volumes:
+  postgres_prod_data:
+  keycloak_prod_data:

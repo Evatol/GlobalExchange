@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GlobalExchange - Editar Moneda</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="{% url 'menu_principal' %}">GlobalExchange</a>
+            <div class="d-flex align-items-center text-white">
+                <span class="me-3">Bienvenido, <strong>{{ usuario.username }}</strong></span>
+                <a href="{% url 'gestion_monedas' %}" class="btn btn-outline-light btn-sm">Volver al listado</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container my-5">
+        <div class="row justify-content-center">
+            <div class="col-md-5">
+                <div class="text-center mb-4">
+                    <h2>Editar Moneda</h2>
+                    <p class="text-muted">{{ moneda.codigo }} - {{ moneda.nombre }}</p>
+                </div>
+
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        {% if error %}
+                            <div class="alert alert-danger py-2">{{ error }}</div>
+                        {% endif %}
+
+                        <form method="post">
+                            {% csrf_token %}
+                            <div class="mb-3">
+                                <label class="form-label">Código</label>
+                                <input type="text" name="codigo" class="form-control" value="{{ moneda.codigo }}" maxlength="10" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Nombre</label>
+                                <input type="text" name="nombre" class="form-control" value="{{ moneda.nombre }}" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Símbolo</label>
+                                <input type="text" name="simbolo" class="form-control" value="{{ moneda.simbolo }}" maxlength="10" required>
+                            </div>
+                            <div class="form-check mb-3">
+                                <input type="checkbox" name="estado" class="form-check-input" id="estadoMoneda" {% if moneda.estado %}checked{% endif %}>
+                                <label class="form-check-label" for="estadoMoneda">Activa</label>
+                            </div>
+                            <div class="d-flex gap-2">
+                                <a href="{% url 'gestion_monedas' %}" class="btn btn-outline-secondary w-100">Cancelar</a>
+                                <button type="submit" class="btn btn-primary w-100">Guardar Cambios</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

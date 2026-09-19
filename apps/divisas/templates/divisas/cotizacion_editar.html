@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GlobalExchange - Editar Cotización</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="{% url 'menu_principal' %}">GlobalExchange</a>
+            <div class="d-flex align-items-center text-white">
+                <span class="me-3">Bienvenido, <strong>{{ usuario.username }}</strong></span>
+                <a href="{% url 'gestion_cotizaciones' %}" class="btn btn-outline-light btn-sm">Volver al listado</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container my-5">
+        <div class="row justify-content-center">
+            <div class="col-md-5">
+                <div class="text-center mb-4">
+                    <h2>Editar Cotización</h2>
+                    <p class="text-muted">{{ cotizacion.moneda.codigo }} - {{ cotizacion.moneda.nombre }}</p>
+                </div>
+
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        {% if error %}
+                            <div class="alert alert-danger py-2">{{ error }}</div>
+                        {% endif %}
+
+                        <form method="post">
+                            {% csrf_token %}
+                            <div class="mb-3">
+                                <label class="form-label">Moneda</label>
+                                <select name="moneda" class="form-select" required>
+                                    {% for m in monedas %}
+                                    <option value="{{ m.id }}" {% if cotizacion.moneda_id == m.id %}selected{% endif %}>{{ m.codigo }} - {{ m.nombre }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Tasa de compra</label>
+                                <input type="number" step="0.000001" name="tasa_compra" class="form-control" value="{{ cotizacion.tasa_compra }}" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Tasa de venta</label>
+                                <input type="number" step="0.000001" name="tasa_venta" class="form-control" value="{{ cotizacion.tasa_venta }}" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Origen</label>
+                                <input type="text" name="origen" class="form-control" value="{{ cotizacion.origen }}" required>
+                            </div>
+                            <div class="form-check mb-3">
+                                <input type="checkbox" name="estado" class="form-check-input" id="estadoCotizacion" {% if cotizacion.estado %}checked{% endif %}>
+                                <label class="form-check-label" for="estadoCotizacion">Vigente</label>
+                            </div>
+                            <div class="d-flex gap-2">
+                                <a href="{% url 'gestion_cotizaciones' %}" class="btn btn-outline-secondary w-100">Cancelar</a>
+                                <button type="submit" class="btn btn-primary w-100">Guardar Cambios</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

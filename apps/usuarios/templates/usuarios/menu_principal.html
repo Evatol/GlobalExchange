@@ -27,12 +27,28 @@
                     <li class="nav-item">
                         <a class="nav-link" href="/api/divisas/">Divisas y Tasas</a>
                     </li>
+                    {% if puede_gestionar_divisas %}
                     <li class="nav-item">
-                        <a class="nav-link" href="/api/caja/">Cajas y Sucursales</a>
+                        <a class="nav-link" href="{% url 'gestion_clientes' %}">CRUD Clientes</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="/api/transacciones/">Transacciones</a>
+                        <a class="nav-link" href="{% url 'gestion_monedas' %}">CRUD Monedas</a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'gestion_cotizaciones' %}">CRUD Cotizaciones</a>
+                    </li>
+                    {% endif %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'gestion_medios_pago' %}">Mis Medios de Pago</a>
+                    </li>
+                    {% if es_administrador %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'gestion_metodos_pago' %}">Métodos de Pago</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'gestion_roles' %}">Administración de Roles</a>
+                    </li>
+                    {% endif %}
                 </ul>
 
                 <!-- Información del Usuario Autenticado -->
@@ -55,6 +71,7 @@
                     <span class="me-3">
                         Bienvenido, <strong>{{ usuario.username }}</strong>
                     </span>
+                    <a href="{% url 'mi_perfil' %}" class="btn btn-outline-light btn-sm me-2">Mi Perfil</a>
                     {# Logout OIDC: cierra la sesión de Django y la sesión SSO de Keycloak (POST, requerido por mozilla-django-oidc). #}
                     <form method="post" action="{% url 'oidc_logout' %}" class="d-inline m-0">
                         {% csrf_token %}
@@ -89,9 +106,21 @@
             <div class="col-md-4">
                 <div class="card h-100 shadow-sm border-0">
                     <div class="card-body text-center">
-                        <h5 class="card-title">Operaciones de Caja</h5>
-                        <p class="card-text">Manejo de sucursales, cajas y desglose de billetes.</p>
-                        <a href="/api/caja/" class="btn btn-primary w-100">Ir a Cajas</a>
+                        <h5 class="card-title">Mis Medios de Pago</h5>
+                        <p class="card-text">Alta y gestión de tus medios de pago.</p>
+                        <a href="{% url 'gestion_medios_pago' %}" class="btn btn-primary w-100">Ver Medios de Pago</a>
+                    </div>
+                </div>
+            </div>
+
+            {# Solo visible para 'administrador'/'analista'. #}
+            {% if puede_gestionar_divisas %}
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">CRUD de Clientes</h5>
+                        <p class="card-text">Alta de clientes y asociación de usuarios.</p>
+                        <a href="{% url 'gestion_clientes' %}" class="btn btn-primary w-100">Gestionar Clientes</a>
                     </div>
                 </div>
             </div>
@@ -99,12 +128,46 @@
             <div class="col-md-4">
                 <div class="card h-100 shadow-sm border-0">
                     <div class="card-body text-center">
-                        <h5 class="card-title">Transacciones</h5>
-                        <p class="card-text">Compra, venta y medios de pago de clientes.</p>
-                        <a href="/api/transacciones/" class="btn btn-primary w-100">Ver Operaciones</a>
+                        <h5 class="card-title">CRUD de Monedas</h5>
+                        <p class="card-text">Alta, edición y baja del catálogo de divisas.</p>
+                        <a href="{% url 'gestion_monedas' %}" class="btn btn-primary w-100">Gestionar Monedas</a>
                     </div>
                 </div>
             </div>
+
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">CRUD de Cotizaciones</h5>
+                        <p class="card-text">Ajuste manual de tasas de compra y venta.</p>
+                        <a href="{% url 'gestion_cotizaciones' %}" class="btn btn-primary w-100">Gestionar Cotizaciones</a>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            {# Solo visible para el rol 'administrador'. #}
+            {% if es_administrador %}
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">Métodos de Pago</h5>
+                        <p class="card-text">Catálogo de métodos de pago admitidos.</p>
+                        <a href="{% url 'gestion_metodos_pago' %}" class="btn btn-primary w-100">Gestionar Métodos</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">Administración de Roles</h5>
+                        <p class="card-text">Asignar el rol de cada usuario del sistema.</p>
+                        <a href="{% url 'gestion_roles' %}" class="btn btn-primary w-100">Gestionar Roles</a>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
         </div>
     </div>
 
