@@ -534,7 +534,11 @@ class GestionRolesTests(TestCase):
         resp = self.client.post('/api/usuarios/roles/asignar/', {
             'username': 'analista_demo', 'rol': 'analista',
         })
-        self.assertRedirects(resp, '/api/usuarios/roles/')
+        # fetch_redirect_response=False: no seguir el redirect. La pantalla de
+        # destino (gestion_roles_view) llama a listar_usuarios_con_roles(),
+        # que no está mockeado acá (sí lo está en test_accesible_para_administrador)
+        # y en CI no hay Keycloak disponible para responderle.
+        self.assertRedirects(resp, '/api/usuarios/roles/', fetch_redirect_response=False)
         mock_asignar.assert_called_once_with('analista_demo', 'analista')
 
     @patch('apps.usuarios.services.asignar_rol_negocio')
