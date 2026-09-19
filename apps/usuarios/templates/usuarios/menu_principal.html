@@ -41,6 +41,9 @@
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'gestion_medios_pago' %}">Mis Medios de Pago</a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'historial_transacciones' %}">Historial</a>
+                    </li>
                     {% if es_administrador %}
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'gestion_metodos_pago' %}">Métodos de Pago</a>
@@ -109,6 +112,15 @@
                         <h5 class="card-title">Mis Medios de Pago</h5>
                         <p class="card-text">Alta y gestión de tus medios de pago.</p>
                         <a href="{% url 'gestion_medios_pago' %}" class="btn btn-primary w-100">Ver Medios de Pago</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                         <h5 class="card-title">Historial de Transacciones</h5>
+                         <p class="card-text">Consultá tus operaciones y descargalas en CSV, Excel o PDF.</p>
+                         <a href="{% url 'historial_transacciones' %}" class="btn btn-primary w-100">Ver Historial</a>
                     </div>
                 </div>
             </div>

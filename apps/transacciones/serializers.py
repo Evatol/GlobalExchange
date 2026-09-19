@@ -65,3 +65,24 @@ class MedioPagoClienteSerializer(serializers.ModelSerializer):
                 'Ese cliente ya tiene registrado ese medio de pago.'
             )
         return attrs
+
+from .models import Transaccion
+
+
+class TransaccionSerializer(serializers.ModelSerializer):
+    """Historial de transacciones, de solo consulta (RF111 / E4-104)."""
+    cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
+    moneda_codigo = serializers.CharField(source='moneda.codigo', read_only=True)
+    metodo_pago_nombre = serializers.CharField(source='metodo_pago.nombre', read_only=True)
+
+    class Meta:
+        model = Transaccion
+        fields = [
+            'id', 'fecha_hora', 'tipo',
+            'cliente', 'cliente_nombre',
+            'moneda', 'moneda_codigo',
+            'metodo_pago', 'metodo_pago_nombre',
+            'cantidad', 'tasa_cambio', 'monto_total',
+            'estado', 'modalidad',
+        ]
+        read_only_fields = fields
