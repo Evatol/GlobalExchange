@@ -103,14 +103,37 @@ class Transaccion(models.Model):
     tipo = models.CharField(max_length=20, choices=TIPOS)
     cantidad = models.DecimalField(max_digits=15, decimal_places=2)
     tasa_cambio = models.DecimalField(max_digits=15, decimal_places=6)
+    comision_porcentaje = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('1.50'))
+    monto_comision = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     monto_total = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     estado = models.CharField(max_length=20, choices=ESTADOS, default='PENDIENTE')
     fecha_hora = models.DateTimeField(auto_now_add=True)
-    modalidad = models.CharField(max_length=30)
+    modalidad = models.CharField(max_length=30, default='DIGITAL')
+
+    def calcular_tasas_y_comisiones(self):
+        """
+        Lógica del Ticket E4-144:
+        Calcula el subtotal, la comisión aplicada y el monto total definitivo de la transacción.
+        """
+        subtotal = self.cantidad * self.tasa_cambio
+        self.monto_comision = (subtotal * self.comision_porcentaje) / Decimal('100.00')
+
+        if self.tipo == 'COMPRA':
+            # Al comprar divisas, el cliente paga el subtotal + la comisión del servicio
+            self.monto_total = subtotal + self.monto_comision
+        else:
+            # Al vender divisas, el cliente recibe el subtotal - la comisión del servicio
+            self.monto_total = subtotal - self.monto_comision
+
+        return {
+            'subtotal': subtotal,
+            'comision': self.monto_comision,
+            'monto_total': self.monto_total
+        }
 
     def calcular_monto_total(self):
-        self.monto_total = self.cantidad * self.tasa_cambio
-        return self.monto_total
+        res = self.calcular_tasas_y_comisiones()
+        return res['monto_total']
 
     def validar(self):
         return self.cantidad > 0 and self.tasa_cambio > 0 and self.metodo_pago.estado
@@ -135,4 +158,4 @@ class Transaccion(models.Model):
         self.save()
 
     def __str__(self):
-        return f'{self.tipo} #{self.id}'
+        return f'{self.tipo} #{self.id} - {self.monto_total}'
