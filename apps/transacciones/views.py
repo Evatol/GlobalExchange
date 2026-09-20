@@ -1,3 +1,4 @@
+from decimal import Decimal
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.shortcuts import redirect, render
@@ -6,7 +7,9 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
+from apps.divisas.models import TasaCambio
 from apps.usuarios import sesion
 from apps.usuarios.permissions import (
     ADMINISTRADOR,
@@ -15,7 +18,7 @@ from apps.usuarios.permissions import (
     tiene_rol,
 )
 
-from .models import MedioPagoCliente, MetodoPago
+from .models import MedioPagoCliente, MetodoPago, Transaccion
 from .serializers import MedioPagoClienteSerializer, MetodoPagoSerializer
 
 
@@ -117,9 +120,7 @@ class MedioPagoClienteViewSet(_BorradoLogicoMixin, viewsets.ModelViewSet):
 
 @login_required
 def gestion_metodos_pago_view(request):
-    """Pantalla propia para el catálogo de métodos de pago (RF102), en vez
-    de la API navegable de DRF. Reutiliza ``MetodoPagoSerializer``. Solo
-    administrador."""
+    """Pantalla propia para el catálogo de métodos de pago (RF102)."""
     if not tiene_rol(request.user, (ADMINISTRADOR,)):
         raise DjangoPermissionDenied('Esta sección es solo para administradores.')
 
@@ -143,8 +144,7 @@ def gestion_metodos_pago_view(request):
 
 @login_required
 def metodo_pago_editar_view(request, pk):
-    """Edita el nombre/tipo de un método de pago del catálogo. Reutiliza
-    ``MetodoPagoSerializer``. Solo administrador."""
+    """Edita el nombre/tipo de un método de pago del catálogo."""
     if not tiene_rol(request.user, (ADMINISTRADOR,)):
         raise DjangoPermissionDenied('Esta sección es solo para administradores.')
     metodo = MetodoPago.objects.filter(pk=pk).first()
@@ -178,14 +178,7 @@ def metodo_pago_toggle_view(request, pk):
 
 @login_required
 def gestion_medios_pago_view(request):
-    """Pantalla propia de "Mis Medios de Pago" (RF17), en vez de la API
-    navegable de DRF. Mismo criterio de alcance que ``MedioPagoClienteViewSet``:
-    administrador/analista ven y gestionan los de cualquier cliente; el resto
-    de los usuarios (``usuario_final``) solo los del cliente activo de su
-    propia sesión (RF43), y el ``cliente`` del alta se fuerza siempre al
-    activo. Reutiliza ``MedioPagoClienteSerializer`` para no duplicar
-    validaciones (identificador duplicado, método de pago desactivado, etc.).
-    """
+    """Pantalla propia de 'Mis Medios de Pago' (RF17)."""
     ve_todos = tiene_rol(request.user, (ADMINISTRADOR, ANALISTA))
     cliente_activo = sesion.get_cliente_activo(request)
 
@@ -222,12 +215,7 @@ def gestion_medios_pago_view(request):
 
 @login_required
 def medio_pago_editar_view(request, pk):
-    """Edita un medio de pago existente (alias, identificador, titular,
-    método de pago). Respeta el mismo alcance que el listado/alta:
-    administrador/analista pueden editar cualquiera; el resto solo los del
-    cliente activo de su sesión, y el ``cliente`` se mantiene siempre el
-    mismo (no se puede "mover" un medio de pago a otro cliente desde acá).
-    Reutiliza ``MedioPagoClienteSerializer``."""
+    """Edita un medio de pago existente."""
     ve_todos = tiene_rol(request.user, (ADMINISTRADOR, ANALISTA))
     medios = MedioPagoCliente.objects.select_related('cliente', 'metodo_pago')
     if not ve_todos:
@@ -241,7 +229,7 @@ def medio_pago_editar_view(request, pk):
     error = None
     if request.method == 'POST':
         datos = request.POST.copy()
-        datos['cliente'] = medio.cliente_id  # nunca se reasigna a otro cliente desde acá
+        datos['cliente'] = medio.cliente_id
         serializer = MedioPagoClienteSerializer(instance=medio, data=datos, partial=True)
         if serializer.is_valid():
             serializer.save()
@@ -262,8 +250,7 @@ def medio_pago_editar_view(request, pk):
 
 @login_required
 def medio_pago_toggle_view(request, pk):
-    """Activa/desactiva un medio de pago desde la pantalla de gestión,
-    respetando el mismo alcance que la vista de listado/alta."""
+    """Activa/desactiva un medio de pago desde la pantalla de gestión."""
     ve_todos = tiene_rol(request.user, (ADMINISTRADOR, ANALISTA))
     medios = MedioPagoCliente.objects.all()
     if not ve_todos:
@@ -274,3 +261,168 @@ def medio_pago_toggle_view(request, pk):
     if medio is not None:
         medio.activar() if not medio.estado else medio.desactivar()
     return redirect('gestion_medios_pago')
+
+
+
+class CalcularTransaccionAPIView(APIView):
+    """
+    Endpoint para E4-144: Lógica de cálculo de tasas y comisiones en la transacción.
+    Servicio API REST para simular/desglosar montos en tiempo real.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        moneda_codigo = request.data.get('moneda_codigo')
+        cantidad_str = request.data.get('cantidad', '0')
+        tipo_operacion = request.data.get('tipo', 'COMPRA').upper()
+
+        try:
+            cantidad = Decimal(str(cantidad_str))
+            if cantidad <= 0:
+                return Response(
+                    {'error': 'La cantidad debe ser mayor a 0.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except Exception:
+            return Response(
+                {'error': 'Cantidad no válida.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        tasa_obj = TasaCambio.objects.activa_para(moneda_codigo)
+        if not tasa_obj:
+            return Response(
+                {'error': f'No existe una cotización activa para {moneda_codigo}.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        tasa_aplicada = tasa_obj.tasa_compra if tipo_operacion == 'COMPRA' else tasa_obj.tasa_venta
+
+        tx_temporal = Transaccion(
+            tipo=tipo_operacion,
+            cantidad=cantidad,
+            tasa_cambio=tasa_aplicada
+        )
+        desglose = tx_temporal.calcular_tasas_y_comisiones()
+
+        return Response({
+            'moneda': moneda_codigo,
+            'tipo_operacion': tipo_operacion,
+            'cantidad': cantidad,
+            'tasa_aplicada': tasa_aplicada,
+            'subtotal': desglose['subtotal'],
+            'comision_porcentaje': tx_temporal.comision_porcentaje,
+            'monto_comision': desglose['comision'],
+            'monto_total': desglose['monto_total'],
+        }, status=status.HTTP_200_OK)
+
+
+class ComprarDivisaAPIView(APIView):
+    """
+    Endpoint para E4-19: Comprar divisas de forma digital.
+    Ejecuta el cálculo de E4-144, descuenta/registra y confirma la transacción.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        moneda_codigo = request.data.get('moneda_codigo')
+        cantidad_str = request.data.get('cantidad', '0')
+        medio_pago_id = request.data.get('medio_pago_id')
+
+        cliente_activo = sesion.get_cliente_activo(request)
+        if not cliente_activo:
+            return Response(
+                {'error': 'No posees un cliente activo asociado a la sesión.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            cantidad = Decimal(str(cantidad_str))
+            if cantidad <= 0:
+                return Response({'error': 'La cantidad debe ser mayor a 0.'}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            return Response({'error': 'Monto de cantidad inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        tasa_obj = TasaCambio.objects.activa_para(moneda_codigo)
+        if not tasa_obj:
+            return Response({'error': f'No hay cotización activa para {moneda_codigo}.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        medio_pago = MedioPagoCliente.objects.filter(
+            id=medio_pago_id, cliente=cliente_activo, estado=True
+        ).first()
+
+        if not medio_pago:
+            return Response(
+                {'error': 'El medio de pago seleccionado no es válido o está inactivo.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        transaccion = Transaccion(
+            usuario=request.user,
+            cliente=cliente_activo,
+            moneda=tasa_obj.moneda,
+            metodo_pago=medio_pago.metodo_pago,
+            tipo='COMPRA',
+            cantidad=cantidad,
+            tasa_cambio=tasa_obj.tasa_compra,
+            modalidad='DIGITAL'
+        )
+
+        desglose = transaccion.calcular_tasas_y_comisiones()
+        transaccion.confirmar()
+
+        return Response({
+            'detail': 'Compra realizada con éxito.',
+            'transaccion_id': transaccion.id,
+            'moneda': tasa_obj.moneda.codigo,
+            'cantidad': cantidad,
+            'tasa_aplicada': tasa_obj.tasa_compra,
+            'subtotal': desglose['subtotal'],
+            'comision': desglose['comision'],
+            'monto_total': desglose['monto_total'],
+            'estado': transaccion.estado
+        }, status=status.HTTP_201_CREATED)
+
+
+@login_required
+def operacion_compra_view(request):
+    """
+    Vista HTML interactiva para comprar divisas desde la interfaz.
+    """
+    cliente_activo = sesion.get_cliente_activo(request)
+    error = None
+    exito = None
+
+    if request.method == 'POST':
+        moneda_codigo = request.POST.get('moneda_codigo')
+        cantidad = request.POST.get('cantidad')
+        medio_pago_id = request.POST.get('medio_pago_id')
+
+        tasa_obj = TasaCambio.objects.activa_para(moneda_codigo)
+        medio_pago = MedioPagoCliente.objects.filter(id=medio_pago_id, estado=True).first()
+
+        if tasa_obj and medio_pago and cliente_activo:
+            tx = Transaccion(
+                usuario=request.user,
+                cliente=cliente_activo,
+                moneda=tasa_obj.moneda,
+                metodo_pago=medio_pago.metodo_pago,
+                tipo='COMPRA',
+                cantidad=Decimal(cantidad),
+                tasa_cambio=tasa_obj.tasa_compra,
+                modalidad='DIGITAL'
+            )
+            tx.calcular_tasas_y_comisiones()
+            tx.confirmar()
+            exito = f"¡Compra realizada exitosamente! ID de Transacción: #{tx.id}"
+        else:
+            error = "No se pudo procesar la compra. Verifique los datos ingresados."
+
+    context = {
+        'usuario': request.user,
+        'medios_pago': MedioPagoCliente.objects.filter(cliente=cliente_activo, estado=True) if cliente_activo else [],
+        'error': error,
+        'exito': exito
+    }
+    return render(request, 'transacciones/compra_divisas.html', context)
