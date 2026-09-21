@@ -1,10 +1,13 @@
+from decimal import Decimal
+
 from django.contrib.auth.models import Group, User
 from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from apps.divisas.models import Moneda, TasaCambio
 from apps.usuarios.models import Cliente, Usuario
-from .models import MedioPagoCliente, MetodoPago
+from .models import MedioPagoCliente, MetodoPago, Transaccion
 
 
 def _cliente(**kw):
@@ -379,3 +382,188 @@ class MedioPagoEditarViewTests(TestCase):
         self.assertRedirects(resp, '/api/transacciones/gestion/medios-pago-cliente/')
         self.medio_ajeno.refresh_from_db()
         self.assertEqual(self.medio_ajeno.alias, 'Ajeno Editado')
+
+
+class TransaccionCalculoComisionTests(TestCase):
+    """E4-144: cálculo de tasas y comisión, diferenciada por la preferencia
+    de tipo de cambio del cliente (RF41)."""
+
+    def setUp(self):
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
+        self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+
+    def _transaccion(self, tipo, cliente=None, cantidad=Decimal('10'), tasa=Decimal('7300')):
+        return Transaccion(
+            cliente=cliente, moneda=self.moneda, metodo_pago=self.metodo,
+            tipo=tipo, cantidad=cantidad, tasa_cambio=tasa,
+        )
+
+    def test_sin_cliente_usa_la_comision_por_defecto(self):
+        tx = self._transaccion('COMPRA')
+        desglose = tx.calcular_tasas_y_comisiones()
+        self.assertEqual(tx.comision_porcentaje, Decimal('1.50'))
+        self.assertEqual(desglose['subtotal'], Decimal('73000'))
+        self.assertEqual(desglose['comision'], Decimal('1095.00'))
+        self.assertEqual(desglose['monto_total'], Decimal('74095.00'))
+
+    def test_cliente_estandar_paga_la_comision_mas_alta(self):
+        cliente = Cliente.objects.create(
+            nombre='Cliente Estandar', documento='E1', tipo='FISICA',
+            preferencia_tipo_cambio=Cliente.PREFERENCIA_ESTANDAR,
+        )
+        tx = self._transaccion('COMPRA', cliente=cliente)
+        tx.calcular_tasas_y_comisiones()
+        self.assertEqual(tx.comision_porcentaje, Decimal('1.50'))
+
+    def test_cliente_preferencial_paga_menos_comision(self):
+        cliente = Cliente.objects.create(
+            nombre='Cliente Preferencial', documento='P1', tipo='FISICA',
+            preferencia_tipo_cambio=Cliente.PREFERENCIA_PREFERENCIAL,
+        )
+        tx = self._transaccion('COMPRA', cliente=cliente)
+        tx.calcular_tasas_y_comisiones()
+        self.assertEqual(tx.comision_porcentaje, Decimal('1.00'))
+
+    def test_cliente_mayorista_paga_la_comision_mas_baja(self):
+        cliente = Cliente.objects.create(
+            nombre='Cliente Mayorista', documento='M1', tipo='FISICA',
+            preferencia_tipo_cambio=Cliente.PREFERENCIA_MAYORISTA,
+        )
+        tx = self._transaccion('COMPRA', cliente=cliente)
+        tx.calcular_tasas_y_comisiones()
+        self.assertEqual(tx.comision_porcentaje, Decimal('0.50'))
+
+    def test_venta_resta_la_comision_en_vez_de_sumarla(self):
+        tx = self._transaccion('VENTA', cantidad=Decimal('10'), tasa=Decimal('7300'))
+        desglose = tx.calcular_tasas_y_comisiones()
+        self.assertEqual(desglose['subtotal'], Decimal('73000'))
+        self.assertEqual(desglose['monto_total'], Decimal('73000') - desglose['comision'])
+
+
+class OperarDivisaViewTests(TestCase):
+    """E4-19/E4-20: comprar y vender divisas de forma digital, con la
+    comisión y tasa aplicada según el cliente (E4-144)."""
+
+    def setUp(self):
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
+        self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        TasaCambio.objects.create(
+            moneda=self.moneda, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
+            origen='BCP', estado=True,
+        )
+        self.cliente = _cliente(nombre='Cliente Propio', documento='OP1')
+        self.otro_cliente = _cliente(nombre='Cliente Ajeno', documento='OP2')
+
+        self.user_final = _usuario_con_rol('final_operar', rol='usuario_final')
+        self.usuario_negocio = Usuario.objects.create(
+            username='final_operar', email='fo@example.com', nombres='F', apellidos='O',
+        )
+        self.usuario_negocio.clientes.add(self.cliente)
+
+        self.medio_propio = MedioPagoCliente.objects.create(
+            cliente=self.cliente, metodo_pago=self.metodo, alias='Mio', identificador='1',
+        )
+        self.medio_ajeno = MedioPagoCliente.objects.create(
+            cliente=self.otro_cliente, metodo_pago=self.metodo, alias='Ajeno', identificador='2',
+        )
+        self.url = '/api/transacciones/gestion/operar/'
+
+    def _comprar(self, **overrides):
+        datos = dict(
+            tipo='COMPRA', moneda_codigo='USD', cantidad='10',
+            medio_pago_id=self.medio_propio.id,
+        )
+        datos.update(overrides)
+        return self.client.post(self.url, datos)
+
+    def test_requiere_login(self):
+        self.assertEqual(self.client.get(self.url).status_code, 302)
+
+    def test_comprar_crea_la_transaccion_con_el_usuario_de_negocio_correcto(self):
+        self.client.force_login(self.user_final)
+        resp = self._comprar()
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'realizada con éxito')
+
+        tx = Transaccion.objects.get(cliente=self.cliente)
+        self.assertEqual(tx.usuario, self.usuario_negocio)  # no el auth.User
+        self.assertEqual(tx.tipo, 'COMPRA')
+        self.assertEqual(tx.tasa_cambio, Decimal('7300'))
+        self.assertEqual(tx.estado, 'EXITOSA')
+
+    def test_vender_usa_la_tasa_de_venta(self):
+        self.client.force_login(self.user_final)
+        resp = self._comprar(tipo='VENTA')
+        self.assertEqual(resp.status_code, 200)
+        tx = Transaccion.objects.get(cliente=self.cliente, tipo='VENTA')
+        self.assertEqual(tx.tasa_cambio, Decimal('7400'))
+
+    def test_no_puede_usar_el_medio_de_pago_de_otro_cliente(self):
+        self.client.force_login(self.user_final)
+        resp = self._comprar(medio_pago_id=self.medio_ajeno.id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'no es válido')
+        self.assertFalse(Transaccion.objects.filter(cliente=self.cliente).exists())
+
+    def test_cantidad_invalida_no_crea_transaccion(self):
+        self.client.force_login(self.user_final)
+        resp = self._comprar(cantidad='0')
+        self.assertContains(resp, 'mayor a 0')
+        self.assertFalse(Transaccion.objects.exists())
+
+    def test_sin_cliente_activo_no_puede_operar(self):
+        sin_cliente = _usuario_con_rol('sin_cliente_operar', rol='usuario_final')
+        Usuario.objects.create(username='sin_cliente_operar', email='sc@example.com', nombres='S', apellidos='C')
+        self.client.force_login(sin_cliente)
+        resp = self._comprar()
+        self.assertContains(resp, 'cliente activo')
+        self.assertFalse(Transaccion.objects.exists())
+
+
+class OperarDivisaAPITests(APITestCase):
+    """Misma lógica que OperarDivisaViewTests, pero contra el endpoint API
+    (``OperarDivisaAPIView`` / ``CalcularTransaccionAPIView``)."""
+
+    def setUp(self):
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
+        self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        TasaCambio.objects.create(
+            moneda=self.moneda, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
+            origen='BCP', estado=True,
+        )
+        self.cliente = _cliente(nombre='Cliente Propio', documento='API1')
+        self.user_final = _usuario_con_rol('final_api_operar', rol='usuario_final')
+        self.usuario_negocio = Usuario.objects.create(
+            username='final_api_operar', email='fa@example.com', nombres='F', apellidos='A',
+        )
+        self.usuario_negocio.clientes.add(self.cliente)
+        self.medio = MedioPagoCliente.objects.create(
+            cliente=self.cliente, metodo_pago=self.metodo, alias='Mio', identificador='1',
+        )
+
+    def test_calcular_no_persiste_nada(self):
+        self.client.force_authenticate(user=self.user_final)
+        resp = self.client.post('/api/transacciones/calcular/', {
+            'moneda_codigo': 'USD', 'cantidad': '10', 'tipo': 'COMPRA',
+        })
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data['monto_total'], Decimal('74095.00'))
+        self.assertFalse(Transaccion.objects.exists())
+
+    def test_operar_crea_la_transaccion(self):
+        self.client.force_authenticate(user=self.user_final)
+        resp = self.client.post('/api/transacciones/operar/', {
+            'tipo': 'COMPRA', 'moneda_codigo': 'USD', 'cantidad': '10',
+            'medio_pago_id': self.medio.id,
+        })
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        tx = Transaccion.objects.get(id=resp.data['transaccion_id'])
+        self.assertEqual(tx.usuario, self.usuario_negocio)
+        self.assertEqual(tx.estado, 'EXITOSA')
+
+    def test_requiere_autenticacion(self):
+        resp = self.client.post('/api/transacciones/operar/', {
+            'tipo': 'COMPRA', 'moneda_codigo': 'USD', 'cantidad': '10',
+            'medio_pago_id': self.medio.id,
+        })
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
