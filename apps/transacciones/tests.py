@@ -615,3 +615,88 @@ class TransaccionCancelacionPorCambioDeTasaTests(TestCase):
         transaccion.refresh_from_db()
         self.assertEqual(transaccion.estado, 'EXITOSA')
         self.assertGreater(transaccion.monto_total, Decimal('0'))
+
+
+class HistorialTransaccionesTests(TestCase):
+    """E4-104/E4-36: historial de transacciones (solo consulta) y su
+    exportación a CSV/Excel/PDF, con el mismo alcance por rol que el resto
+    de las pantallas de gestión."""
+
+    def setUp(self):
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
+        self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$', estado=True)
+        TasaCambio.objects.create(
+            moneda=self.moneda, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
+            origen='BCP', estado=True,
+        )
+        self.cliente = _cliente(nombre='Cliente Propio', documento='H1')
+        self.otro_cliente = _cliente(nombre='Cliente Ajeno', documento='H2')
+
+        self.user_final = _usuario_con_rol('final_historial', rol='usuario_final')
+        usuario_negocio = Usuario.objects.create(
+            username='final_historial', email='fh@example.com', nombres='F', apellidos='H',
+        )
+        usuario_negocio.clientes.add(self.cliente)
+
+        Transaccion.objects.create(
+            usuario=usuario_negocio, cliente=self.cliente, moneda=self.moneda, metodo_pago=self.metodo,
+            tipo='COMPRA', cantidad=Decimal('10'), tasa_cambio=Decimal('7300'), monto_total=Decimal('73000'),
+            modalidad='DIGITAL',
+        )
+        Transaccion.objects.create(
+            usuario=usuario_negocio, cliente=self.otro_cliente, moneda=self.moneda, metodo_pago=self.metodo,
+            tipo='VENTA', cantidad=Decimal('5'), tasa_cambio=Decimal('7400'), monto_total=Decimal('37000'),
+            modalidad='DIGITAL',
+        )
+        self.url = '/api/transacciones/gestion/historial/'
+
+    def test_requiere_login(self):
+        self.assertEqual(self.client.get(self.url).status_code, 302)
+
+    def test_administrador_ve_todas_las_transacciones(self):
+        self.client.force_login(_usuario_con_rol('admin_historial', rol='administrador'))
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.context['transacciones']), 2)
+
+    def test_usuario_final_solo_ve_las_de_su_cliente(self):
+        self.client.force_login(self.user_final)
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        transacciones = resp.context['transacciones']
+        self.assertEqual(len(transacciones), 1)
+        self.assertEqual(transacciones[0].cliente, self.cliente)
+
+    def test_filtro_por_tipo(self):
+        self.client.force_login(_usuario_con_rol('admin_historial2', rol='administrador'))
+        resp = self.client.get(self.url, {'tipo': 'VENTA'})
+        self.assertEqual(len(resp.context['transacciones']), 1)
+        self.assertEqual(resp.context['transacciones'][0].tipo, 'VENTA')
+
+    def test_exportar_csv(self):
+        self.client.force_login(_usuario_con_rol('admin_historial3', rol='administrador'))
+        resp = self.client.get('/api/transacciones/transacciones/exportar/?formato=csv')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp['Content-Type'], 'text/csv')
+
+    def test_exportar_excel(self):
+        self.client.force_login(_usuario_con_rol('admin_historial4', rol='administrador'))
+        resp = self.client.get('/api/transacciones/transacciones/exportar/?formato=excel')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(
+            resp['Content-Type'],
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        self.assertGreater(len(resp.content), 0)
+
+    def test_exportar_pdf(self):
+        self.client.force_login(_usuario_con_rol('admin_historial5', rol='administrador'))
+        resp = self.client.get('/api/transacciones/transacciones/exportar/?formato=pdf')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp['Content-Type'], 'application/pdf')
+        self.assertGreater(len(resp.content), 0)
+
+    def test_formato_no_soportado(self):
+        self.client.force_login(_usuario_con_rol('admin_historial6', rol='administrador'))
+        resp = self.client.get('/api/transacciones/transacciones/exportar/?formato=xml')
+        self.assertEqual(resp.status_code, 400)
