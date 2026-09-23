@@ -9,7 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.divisas.models import TasaCambio
+from apps.divisas.models import Moneda, TasaCambio
 from apps.usuarios import sesion
 from apps.usuarios.permissions import (
     ADMINISTRADOR,
@@ -267,7 +267,9 @@ def medio_pago_toggle_view(request, pk):
 class CalcularTransaccionAPIView(APIView):
     """
     Endpoint para E4-144: Lógica de cálculo de tasas y comisiones en la transacción.
-    Servicio API REST para simular/desglosar montos en tiempo real.
+    Servicio API REST para simular/desglosar montos en tiempo real, sin
+    persistir nada (por eso la ``Transaccion`` temporal no lleva ``cliente``:
+    es solo una simulación, la comisión usada es la genérica por defecto).
     """
     permission_classes = [IsAuthenticated]
 
@@ -317,112 +319,127 @@ class CalcularTransaccionAPIView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-class ComprarDivisaAPIView(APIView):
+def _crear_transaccion_digital(request, tipo_operacion, moneda_codigo, cantidad, medio_pago_id):
+    """Lógica compartida por ``OperarDivisaAPIView`` y ``operar_divisa_view``
+    para comprar (E4-19) o vender (E4-20) divisas de forma digital, con la
+    comisión y tasa aplicada según el cliente (E4-144).
+
+    Devuelve ``(transaccion, error)``: si ``error`` no es ``None``,
+    ``transaccion`` es ``None``. No usa ``request.user`` como ``Usuario`` de
+    la transacción -- ese es el ``User`` de autenticación de Django, no el
+    ``Usuario`` de negocio que espera ``Transaccion.usuario``.
     """
-    Endpoint para E4-19: Comprar divisas de forma digital.
-    Ejecuta el cálculo de E4-144, descuenta/registra y confirma la transacción.
+    cliente_activo = sesion.get_cliente_activo(request)
+    if cliente_activo is None:
+        return None, 'No tenés un cliente activo asociado a la sesión.'
+
+    usuario_negocio = sesion.usuario_negocio(request)
+    if usuario_negocio is None:
+        return None, 'No se encontró tu perfil de usuario.'
+
+    if tipo_operacion not in ('COMPRA', 'VENTA'):
+        return None, 'Tipo de operación inválido (debe ser COMPRA o VENTA).'
+
+    try:
+        cantidad = Decimal(str(cantidad))
+        if cantidad <= 0:
+            return None, 'La cantidad debe ser mayor a 0.'
+    except Exception:
+        return None, 'Cantidad no válida.'
+
+    tasa_obj = TasaCambio.objects.activa_para(moneda_codigo)
+    if not tasa_obj:
+        return None, f'No hay cotización activa para {moneda_codigo}.'
+
+    medio_pago = MedioPagoCliente.objects.filter(
+        id=medio_pago_id, cliente=cliente_activo, estado=True
+    ).first()
+    if not medio_pago:
+        return None, 'El medio de pago seleccionado no es válido o está inactivo.'
+
+    tasa_aplicada = tasa_obj.tasa_compra if tipo_operacion == 'COMPRA' else tasa_obj.tasa_venta
+
+    transaccion = Transaccion(
+        usuario=usuario_negocio,
+        cliente=cliente_activo,
+        moneda=tasa_obj.moneda,
+        metodo_pago=medio_pago.metodo_pago,
+        tipo=tipo_operacion,
+        cantidad=cantidad,
+        tasa_cambio=tasa_aplicada,
+        modalidad='DIGITAL',
+    )
+    transaccion.calcular_tasas_y_comisiones()
+    transaccion.confirmar()
+    return transaccion, None
+
+
+class OperarDivisaAPIView(APIView):
+    """
+    Endpoint para E4-19 (comprar) y E4-20 (vender) divisas de forma digital.
+    Ejecuta el cálculo de E4-144, registra y confirma la transacción.
+    ``tipo`` en el body: ``COMPRA`` (default) o ``VENTA``.
     """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        moneda_codigo = request.data.get('moneda_codigo')
-        cantidad_str = request.data.get('cantidad', '0')
-        medio_pago_id = request.data.get('medio_pago_id')
-
-        cliente_activo = sesion.get_cliente_activo(request)
-        if not cliente_activo:
-            return Response(
-                {'error': 'No posees un cliente activo asociado a la sesión.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        try:
-            cantidad = Decimal(str(cantidad_str))
-            if cantidad <= 0:
-                return Response({'error': 'La cantidad debe ser mayor a 0.'}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception:
-            return Response({'error': 'Monto de cantidad inválido.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        tasa_obj = TasaCambio.objects.activa_para(moneda_codigo)
-        if not tasa_obj:
-            return Response({'error': f'No hay cotización activa para {moneda_codigo}.'},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        medio_pago = MedioPagoCliente.objects.filter(
-            id=medio_pago_id, cliente=cliente_activo, estado=True
-        ).first()
-
-        if not medio_pago:
-            return Response(
-                {'error': 'El medio de pago seleccionado no es válido o está inactivo.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        transaccion = Transaccion(
-            usuario=request.user,
-            cliente=cliente_activo,
-            moneda=tasa_obj.moneda,
-            metodo_pago=medio_pago.metodo_pago,
-            tipo='COMPRA',
-            cantidad=cantidad,
-            tasa_cambio=tasa_obj.tasa_compra,
-            modalidad='DIGITAL'
+        transaccion, error = _crear_transaccion_digital(
+            request,
+            tipo_operacion=request.data.get('tipo', 'COMPRA').upper(),
+            moneda_codigo=request.data.get('moneda_codigo'),
+            cantidad=request.data.get('cantidad', '0'),
+            medio_pago_id=request.data.get('medio_pago_id'),
         )
-
-        desglose = transaccion.calcular_tasas_y_comisiones()
-        transaccion.confirmar()
+        if error:
+            return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({
-            'detail': 'Compra realizada con éxito.',
+            'detail': 'Operación realizada con éxito.',
             'transaccion_id': transaccion.id,
-            'moneda': tasa_obj.moneda.codigo,
-            'cantidad': cantidad,
-            'tasa_aplicada': tasa_obj.tasa_compra,
-            'subtotal': desglose['subtotal'],
-            'comision': desglose['comision'],
-            'monto_total': desglose['monto_total'],
-            'estado': transaccion.estado
+            'tipo': transaccion.tipo,
+            'moneda': transaccion.moneda.codigo,
+            'cantidad': transaccion.cantidad,
+            'tasa_aplicada': transaccion.tasa_cambio,
+            'comision_porcentaje': transaccion.comision_porcentaje,
+            'monto_comision': transaccion.monto_comision,
+            'monto_total': transaccion.monto_total,
+            'estado': transaccion.estado,
         }, status=status.HTTP_201_CREATED)
 
 
 @login_required
-def operacion_compra_view(request):
+def operar_divisa_view(request):
     """
-    Vista HTML interactiva para comprar divisas desde la interfaz.
+    Vista HTML interactiva para comprar (E4-19) o vender (E4-20) divisas,
+    con la comisión y tasa aplicada según el cliente (E4-144).
     """
     cliente_activo = sesion.get_cliente_activo(request)
     error = None
     exito = None
 
     if request.method == 'POST':
-        moneda_codigo = request.POST.get('moneda_codigo')
-        cantidad = request.POST.get('cantidad')
-        medio_pago_id = request.POST.get('medio_pago_id')
-
-        tasa_obj = TasaCambio.objects.activa_para(moneda_codigo)
-        medio_pago = MedioPagoCliente.objects.filter(id=medio_pago_id, estado=True).first()
-
-        if tasa_obj and medio_pago and cliente_activo:
-            tx = Transaccion(
-                usuario=request.user,
-                cliente=cliente_activo,
-                moneda=tasa_obj.moneda,
-                metodo_pago=medio_pago.metodo_pago,
-                tipo='COMPRA',
-                cantidad=Decimal(cantidad),
-                tasa_cambio=tasa_obj.tasa_compra,
-                modalidad='DIGITAL'
+        transaccion, error = _crear_transaccion_digital(
+            request,
+            tipo_operacion=request.POST.get('tipo', 'COMPRA').upper(),
+            moneda_codigo=request.POST.get('moneda_codigo'),
+            cantidad=request.POST.get('cantidad'),
+            medio_pago_id=request.POST.get('medio_pago_id'),
+        )
+        if error is None:
+            exito = (
+                f'Operación #{transaccion.id} realizada con éxito: '
+                f'{transaccion.get_tipo_display()} de {transaccion.cantidad} '
+                f'{transaccion.moneda.codigo} por un total de {transaccion.monto_total}.'
             )
-            tx.calcular_tasas_y_comisiones()
-            tx.confirmar()
-            exito = f"¡Compra realizada exitosamente! ID de Transacción: #{tx.id}"
-        else:
-            error = "No se pudo procesar la compra. Verifique los datos ingresados."
 
     context = {
         'usuario': request.user,
-        'medios_pago': MedioPagoCliente.objects.filter(cliente=cliente_activo, estado=True) if cliente_activo else [],
+        'monedas': Moneda.objects.filter(estado=True).order_by('codigo'),
+        'medios_pago': (
+            MedioPagoCliente.objects.filter(cliente=cliente_activo, estado=True)
+            if cliente_activo else MedioPagoCliente.objects.none()
+        ),
         'error': error,
-        'exito': exito
+        'exito': exito,
     }
-    return render(request, 'transacciones/compra_divisas.html', context)
+    return render(request, 'transacciones/operar_divisa.html', context)

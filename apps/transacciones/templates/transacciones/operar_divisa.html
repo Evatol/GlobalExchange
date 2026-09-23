@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GlobalExchange - Comprar / Vender Divisas</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="{% url 'menu_principal' %}">GlobalExchange</a>
+            <div class="d-flex align-items-center text-white">
+                <span class="me-3">Bienvenido, <strong>{{ usuario.username }}</strong></span>
+                <a href="{% url 'menu_principal' %}" class="btn btn-outline-light btn-sm">Volver al Portal</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container my-5">
+        <div class="row justify-content-center">
+            <div class="col-md-6">
+                <div class="text-center mb-4">
+                    <h2>Comprar / Vender Divisas</h2>
+                    <p class="text-muted">La comisión aplicada depende de tu categoría de cliente.</p>
+                </div>
+
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        {% if exito %}
+                            <div class="alert alert-success py-2">{{ exito }}</div>
+                        {% endif %}
+                        {% if error %}
+                            <div class="alert alert-danger py-2">{{ error }}</div>
+                        {% endif %}
+
+                        {% if not medios_pago %}
+                            <div class="alert alert-warning py-2">
+                                No tenés ningún medio de pago cargado todavía. Agregá uno
+                                desde "Mis Medios de Pago" antes de operar.
+                            </div>
+                        {% else %}
+                        <form method="post">
+                            {% csrf_token %}
+                            <div class="mb-3">
+                                <label class="form-label">Operación</label>
+                                <select name="tipo" class="form-select" required>
+                                    <option value="COMPRA">Comprar</option>
+                                    <option value="VENTA">Vender</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Moneda</label>
+                                <select name="moneda_codigo" class="form-select" required>
+                                    <option value="">Seleccione moneda...</option>
+                                    {% for m in monedas %}
+                                    <option value="{{ m.codigo }}">{{ m.codigo }} - {{ m.nombre }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Cantidad</label>
+                                <input type="number" step="0.01" min="0.01" name="cantidad" class="form-control" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Medio de pago</label>
+                                <select name="medio_pago_id" class="form-select" required>
+                                    <option value="">Seleccione medio de pago...</option>
+                                    {% for mp in medios_pago %}
+                                    <option value="{{ mp.id }}">{{ mp.alias }} ({{ mp.metodo_pago.nombre }})</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Confirmar Operación</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

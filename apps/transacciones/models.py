@@ -110,11 +110,26 @@ class Transaccion(models.Model):
     fecha_hora = models.DateTimeField(auto_now_add=True)
     modalidad = models.CharField(max_length=30, default='DIGITAL')
 
+    # Comisión según la preferencia de tipo de cambio del cliente (RF41):
+    # Mayorista y Preferencial pagan menos comisión que Estándar.
+    COMISION_POR_PREFERENCIA = {
+        Cliente.PREFERENCIA_ESTANDAR: Decimal('1.50'),
+        Cliente.PREFERENCIA_PREFERENCIAL: Decimal('1.00'),
+        Cliente.PREFERENCIA_MAYORISTA: Decimal('0.50'),
+    }
+
     def calcular_tasas_y_comisiones(self):
         """
         Lógica del Ticket E4-144:
-        Calcula el subtotal, la comisión aplicada y el monto total definitivo de la transacción.
+        Calcula el subtotal, la comisión aplicada (según la preferencia de
+        tipo de cambio del cliente, si hay uno asociado) y el monto total
+        definitivo de la transacción.
         """
+        if self.cliente_id:
+            self.comision_porcentaje = self.COMISION_POR_PREFERENCIA.get(
+                self.cliente.preferencia_tipo_cambio, self.comision_porcentaje
+            )
+
         subtotal = self.cantidad * self.tasa_cambio
         self.monto_comision = (subtotal * self.comision_porcentaje) / Decimal('100.00')
 
