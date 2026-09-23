@@ -700,3 +700,78 @@ class HistorialTransaccionesTests(TestCase):
         self.client.force_login(_usuario_con_rol('admin_historial6', rol='administrador'))
         resp = self.client.get('/api/transacciones/transacciones/exportar/?formato=xml')
         self.assertEqual(resp.status_code, 400)
+
+
+class LimitesPorClienteTests(TestCase):
+    """E4-143 (RF41): el monto de la operación no puede superar el límite de
+    compra/venta configurado para el cliente. Límite en 0 = sin límite."""
+
+    def setUp(self):
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
+        self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        TasaCambio.objects.create(
+            moneda=self.moneda, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
+            origen='BCP', estado=True,
+        )
+        # 10 USD a 7300 = 73.000 + 1,5% de comisión = 74.095 al comprar
+        self.cliente = _cliente(nombre='Cliente Con Limite', documento='LIM1')
+        self.user_final = _usuario_con_rol('final_limites', rol='usuario_final')
+        self.usuario_negocio = Usuario.objects.create(
+            username='final_limites', email='fl@example.com', nombres='F', apellidos='L',
+        )
+        self.usuario_negocio.clientes.add(self.cliente)
+        self.medio = MedioPagoCliente.objects.create(
+            cliente=self.cliente, metodo_pago=self.metodo, alias='Mio', identificador='1',
+        )
+        self.url = '/api/transacciones/gestion/operar/'
+
+    def _operar(self, tipo='COMPRA', cantidad='10'):
+        return self.client.post(self.url, {
+            'tipo': tipo, 'moneda_codigo': 'USD', 'cantidad': cantidad,
+            'medio_pago_id': self.medio.id,
+        })
+
+    def test_limite_en_cero_significa_sin_limite(self):
+        # valor por defecto de todo cliente nuevo: no debe bloquear nada
+        self.assertEqual(self.cliente.limite_compra, Decimal('0.00'))
+        self.client.force_login(self.user_final)
+        resp = self._operar()
+        self.assertContains(resp, 'realizada con éxito')
+        self.assertTrue(Transaccion.objects.filter(estado='EXITOSA').exists())
+
+    def test_compra_dentro_del_limite_se_permite(self):
+        self.cliente.establecer_limite_compra(Decimal('100000.00'))
+        self.client.force_login(self.user_final)
+        resp = self._operar()
+        self.assertContains(resp, 'realizada con éxito')
+
+    def test_compra_que_supera_el_limite_se_rechaza(self):
+        self.cliente.establecer_limite_compra(Decimal('50000.00'))  # < 74.095
+        self.client.force_login(self.user_final)
+        resp = self._operar()
+        self.assertContains(resp, 'supera el límite de compra')
+        self.assertFalse(Transaccion.objects.exists())  # no queda registrada
+
+    def test_venta_que_supera_el_limite_se_rechaza(self):
+        self.cliente.establecer_limite_venta(Decimal('10000.00'))
+        self.client.force_login(self.user_final)
+        resp = self._operar(tipo='VENTA')
+        self.assertContains(resp, 'supera el límite de venta')
+        self.assertFalse(Transaccion.objects.exists())
+
+    def test_el_limite_de_compra_no_afecta_a_la_venta(self):
+        self.cliente.establecer_limite_compra(Decimal('1.00'))  # bloquearía comprar
+        self.client.force_login(self.user_final)
+        resp = self._operar(tipo='VENTA')  # pero vender no tiene tope
+        self.assertContains(resp, 'realizada con éxito')
+
+    def test_tambien_aplica_en_el_endpoint_api(self):
+        self.cliente.establecer_limite_compra(Decimal('50000.00'))
+        self.client.force_login(self.user_final)
+        resp = self.client.post('/api/transacciones/operar/', {
+            'tipo': 'COMPRA', 'moneda_codigo': 'USD', 'cantidad': '10',
+            'medio_pago_id': self.medio.id,
+        })
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('supera el límite', resp.data['error'])
+        self.assertFalse(Transaccion.objects.exists())

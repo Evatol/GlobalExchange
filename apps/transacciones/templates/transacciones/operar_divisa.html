@@ -24,6 +24,15 @@
                 <div class="text-center mb-4">
                     <h2>Comprar / Vender Divisas</h2>
                     <p class="text-muted">La comisión aplicada depende de tu categoría de cliente.</p>
+                    {% if cliente_activo %}
+                    <p class="text-muted small mb-0">
+                        Operando como <strong>{{ cliente_activo.nombre }}</strong> ·
+                        Límite de compra:
+                        {% if cliente_activo.limite_compra %}{{ cliente_activo.limite_compra }}{% else %}sin límite{% endif %} ·
+                        Límite de venta:
+                        {% if cliente_activo.limite_venta %}{{ cliente_activo.limite_venta }}{% else %}sin límite{% endif %}
+                    </p>
+                    {% endif %}
                 </div>
 
                 <div class="card shadow-sm border-0">

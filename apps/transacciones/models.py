@@ -150,6 +150,33 @@ class Transaccion(models.Model):
         res = self.calcular_tasas_y_comisiones()
         return res['monto_total']
 
+    def validar_limite_cliente(self):
+        """E4-143 (RF41): el monto de la operación no puede superar el límite
+        de compra/venta configurado para el cliente desde el CRUD de Clientes.
+
+        Un límite en 0 significa "sin límite": es el valor por defecto de todo
+        cliente nuevo, así que tratarlo como tope real dejaría a cualquier
+        cliente recién creado sin poder operar.
+
+        Devuelve ``None`` si está dentro del límite, o el mensaje de error
+        correspondiente si lo supera. Requiere que ``monto_total`` ya esté
+        calculado (``calcular_tasas_y_comisiones``).
+        """
+        if not self.cliente_id:
+            return None
+
+        if self.tipo == 'COMPRA':
+            limite, etiqueta = self.cliente.limite_compra, 'compra'
+        else:
+            limite, etiqueta = self.cliente.limite_venta, 'venta'
+
+        if limite and limite > 0 and self.monto_total > limite:
+            return (
+                f'El monto de la operación ({self.monto_total}) supera el '
+                f'límite de {etiqueta} configurado para el cliente ({limite}).'
+            )
+        return None
+
     def validar(self):
         return self.cantidad > 0 and self.tasa_cambio > 0 and self.metodo_pago.estado
 
