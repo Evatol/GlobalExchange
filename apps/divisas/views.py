@@ -1,10 +1,19 @@
-from django.shortcuts import render
+from django.contrib.auth.decorators import login_required
+from django.core.exceptions import PermissionDenied
+from django.shortcuts import redirect, render
 from django.views import View
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from apps.usuarios.permissions import (
+    ADMINISTRADOR,
+    ANALISTA,
+    SoloAdministradorOAnalistaEscriben,
+    tiene_rol,
+)
 
 from .models import Moneda, Simulacion, TasaCambio
 from .serializers import (
@@ -14,8 +23,18 @@ from .serializers import (
 )
 
 
+def _exige_administrador_o_analista(user):
+    if not tiene_rol(user, (ADMINISTRADOR, ANALISTA)):
+        raise PermissionDenied(
+            'Esta sección es solo para administrador o analista.'
+        )
+
+
 class MonedaViewSet(viewsets.ModelViewSet):
     """CRUD de monedas / divisas (E4-137).
+
+    Cualquiera puede consultar; crear/editar/desactivar/reactivar requiere
+    rol ``administrador`` o ``analista`` (RF21/RF22).
 
     Listar, crear, ver y editar sobre ``/api/divisas/monedas/``. El ``DELETE`` no
     elimina el registro: hace un **borrado lógico** (``estado = False``). Para
@@ -26,6 +45,7 @@ class MonedaViewSet(viewsets.ModelViewSet):
 
     queryset = Moneda.objects.all().order_by('codigo')
     serializer_class = MonedaSerializer
+    permission_classes = [SoloAdministradorOAnalistaEscriben]
 
     FILTROS = ('codigo', 'estado')
 
@@ -81,6 +101,7 @@ class CotizacionViewSet(viewsets.ModelViewSet):
 
     queryset = TasaCambio.objects.all().select_related('moneda').order_by('-fecha_hora')
     serializer_class = TasaCambioSerializer
+    permission_classes = [SoloAdministradorOAnalistaEscriben]
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -245,3 +266,145 @@ class PantallaPublicaCambiosView(View):
             'error': error,
         }
         return render(request, 'divisas/publica.html', context)
+
+
+@login_required
+def gestion_monedas_view(request):
+    """Pantalla propia para el CRUD de Monedas (E4-137), en vez de la API
+    navegable de DRF. Reutiliza ``MonedaSerializer`` para no duplicar las
+    validaciones (código único, etc.). Solo administrador/analista."""
+    _exige_administrador_o_analista(request.user)
+
+    error = None
+    if request.method == 'POST':
+        serializer = MonedaSerializer(data=request.POST)
+        if serializer.is_valid():
+            serializer.save()
+            return redirect('gestion_monedas')
+        error = ' '.join(
+            str(msg) for errores in serializer.errors.values() for msg in errores
+        )
+
+    context = {
+        'usuario': request.user,
+        'monedas': Moneda.objects.all().order_by('codigo'),
+        'error': error,
+    }
+    return render(request, 'divisas/gestion_monedas.html', context)
+
+
+@login_required
+def moneda_editar_view(request, pk):
+    """Edita el código, nombre y símbolo de una moneda existente. Reutiliza
+    ``MonedaSerializer`` (misma validación que el alta: código único).
+    Solo administrador/analista."""
+    _exige_administrador_o_analista(request.user)
+    moneda = Moneda.objects.filter(pk=pk).first()
+    if moneda is None:
+        return redirect('gestion_monedas')
+
+    error = None
+    if request.method == 'POST':
+        serializer = MonedaSerializer(instance=moneda, data=request.POST, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return redirect('gestion_monedas')
+        error = ' '.join(
+            str(msg) for errores in serializer.errors.values() for msg in errores
+        )
+
+    context = {'usuario': request.user, 'moneda': moneda, 'error': error}
+    return render(request, 'divisas/moneda_editar.html', context)
+
+
+@login_required
+def moneda_toggle_view(request, pk):
+    """Activa/desactiva una moneda desde la pantalla de gestión (borrado lógico)."""
+    _exige_administrador_o_analista(request.user)
+    moneda = Moneda.objects.filter(pk=pk).first()
+    if moneda is not None:
+        moneda.activar() if not moneda.estado else moneda.desactivar()
+    return redirect('gestion_monedas')
+
+
+@login_required
+def gestion_cotizaciones_view(request):
+    """Pantalla propia para el CRUD de Cotizaciones (E4-26), sobre
+    ``TasaCambio``. Reutiliza ``TasaCambioSerializer`` (misma validación
+    que la API: la venta no puede ser menor a la compra) y, al crear una
+    activa, desactiva automáticamente la anterior de esa misma moneda
+    (igual que ``CotizacionViewSet``). Solo administrador/analista."""
+    _exige_administrador_o_analista(request.user)
+
+    error = None
+    if request.method == 'POST':
+        serializer = TasaCambioSerializer(data=request.POST)
+        if serializer.is_valid():
+            cotizacion = serializer.save()
+            if cotizacion.estado:
+                TasaCambio.objects.filter(
+                    moneda=cotizacion.moneda, estado=True
+                ).exclude(pk=cotizacion.pk).update(estado=False)
+            return redirect('gestion_cotizaciones')
+        error = ' '.join(
+            str(msg) for errores in serializer.errors.values() for msg in errores
+        )
+
+    context = {
+        'usuario': request.user,
+        'cotizaciones': TasaCambio.objects.all().select_related('moneda').order_by('-fecha_hora'),
+        'monedas': Moneda.objects.filter(estado=True).order_by('codigo'),
+        'error': error,
+    }
+    return render(request, 'divisas/gestion_cotizaciones.html', context)
+
+
+@login_required
+def cotizacion_editar_view(request, pk):
+    """Edita una cotización existente (moneda, tasas, origen, estado).
+    Reutiliza ``TasaCambioSerializer`` (misma validación: la venta no puede
+    ser menor a la compra) y, si queda activa, desactiva las demás activas
+    de esa misma moneda (igual que al crear). Solo administrador/analista."""
+    _exige_administrador_o_analista(request.user)
+    cotizacion = TasaCambio.objects.select_related('moneda').filter(pk=pk).first()
+    if cotizacion is None:
+        return redirect('gestion_cotizaciones')
+
+    error = None
+    if request.method == 'POST':
+        serializer = TasaCambioSerializer(instance=cotizacion, data=request.POST, partial=True)
+        if serializer.is_valid():
+            cotizacion = serializer.save()
+            if cotizacion.estado:
+                TasaCambio.objects.filter(
+                    moneda=cotizacion.moneda, estado=True
+                ).exclude(pk=cotizacion.pk).update(estado=False)
+            return redirect('gestion_cotizaciones')
+        error = ' '.join(
+            str(msg) for errores in serializer.errors.values() for msg in errores
+        )
+
+    context = {
+        'usuario': request.user,
+        'cotizacion': cotizacion,
+        'monedas': Moneda.objects.filter(estado=True).order_by('codigo'),
+        'error': error,
+    }
+    return render(request, 'divisas/cotizacion_editar.html', context)
+
+
+@login_required
+def cotizacion_toggle_view(request, pk):
+    """Activa/desactiva una cotización desde la pantalla de gestión. Al
+    reactivar, desactiva las demás activas de esa misma moneda (una sola
+    cotización vigente por moneda, igual que la API)."""
+    _exige_administrador_o_analista(request.user)
+    cotizacion = TasaCambio.objects.filter(pk=pk).first()
+    if cotizacion is not None:
+        cotizacion.estado = not cotizacion.estado
+        cotizacion.save()
+        if cotizacion.estado:
+            TasaCambio.objects.filter(
+                moneda=cotizacion.moneda, estado=True
+            ).exclude(pk=cotizacion.pk).update(estado=False)
+    return redirect('gestion_cotizaciones')

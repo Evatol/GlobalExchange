@@ -1,9 +1,20 @@
 from decimal import Decimal
+from django.contrib.auth.models import Group, User
 from django.test import TestCase
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 from .models import Moneda, TasaCambio
+
+
+def _usuario_con_rol(username, rol=None, **kwargs):
+    """Usuario de Django con un rol de negocio (grupo), para probar permisos
+    sin depender de un login real por Keycloak."""
+    user = User.objects.create_user(username, **kwargs)
+    if rol:
+        grupo, _ = Group.objects.get_or_create(name=rol)
+        user.groups.add(grupo)
+    return user
 
 
 class DivisasApiTests(APITestCase):
@@ -71,6 +82,7 @@ class DivisasApiTests(APITestCase):
 class MonedaCRUDTests(APITestCase):
 
     def setUp(self):
+        self.client.force_authenticate(user=_usuario_con_rol('admin_moneda', rol='administrador'))
         self.moneda = Moneda.objects.create(
             codigo='USD',
             nombre='Dólar estadounidense',
@@ -155,6 +167,7 @@ class CotizacionCRUDTests(APITestCase):
     """CRUD de cotizaciones (E4-26), implementado sobre TasaCambio."""
 
     def setUp(self):
+        self.client.force_authenticate(user=_usuario_con_rol('admin_cotiz', rol='administrador'))
         self.usd = Moneda.objects.create(
             codigo='USD', nombre='Dólar estadounidense', simbolo='$', estado=True
         )
@@ -360,3 +373,201 @@ class PantallaPublicaCambiosViewTests(TestCase):
             respuesta_html.context['resultado'],
             Decimal(respuesta_api.data['resultado']),
         )
+
+
+class PermisosMonedaCotizacionTests(APITestCase):
+    """Monedas y Cotizaciones: lectura libre, escritura solo para
+    administrador/analista (RF21/RF22)."""
+
+    def setUp(self):
+        self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        self.monedas_url = reverse('moneda-list')
+        self.cotizaciones_url = reverse('cotizacion-list')
+        self.payload_moneda = {'codigo': 'EUR', 'nombre': 'Euro', 'simbolo': '€'}
+        self.payload_cotizacion = {
+            'moneda': self.moneda.id, 'tasa_compra': '7300', 'tasa_venta': '7400',
+            'origen': 'Banco Central',
+        }
+
+    def test_lectura_libre_sin_login(self):
+        self.assertEqual(self.client.get(self.monedas_url).status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.get(self.cotizaciones_url).status_code, status.HTTP_200_OK)
+
+    def test_anonimo_no_puede_crear(self):
+        resp = self.client.post(self.monedas_url, self.payload_moneda)
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_usuario_final_no_puede_crear(self):
+        self.client.force_authenticate(user=_usuario_con_rol('cliente_x', rol='usuario_final'))
+        resp = self.client.post(self.monedas_url, self.payload_moneda)
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+        resp = self.client.post(self.cotizaciones_url, self.payload_cotizacion)
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_analista_puede_crear(self):
+        self.client.force_authenticate(user=_usuario_con_rol('analista_x', rol='analista'))
+        resp = self.client.post(self.monedas_url, self.payload_moneda)
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        resp = self.client.post(self.cotizaciones_url, self.payload_cotizacion)
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+
+    def test_administrador_puede_crear(self):
+        self.client.force_authenticate(user=_usuario_con_rol('admin_x', rol='administrador'))
+        resp = self.client.post(self.monedas_url, self.payload_moneda)
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+
+
+class GestionMonedasViewTests(TestCase):
+    """Pantalla propia del CRUD de Monedas (en vez de la API navegable)."""
+
+    def setUp(self):
+        self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        self.url = reverse('gestion_monedas')
+
+    def test_requiere_login(self):
+        self.assertEqual(self.client.get(self.url).status_code, 302)
+
+    def test_prohibido_para_usuario_final(self):
+        self.client.force_login(_usuario_con_rol('final_gm', rol='usuario_final'))
+        self.assertEqual(self.client.get(self.url).status_code, 403)
+
+    def test_analista_ve_el_listado(self):
+        self.client.force_login(_usuario_con_rol('analista_gm', rol='analista'))
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTemplateUsed(resp, 'divisas/gestion_monedas.html')
+        self.assertContains(resp, 'USD')
+
+    def test_administrador_puede_crear(self):
+        self.client.force_login(_usuario_con_rol('admin_gm', rol='administrador'))
+        resp = self.client.post(self.url, {
+            'codigo': 'EUR', 'nombre': 'Euro', 'simbolo': '€', 'estado': 'on',
+        })
+        self.assertRedirects(resp, self.url)
+        self.assertTrue(Moneda.objects.filter(codigo='EUR').exists())
+
+    def test_toggle_desactiva_y_reactiva(self):
+        self.client.force_login(_usuario_con_rol('admin_gm2', rol='administrador'))
+        toggle_url = reverse('moneda_toggle', args=[self.moneda.id])
+        self.client.post(toggle_url)
+        self.moneda.refresh_from_db()
+        self.assertFalse(self.moneda.estado)
+        self.client.post(toggle_url)
+        self.moneda.refresh_from_db()
+        self.assertTrue(self.moneda.estado)
+
+
+class GestionCotizacionesViewTests(TestCase):
+    """Pantalla propia del CRUD de Cotizaciones (en vez de la API navegable)."""
+
+    def setUp(self):
+        self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        self.cotizacion = TasaCambio.objects.create(
+            moneda=self.moneda, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
+            origen='Banco Central',
+        )
+        self.url = reverse('gestion_cotizaciones')
+
+    def test_prohibido_para_usuario_final(self):
+        self.client.force_login(_usuario_con_rol('final_gc', rol='usuario_final'))
+        self.assertEqual(self.client.get(self.url).status_code, 403)
+
+    def test_administrador_puede_crear_y_desactiva_la_anterior(self):
+        self.client.force_login(_usuario_con_rol('admin_gc', rol='administrador'))
+        resp = self.client.post(self.url, {
+            'moneda': self.moneda.id, 'tasa_compra': '7350', 'tasa_venta': '7450',
+            'origen': 'Test', 'estado': 'on',
+        })
+        self.assertRedirects(resp, self.url)
+        self.cotizacion.refresh_from_db()
+        self.assertFalse(self.cotizacion.estado)
+        self.assertEqual(
+            TasaCambio.objects.filter(moneda=self.moneda, estado=True).count(), 1,
+        )
+
+    def test_no_permite_venta_menor_a_compra(self):
+        self.client.force_login(_usuario_con_rol('admin_gc2', rol='administrador'))
+        resp = self.client.post(self.url, {
+            'moneda': self.moneda.id, 'tasa_compra': '7400', 'tasa_venta': '7300',
+            'origen': 'Test',
+        })
+        self.assertEqual(resp.status_code, 200)  # se queda en la pantalla con el error
+        self.assertContains(resp, 'no puede ser menor')
+
+    def test_toggle_activa_desactivando_las_demas_de_la_moneda(self):
+        otra = TasaCambio.objects.create(
+            moneda=self.moneda, tasa_compra=Decimal('1'), tasa_venta=Decimal('2'),
+            origen='x', estado=False,
+        )
+        self.client.force_login(_usuario_con_rol('admin_gc3', rol='administrador'))
+        self.client.post(reverse('cotizacion_toggle', args=[otra.id]))
+        otra.refresh_from_db()
+        self.cotizacion.refresh_from_db()
+        self.assertTrue(otra.estado)
+        self.assertFalse(self.cotizacion.estado)
+
+
+class MonedaEditarViewTests(TestCase):
+    """Edición de una moneda existente desde la pantalla de gestión."""
+
+    def setUp(self):
+        self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        self.url = reverse('moneda_editar', args=[self.moneda.id])
+
+    def test_prohibido_para_usuario_final(self):
+        self.client.force_login(_usuario_con_rol('final_me', rol='usuario_final'))
+        self.assertEqual(self.client.get(self.url).status_code, 403)
+
+    def test_analista_puede_editar(self):
+        self.client.force_login(_usuario_con_rol('analista_me', rol='analista'))
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'USD')
+
+        resp = self.client.post(self.url, {
+            'codigo': 'USD', 'nombre': 'Dólar estadounidense', 'simbolo': '$', 'estado': 'on',
+        })
+        self.assertRedirects(resp, reverse('gestion_monedas'))
+        self.moneda.refresh_from_db()
+        self.assertEqual(self.moneda.nombre, 'Dólar estadounidense')
+
+
+class CotizacionEditarViewTests(TestCase):
+    """Edición de una cotización existente, respetando la regla de 'una
+    sola vigente por moneda' también al editar."""
+
+    def setUp(self):
+        self.usd = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        self.eur = Moneda.objects.create(codigo='EUR', nombre='Euro', simbolo='€')
+        self.cotizacion = TasaCambio.objects.create(
+            moneda=self.usd, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
+            origen='Banco Central',
+        )
+        self.otra_usd = TasaCambio.objects.create(
+            moneda=self.usd, tasa_compra=Decimal('1'), tasa_venta=Decimal('2'),
+            origen='x', estado=False,
+        )
+        self.url = reverse('cotizacion_editar', args=[self.cotizacion.id])
+
+    def test_administrador_puede_editar(self):
+        self.client.force_login(_usuario_con_rol('admin_ce', rol='administrador'))
+        resp = self.client.post(self.url, {
+            'moneda': self.usd.id, 'tasa_compra': '7350', 'tasa_venta': '7450',
+            'origen': 'Actualizado', 'estado': 'on',
+        })
+        self.assertRedirects(resp, reverse('gestion_cotizaciones'))
+        self.cotizacion.refresh_from_db()
+        self.assertEqual(self.cotizacion.origen, 'Actualizado')
+        self.assertEqual(self.cotizacion.tasa_compra, Decimal('7350.00'))
+
+    def test_reactivar_al_editar_desactiva_las_demas_de_la_moneda(self):
+        self.client.force_login(_usuario_con_rol('admin_ce2', rol='administrador'))
+        url = reverse('cotizacion_editar', args=[self.otra_usd.id])
+        self.client.post(url, {
+            'moneda': self.usd.id, 'tasa_compra': '1', 'tasa_venta': '2',
+            'origen': 'x', 'estado': 'on',
+        })
+        self.otra_usd.refresh_from_db()
+        self.cotizacion.refresh_from_db()
+        self.assertTrue(self.otra_usd.estado)
+        self.assertFalse(self.cotizacion.estado)
