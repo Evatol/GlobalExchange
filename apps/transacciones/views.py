@@ -375,6 +375,13 @@ def _crear_transaccion_digital(request, tipo_operacion, moneda_codigo, cantidad,
         modalidad='DIGITAL',
     )
     transaccion.calcular_tasas_y_comisiones()
+
+    # E4-143: el monto no puede superar el límite del cliente. Se valida antes
+    # de confirmar, para no dejar la transacción registrada si se pasa.
+    error_limite = transaccion.validar_limite_cliente()
+    if error_limite:
+        return None, error_limite
+
     transaccion.confirmar()
     return transaccion, None
 
@@ -439,6 +446,7 @@ def operar_divisa_view(request):
 
     context = {
         'usuario': request.user,
+        'cliente_activo': cliente_activo,
         'monedas': Moneda.objects.filter(estado=True).order_by('codigo'),
         'medios_pago': (
             MedioPagoCliente.objects.filter(cliente=cliente_activo, estado=True)
