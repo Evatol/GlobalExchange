@@ -969,3 +969,52 @@ class CambiarPasswordServiceTests(TestCase):
         mock_admin_factory.return_value.set_user_password.assert_called_once_with(
             'uid-1', 'nueva123', temporary=False,
         )
+
+
+class SeedDatosDemoTests(TestCase):
+    """El comando que deja el sistema listo para probar (lo usa
+    scripts/levantar_sistema.sh): monedas con cotización, métodos de pago,
+    clientes de distinta categoría y la asociación del usuario."""
+
+    def test_carga_todo_lo_necesario_para_operar(self):
+        from apps.divisas.models import Moneda, TasaCambio
+        from apps.transacciones.models import MedioPagoCliente, MetodoPago
+
+        call_command('seed_datos_demo', stdout=StringIO())
+
+        # monedas con su cotización activa
+        self.assertEqual(Moneda.objects.count(), 3)
+        for codigo in ('USD', 'EUR', 'BRL'):
+            moneda = Moneda.objects.get(codigo=codigo)
+            self.assertTrue(TasaCambio.objects.filter(moneda=moneda, estado=True).exists())
+
+        self.assertEqual(MetodoPago.objects.count(), 3)
+
+        # un cliente mayorista con tope y otro estandar sin tope
+        mayorista = Cliente.objects.get(nombre='Comercial Uno')
+        self.assertEqual(mayorista.preferencia_tipo_cambio, Cliente.PREFERENCIA_MAYORISTA)
+        self.assertEqual(mayorista.limite_compra, Decimal('100000.00'))
+        estandar = Cliente.objects.get(nombre='Comercial Dos')
+        self.assertEqual(estandar.preferencia_tipo_cambio, Cliente.PREFERENCIA_ESTANDAR)
+
+        # el usuario queda asociado y con un medio de pago listo
+        usuario = Usuario.objects.get(username='cliente_demo')
+        self.assertIn(mayorista, usuario.clientes.all())
+        self.assertTrue(MedioPagoCliente.objects.filter(cliente=mayorista, estado=True).exists())
+
+    def test_es_idempotente(self):
+        from apps.divisas.models import Moneda
+        from apps.transacciones.models import MedioPagoCliente
+
+        call_command('seed_datos_demo', stdout=StringIO())
+        call_command('seed_datos_demo', stdout=StringIO())
+
+        self.assertEqual(Moneda.objects.count(), 3)
+        self.assertEqual(Cliente.objects.count(), 2)
+        self.assertEqual(Usuario.objects.filter(username='cliente_demo').count(), 1)
+        self.assertEqual(MedioPagoCliente.objects.count(), 1)
+
+    def test_permite_asociar_otro_usuario(self):
+        call_command('seed_datos_demo', '--usuario', 'otro_demo', stdout=StringIO())
+        usuario = Usuario.objects.get(username='otro_demo')
+        self.assertIn(Cliente.objects.get(nombre='Comercial Uno'), usuario.clientes.all())
