@@ -1,8 +1,21 @@
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
+
 from django.db import models
 from django.core.exceptions import ValidationError
 from apps.usuarios.models import Usuario, Cliente
 from apps.divisas.models import Moneda
+
+
+def _a_guaranies(monto):
+    """Redondea un importe a 2 decimales, que es la precisión con la que se
+    guarda en la base (``decimal_places=2``).
+
+    Sin esto, el cálculo intermedio arrastra la precisión de ``tasa_cambio``
+    (6 decimales) y los montos se muestran como ``67935.99000000`` en los
+    mensajes de la pantalla y en las respuestas de la API, aunque en la base
+    queden bien.
+    """
+    return monto.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
 class MetodoPago(models.Model):
@@ -130,8 +143,10 @@ class Transaccion(models.Model):
                 self.cliente.preferencia_tipo_cambio, self.comision_porcentaje
             )
 
-        subtotal = self.cantidad * self.tasa_cambio
-        self.monto_comision = (subtotal * self.comision_porcentaje) / Decimal('100.00')
+        subtotal = _a_guaranies(self.cantidad * self.tasa_cambio)
+        self.monto_comision = _a_guaranies(
+            (subtotal * self.comision_porcentaje) / Decimal('100.00')
+        )
 
         if self.tipo == 'COMPRA':
             # Al comprar divisas, el cliente paga el subtotal + la comisión del servicio
