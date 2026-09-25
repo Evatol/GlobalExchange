@@ -7,8 +7,10 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-123456}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # A propósito NO se publica el 5432 al host: Django le habla a Postgres
+    # por la red interna de Docker, así que publicarlo solo servía para que
+    # chocara con el PostgreSQL local de cada uno. Para entrar a la base:
+    #     docker compose exec postgres psql -U postgres Global_Exchange
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
       interval: 5s

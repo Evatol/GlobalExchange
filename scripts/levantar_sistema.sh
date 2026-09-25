@@ -45,10 +45,12 @@ fi
 echo "   Docker OK."
 
 echo
-echo "== 2/5 Revisando puertos (5432, 8080, 8000) =="
-# Si los ocupa el propio stack no hay problema: docker compose los reutiliza.
+echo "== 2/5 Revisando puertos (8080, 8000) =="
+# El 5432 no se revisa: el stack no publica Postgres al host justamente para
+# poder convivir con el PostgreSQL local. Si los ocupa el propio stack no hay
+# problema: docker compose los reutiliza.
 EN_USO=""
-for puerto in 5432 8080 8000; do
+for puerto in 8080 8000; do
     if ss -tln 2>/dev/null | grep -q ":${puerto}\b"; then
         EN_USO="${EN_USO} ${puerto}"
     fi
@@ -59,7 +61,6 @@ if [ -n "$EN_USO" ] && [ -z "$(compose ps -q 2>/dev/null)" ]; then
     echo "   Es tu entorno local de siempre. Paralo con:"
     echo
     echo "       docker stop keycloak-dev"
-    echo "       sudo systemctl stop postgresql"
     echo "       pkill -f 'manage.py runserver'"
     echo
     echo "   ...y volve a correr este script."
