@@ -10,6 +10,8 @@
 #   ./scripts/levantar_sistema.sh --limpio        # borra los datos y arranca de cero
 #   ./scripts/levantar_sistema.sh --sin-datos     # no carga los datos de demo
 #   ./scripts/levantar_sistema.sh --forzar        # sigue aunque haya puertos ocupados
+#   ./scripts/levantar_sistema.sh --con-correo    # + verificacion por correo (necesita
+#                                                 #   KEYCLOAK_SMTP_PASSWORD en tu .env)
 #
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -19,14 +21,16 @@ AMBIENTE="desarrollo"
 LIMPIO="no"
 CARGAR_DATOS="si"
 FORZAR="no"
+CON_CORREO="no"
 
 for arg in "$@"; do
     case "$arg" in
         --prod)      COMPOSE_FILE="docker-compose.prod.yml"; AMBIENTE="produccion" ;;
         --limpio)    LIMPIO="si" ;;
         --sin-datos) CARGAR_DATOS="no" ;;
-        --forzar)    FORZAR="si" ;;
-        -h|--help)   sed -n '2,12p' "$0"; exit 0 ;;
+        --forzar)     FORZAR="si" ;;
+        --con-correo) CON_CORREO="si" ;;
+        -h|--help)   sed -n '2,14p' "$0"; exit 0 ;;
         *)           echo "Opcion desconocida: $arg (usa --help)"; exit 1 ;;
     esac
 done
@@ -108,6 +112,24 @@ if [ "$CARGAR_DATOS" = "si" ]; then
     compose exec -T web python manage.py seed_datos_demo
 else
     echo "   Omitidos (--sin-datos)."
+fi
+
+if [ "$CON_CORREO" = "si" ]; then
+    echo
+    echo "== Extra: verificacion por correo =="
+    # El password sale del .env (que git ignora), nunca del repo.
+    if [ -z "${KEYCLOAK_SMTP_PASSWORD:-}" ] && [ -f .env ]; then
+        KEYCLOAK_SMTP_PASSWORD="$(grep -E '^KEYCLOAK_SMTP_PASSWORD=' .env | cut -d= -f2- | tr -d '"'"'"' ' || true)"
+    fi
+    if [ -z "${KEYCLOAK_SMTP_PASSWORD:-}" ]; then
+        echo "   No encontre KEYCLOAK_SMTP_PASSWORD."
+        echo "   Agregala a tu archivo .env (no se sube a git):"
+        echo "       KEYCLOAK_SMTP_PASSWORD=xxxxxxxxxxxxxxxx"
+        echo "   El sistema queda levantado igual, pero sin verificacion por correo."
+    else
+        KEYCLOAK_SMTP_PASSWORD="$KEYCLOAK_SMTP_PASSWORD" \
+            compose exec -T web python manage.py configure_keycloak_registration
+    fi
 fi
 
 cat <<'FIN'
