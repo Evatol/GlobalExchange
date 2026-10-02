@@ -7,8 +7,10 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-123456}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # A propósito NO se publica el 5432 al host: Django le habla a Postgres
+    # por la red interna de Docker, así que publicarlo solo servía para que
+    # chocara con el PostgreSQL local de cada uno. Para entrar a la base:
+    #     docker compose exec postgres psql -U postgres Global_Exchange
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
       interval: 5s
@@ -64,6 +66,13 @@ services:
       OIDC_RP_CLIENT_SECRET: ${OIDC_RP_CLIENT_SECRET:-tNPOCqVu0s7H09kQgrGYLhXuGCPC72bd5vYbdeZ82WEEBzsP7Zi47OJ9tsIuIvpAjLYOa4BTnVBNEw1JnKQvel}
 
       SEED_DEMO_USERS: ${SEED_DEMO_USERS:-true}
+
+      # App Password de Gmail para que Keycloak pueda mandar los correos de
+      # verificación del autoregistro. NO va hardcodeado acá: el repo es
+      # público. Cada uno lo pone en su propio .env (que git ignora) y el
+      # script lo usa con --con-correo. Si está vacío, el sistema levanta
+      # igual, solo que sin verificación por correo.
+      KEYCLOAK_SMTP_PASSWORD: ${KEYCLOAK_SMTP_PASSWORD:-}
     ports:
       - "8000:8000"
     volumes:

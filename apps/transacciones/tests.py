@@ -407,6 +407,19 @@ class TransaccionCalculoComisionTests(TestCase):
         self.assertEqual(desglose['comision'], Decimal('1095.00'))
         self.assertEqual(desglose['monto_total'], Decimal('74095.00'))
 
+    def test_los_montos_quedan_con_dos_decimales(self):
+        """La tasa tiene 6 decimales: sin redondear, los montos arrastraban
+        esa precisión y se mostraban como '67935.99000000' en pantalla."""
+        tx = self._transaccion('COMPRA', cantidad=Decimal('9.26'), tasa=Decimal('7300.000000'))
+        desglose = tx.calcular_tasas_y_comisiones()
+        for clave, valor in desglose.items():
+            self.assertEqual(
+                valor.as_tuple().exponent, -2,
+                f'{clave} deberia tener exactamente 2 decimales, vino {valor}',
+            )
+        # 9.26 x 7300 = 67.598,00 + 1,5% (1.013,97) = 68.611,97
+        self.assertEqual(desglose['monto_total'], Decimal('68611.97'))
+
     def test_cliente_estandar_paga_la_comision_mas_alta(self):
         cliente = Cliente.objects.create(
             nombre='Cliente Estandar', documento='E1', tipo='FISICA',

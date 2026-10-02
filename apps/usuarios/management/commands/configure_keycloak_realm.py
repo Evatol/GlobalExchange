@@ -92,7 +92,7 @@ class Command(BaseCommand):
                             "realm": realm,
                             "enabled": True,
                             "sslRequired": "none",
-                            "registrationAllowed": False,
+                            "registrationAllowed": True,
                             "loginWithEmailAllowed": True,
                         },
                         skip_exists=True,
@@ -101,7 +101,25 @@ class Command(BaseCommand):
                     raise CommandError(f"Falló al crear el realm:\n  {exc}") from exc
                 self.stdout.write(self.style.SUCCESS("  OK - realm creado."))
         else:
-            self.stdout.write("  ya existe. No se toca.")
+            self.stdout.write("  ya existe (no se tocan sus demás ajustes).")
+
+        # El autoregistro se asegura siempre, no solo al crear el realm: es
+        # parte del alcance del Sprint 1 y sin esto no aparece el enlace
+        # "Registrarse" en la pantalla de login. La verificación por correo
+        # queda aparte (configure_keycloak_registration), porque necesita
+        # credenciales SMTP reales.
+        if not options["dry_run"]:
+            actual = admin.get_realm(realm).get("registrationAllowed")
+            if actual:
+                self.stdout.write("  autoregistro: ya estaba habilitado.")
+            else:
+                try:
+                    admin.update_realm(realm, {"registrationAllowed": True})
+                except KeycloakError as exc:
+                    raise CommandError(
+                        f"Falló al habilitar el autoregistro:\n  {exc}"
+                    ) from exc
+                self.stdout.write(self.style.SUCCESS("  OK - autoregistro habilitado."))
 
         if options["dry_run"] and realm not in realms_existentes:
             # En dry-run el realm no se creó de verdad: no hay a qué cambiar.
