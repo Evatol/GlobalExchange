@@ -14,7 +14,7 @@ django.setup()
 project = 'GlobalExchange'
 copyright = '2026, Equipo GlobalExchange'
 author = 'Equipo GlobalExchange'
-release = '1.0'
+release = '1.4'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
