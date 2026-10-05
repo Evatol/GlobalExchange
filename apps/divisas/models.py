@@ -56,6 +56,34 @@ class TasaCambio(models.Model):
         texto = f"{valor:.6f}".rstrip('0').rstrip('.')
         return texto.replace(".", ",")
 
+    def tasa_para(self, operacion):
+        """Tasa que se le aplica al cliente según la operación que hace.
+
+        ``tasa_compra`` y ``tasa_venta`` son las de la pizarra de la casa de
+        cambio, desde el punto de vista de la casa: a cuánto *compra* y a
+        cuánto *vende* la divisa. Por eso se cruzan con la operación del
+        cliente:
+
+        * el cliente **compra** divisas → la casa le vende → ``tasa_venta``;
+        * el cliente **vende** divisas → la casa se las compra → ``tasa_compra``.
+
+        Así el cliente siempre compra al precio más alto y vende al más bajo,
+        y la diferencia (el *spread*) queda para la casa. Al revés, una compra
+        y una venta seguidas le dejaban ganancia al cliente.
+
+        Es el único lugar donde se decide esto: la usan el simulador, la
+        operación de compra/venta y la confirmación del pago (E4-28), que
+        tienen que coincidir siempre.
+
+        ``operacion``: ``'COMPRA'`` o ``'VENTA'`` (sin importar mayúsculas).
+        """
+        operacion = str(operacion).upper()
+        if operacion == 'COMPRA':
+            return self.tasa_venta
+        if operacion == 'VENTA':
+            return self.tasa_compra
+        raise ValueError(f'Operación inválida: {operacion!r} (debe ser COMPRA o VENTA).')
+
     def obtener_tasa_compra(self):
         return self.tasa_compra
 

@@ -7,6 +7,9 @@ from .views import (
     MetodoPagoViewSet,
     OperarDivisaAPIView,
     TransaccionViewSet,
+    operacion_cancelar_view,
+    operacion_confirmar_view,
+    operacion_detalle_view,
     gestion_medios_pago_view,
     gestion_metodos_pago_view,
     historial_transacciones_view,
@@ -34,6 +37,11 @@ urlpatterns = [
     path('gestion/medios-pago-cliente/<int:pk>/toggle/', medio_pago_toggle_view, name='medio_pago_toggle'),
     # Comprar/vender divisas (E4-19/E4-20) y cálculo de tasas/comisión (E4-144).
     path('gestion/operar/', operar_divisa_view, name='operar_divisa'),
+    # Resumen de la operación pendiente, confirmación del pago (E4-28) y
+    # cancelación a pedido del cliente (RF23).
+    path('gestion/operar/<int:pk>/', operacion_detalle_view, name='operacion_detalle'),
+    path('gestion/operar/<int:pk>/confirmar/', operacion_confirmar_view, name='operacion_confirmar'),
+    path('gestion/operar/<int:pk>/cancelar/', operacion_cancelar_view, name='operacion_cancelar'),
     path('operar/', OperarDivisaAPIView.as_view(), name='operar_divisa_api'),
     path('calcular/', CalcularTransaccionAPIView.as_view(), name='calcular_transaccion_api'),
     # Historial de transacciones, solo consulta (E4-104/E4-36).

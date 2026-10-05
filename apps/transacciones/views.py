@@ -2,10 +2,13 @@ import csv
 import io
 from decimal import Decimal
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
-from django.http import HttpResponse
+from django.core.exceptions import ValidationError
+from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
+from django.views.decorators.http import require_POST
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
@@ -273,8 +276,9 @@ class CalcularTransaccionAPIView(APIView):
     """
     Endpoint para E4-144: Lógica de cálculo de tasas y comisiones en la transacción.
     Servicio API REST para simular/desglosar montos en tiempo real, sin
-    persistir nada (por eso la ``Transaccion`` temporal no lleva ``cliente``:
-    es solo una simulación, la comisión usada es la genérica por defecto).
+    persistir nada. Usa el cliente activo de la sesión para aplicar la misma
+    comisión que va a cobrar la operación real (según su categoría); sin
+    cliente activo, la estándar.
     """
     permission_classes = [IsAuthenticated]
 
@@ -282,6 +286,11 @@ class CalcularTransaccionAPIView(APIView):
         moneda_codigo = request.data.get('moneda_codigo')
         cantidad_str = request.data.get('cantidad', '0')
         tipo_operacion = request.data.get('tipo', 'COMPRA').upper()
+        if tipo_operacion not in ('COMPRA', 'VENTA'):
+            return Response(
+                {'error': 'Tipo de operación inválido (debe ser COMPRA o VENTA).'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         try:
             cantidad = Decimal(str(cantidad_str))
@@ -303,9 +312,12 @@ class CalcularTransaccionAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        tasa_aplicada = tasa_obj.tasa_compra if tipo_operacion == 'COMPRA' else tasa_obj.tasa_venta
+        tasa_aplicada = tasa_obj.tasa_para(tipo_operacion)
 
+        # Con el cliente activo, para que la comisión coincida con la que
+        # después cobra la operación real (antes daba siempre la estándar).
         tx_temporal = Transaccion(
+            cliente=sesion.get_cliente_activo(request),
             tipo=tipo_operacion,
             cantidad=cantidad,
             tasa_cambio=tasa_aplicada
@@ -328,6 +340,10 @@ def _crear_transaccion_digital(request, tipo_operacion, moneda_codigo, cantidad,
     """Lógica compartida por ``OperarDivisaAPIView`` y ``operar_divisa_view``
     para comprar (E4-19) o vender (E4-20) divisas de forma digital, con la
     comisión y tasa aplicada según el cliente (E4-144).
+
+    La transacción queda ``PENDIENTE`` de pago: se confirma después, con
+    ``Transaccion.confirmar()``, que la cancela si la cotización cambió en el
+    medio (E4-28).
 
     Devuelve ``(transaccion, error)``: si ``error`` no es ``None``,
     ``transaccion`` es ``None``. No usa ``request.user`` como ``Usuario`` de
@@ -362,7 +378,7 @@ def _crear_transaccion_digital(request, tipo_operacion, moneda_codigo, cantidad,
     if not medio_pago:
         return None, 'El medio de pago seleccionado no es válido o está inactivo.'
 
-    tasa_aplicada = tasa_obj.tasa_compra if tipo_operacion == 'COMPRA' else tasa_obj.tasa_venta
+    tasa_aplicada = tasa_obj.tasa_para(tipo_operacion)
 
     transaccion = Transaccion(
         usuario=usuario_negocio,
@@ -382,14 +398,34 @@ def _crear_transaccion_digital(request, tipo_operacion, moneda_codigo, cantidad,
     if error_limite:
         return None, error_limite
 
-    transaccion.confirmar()
+    transaccion.save()  # PENDIENTE hasta que se confirme el pago
     return transaccion, None
+
+
+def _transaccion_del_cliente_activo(request, pk):
+    """Transacción ``pk`` del cliente activo de la sesión, o ``Http404``.
+
+    Confirmar, cancelar o ver el resumen de una operación es cosa del cliente
+    que la hizo: se busca siempre dentro del cliente activo, sin importar el
+    rol, para que nadie pague o cancele una operación ajena.
+    """
+    cliente_activo = sesion.get_cliente_activo(request)
+    transaccion = (
+        Transaccion.objects.select_related('moneda', 'metodo_pago', 'cliente')
+        .filter(pk=pk, cliente=cliente_activo)
+        .first()
+        if cliente_activo is not None else None
+    )
+    if transaccion is None:
+        raise Http404('No existe esa operación para tu cliente activo.')
+    return transaccion
 
 
 class OperarDivisaAPIView(APIView):
     """
     Endpoint para E4-19 (comprar) y E4-20 (vender) divisas de forma digital.
-    Ejecuta el cálculo de E4-144, registra y confirma la transacción.
+    Ejecuta el cálculo de E4-144 y registra la transacción ``PENDIENTE`` de
+    pago; se confirma con ``POST .../transacciones/<id>/confirmar/``.
     ``tipo`` en el body: ``COMPRA`` (default) o ``VENTA``.
     """
     permission_classes = [IsAuthenticated]
@@ -406,28 +442,40 @@ class OperarDivisaAPIView(APIView):
             return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({
-            'detail': 'Operación realizada con éxito.',
-            'transaccion_id': transaccion.id,
-            'tipo': transaccion.tipo,
-            'moneda': transaccion.moneda.codigo,
-            'cantidad': transaccion.cantidad,
-            'tasa_aplicada': transaccion.tasa_cambio,
-            'comision_porcentaje': transaccion.comision_porcentaje,
-            'monto_comision': transaccion.monto_comision,
-            'monto_total': transaccion.monto_total,
-            'estado': transaccion.estado,
+            'detail': 'Operación registrada: queda pendiente hasta que se confirme el pago.',
+            **_desglose(transaccion),
         }, status=status.HTTP_201_CREATED)
+
+
+def _desglose(transaccion):
+    """Datos de una transacción para las respuestas de la API."""
+    return {
+        'transaccion_id': transaccion.id,
+        'tipo': transaccion.tipo,
+        'moneda': transaccion.moneda.codigo,
+        'cantidad': transaccion.cantidad,
+        'tasa_aplicada': transaccion.tasa_cambio,
+        'subtotal': transaccion.subtotal,
+        'comision_porcentaje': transaccion.comision_porcentaje,
+        'monto_comision': transaccion.monto_comision,
+        'monto_total': transaccion.monto_total,
+        'estado': transaccion.estado,
+    }
 
 
 @login_required
 def operar_divisa_view(request):
     """
-    Vista HTML interactiva para comprar (E4-19) o vender (E4-20) divisas,
+    Vista HTML para iniciar una compra (E4-19) o venta (E4-20) de divisas,
     con la comisión y tasa aplicada según el cliente (E4-144).
+
+    Al enviar el formulario la operación queda ``PENDIENTE`` y se redirige a
+    su resumen (``operacion_detalle_view``), donde se confirma el pago o se
+    cancela. Esta pantalla también lista las operaciones que el cliente dejó
+    pendientes, para poder retomarlas.
     """
     cliente_activo = sesion.get_cliente_activo(request)
     error = None
-    exito = None
 
     if request.method == 'POST':
         transaccion, error = _crear_transaccion_digital(
@@ -438,11 +486,7 @@ def operar_divisa_view(request):
             medio_pago_id=request.POST.get('medio_pago_id'),
         )
         if error is None:
-            exito = (
-                f'Operación #{transaccion.id} realizada con éxito: '
-                f'{transaccion.get_tipo_display()} de {transaccion.cantidad} '
-                f'{transaccion.moneda.codigo} por un total de {transaccion.monto_total}.'
-            )
+            return redirect('operacion_detalle', pk=transaccion.pk)
 
     context = {
         'usuario': request.user,
@@ -452,10 +496,58 @@ def operar_divisa_view(request):
             MedioPagoCliente.objects.filter(cliente=cliente_activo, estado=True)
             if cliente_activo else MedioPagoCliente.objects.none()
         ),
+        'pendientes': (
+            Transaccion.objects.select_related('moneda')
+            .filter(cliente=cliente_activo, estado='PENDIENTE').order_by('-fecha_hora')
+            if cliente_activo else Transaccion.objects.none()
+        ),
         'error': error,
-        'exito': exito,
     }
     return render(request, 'transacciones/operar_divisa.html', context)
+
+
+@login_required
+def operacion_detalle_view(request, pk):
+    """Resumen de una operación: tasa aplicada, subtotal, comisión y total.
+
+    Si está ``PENDIENTE`` ofrece "Confirmar pago" y "Cancelar operación";
+    si no, muestra cómo terminó.
+    """
+    transaccion = _transaccion_del_cliente_activo(request, pk)
+    return render(request, 'transacciones/operacion_detalle.html', {
+        'usuario': request.user,
+        'transaccion': transaccion,
+    })
+
+
+@login_required
+@require_POST
+def operacion_confirmar_view(request, pk):
+    """Confirma el pago (E4-28): ``EXITOSA``, o ``CANCELADA`` si la
+    cotización cambió desde que se inició la operación."""
+    transaccion = _transaccion_del_cliente_activo(request, pk)
+    try:
+        transaccion.confirmar()
+        messages.success(
+            request,
+            f'Pago confirmado. La operación #{transaccion.pk} se realizó con éxito.',
+        )
+    except ValidationError as exc:
+        messages.error(request, exc.messages[0])
+    return redirect('operacion_detalle', pk=transaccion.pk)
+
+
+@login_required
+@require_POST
+def operacion_cancelar_view(request, pk):
+    """Cancela a pedido del cliente una operación todavía no pagada (RF23)."""
+    transaccion = _transaccion_del_cliente_activo(request, pk)
+    try:
+        transaccion.cancelar()
+        messages.info(request, f'Cancelaste la operación #{transaccion.pk}.')
+    except ValidationError as exc:
+        messages.error(request, exc.messages[0])
+    return redirect('operacion_detalle', pk=transaccion.pk)
 
 
 class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
@@ -509,8 +601,46 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         return self._queryset_filtrado()
 
+    @action(detail=True, methods=['post'])
+    def confirmar(self, request, pk=None):
+        """``POST .../transacciones/<id>/confirmar/``: confirma el pago (E4-28).
+
+        Responde 200 si quedó ``EXITOSA`` y 409 si se canceló porque la
+        cotización cambió (o si ya no estaba pendiente).
+        """
+        transaccion = _transaccion_del_cliente_activo(request, pk)
+        try:
+            transaccion.confirmar()
+        except ValidationError as exc:
+            transaccion.refresh_from_db()
+            return Response(
+                {'detail': exc.messages[0], **_desglose(transaccion)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response({'detail': 'Pago confirmado.', **_desglose(transaccion)})
+
+    @action(detail=True, methods=['post'])
+    def cancelar(self, request, pk=None):
+        """``POST .../transacciones/<id>/cancelar/``: el cliente cancela una
+        operación todavía no pagada (RF23)."""
+        transaccion = _transaccion_del_cliente_activo(request, pk)
+        try:
+            transaccion.cancelar()
+        except ValidationError as exc:
+            return Response(
+                {'detail': exc.messages[0], **_desglose(transaccion)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response({'detail': 'Operación cancelada.', **_desglose(transaccion)})
+
     @action(detail=False, methods=['get'])
     def exportar(self, request):
+        """``GET .../transacciones/exportar/?formato=csv|excel|pdf`` (E4-36).
+
+        Exporta exactamente lo que muestra el historial: usa
+        ``_queryset_filtrado()``, así que respeta el alcance por cliente y los
+        mismos filtros de fecha, tipo, moneda y estado.
+        """
         formato = request.query_params.get('formato', 'csv').lower()
         transacciones = self._queryset_filtrado()
 
