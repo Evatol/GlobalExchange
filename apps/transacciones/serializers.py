@@ -35,6 +35,12 @@ class MedioPagoClienteSerializer(serializers.ModelSerializer):
             'fecha_creacion',
         ]
         read_only_fields = ['id', 'fecha_creacion']
+        # Sin el validador automático de la restricción única del modelo: se
+        # adelantaba a validate() y mostraba "Los campos cliente, metodo_pago,
+        # identificador deben formar un conjunto único.". El duplicado lo
+        # controla validate() con un mensaje claro, y la base lo sigue
+        # garantizando con la UniqueConstraint.
+        validators = []
 
     def validate_metodo_pago(self, value):
         if not value.estado:

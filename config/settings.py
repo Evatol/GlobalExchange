@@ -194,10 +194,11 @@ DEFAULT_FROM_EMAIL = env(
 # https://www.django-rest-framework.org/api-guide/settings/
 
 REST_FRAMEWORK = {
-    # TODO: reemplazar por autenticación/permisos vía Keycloak (RF4) cuando
-    # esté disponible el IAM centralizado.
+    # Cerrado por defecto: un endpoint nuevo que se olvide de declarar sus
+    # permisos exige login, en vez de quedar público. Los que sí son públicos
+    # (tasas y simulador, RF24) lo declaran explícitamente con AllowAny.
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny',
+        'rest_framework.permissions.IsAuthenticated',
     ],
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',

@@ -602,3 +602,37 @@ class TasaParaClienteTests(TestCase):
     def test_operacion_invalida(self):
         with self.assertRaises(ValueError):
             self.tasa.tasa_para('CANJE')
+
+
+class EndpointsPublicosTests(APITestCase):
+    """La API está cerrada por defecto (DEFAULT_PERMISSION_CLASSES =
+    IsAuthenticated): lo único público es lo que el RF24 pide que vea
+    cualquiera, sin iniciar sesión."""
+
+    def setUp(self):
+        moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        TasaCambio.objects.create(
+            moneda=moneda, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
+            origen='BCP', estado=True,
+        )
+
+    def test_tasas_simulador_y_pantalla_publica_no_piden_login(self):
+        self.assertEqual(self.client.get('/api/divisas/tasas/').status_code, 200)
+        resp = self.client.post('/api/divisas/simular/', {
+            'moneda_codigo': 'USD', 'tipo_operacion': 'compra', 'cantidad': '10',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self.client.get('/api/divisas/').status_code, 200)
+
+    def test_los_catalogos_se_leen_sin_login_pero_no_se_escriben(self):
+        # Monedas, cotizaciones y métodos de pago: lectura libre a propósito
+        # (PermiteEscrituraSoloA); la escritura exige rol.
+        for url in ('/api/divisas/monedas/', '/api/divisas/cotizaciones/',
+                    '/api/transacciones/metodos-pago/'):
+            self.assertEqual(self.client.get(url).status_code, 200, url)
+            self.assertIn(self.client.post(url, {}).status_code, (401, 403), url)
+
+    def test_los_datos_de_clientes_y_operaciones_piden_login(self):
+        for url in ('/api/usuarios/clientes/', '/api/transacciones/transacciones/',
+                    '/api/transacciones/medios-pago-cliente/'):
+            self.assertIn(self.client.get(url).status_code, (401, 403), url)

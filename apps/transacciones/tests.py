@@ -279,6 +279,17 @@ class GestionMediosPagoViewTests(TestCase):
         )
         self.url = '/api/transacciones/gestion/medios-pago-cliente/'
 
+    def test_medio_repetido_se_rechaza_con_un_mensaje_claro(self):
+        """Antes salía "Los campos cliente, metodo_pago, identificador deben
+        formar un conjunto único.", con nombres internos de los campos."""
+        self.client.force_login(self.user_final)
+        resp = self.client.post(self.url, {
+            'metodo_pago': self.metodo.pk, 'alias': 'Otro', 'identificador': '1',
+        })
+        self.assertContains(resp, 'Ese cliente ya tiene registrado ese medio de pago.')
+        self.assertNotContains(resp, 'conjunto único')
+        self.assertEqual(MedioPagoCliente.objects.filter(cliente=self.cliente_propio).count(), 1)
+
     def test_usuario_final_solo_ve_los_suyos_y_crea_para_si_mismo(self):
         self.client.force_login(self.user_final)
         resp = self.client.get(self.url)
