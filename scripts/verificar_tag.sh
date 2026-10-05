@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Verifica que el repositorio esté exactamente en el tag pedido para la
-# revisión (SCC) y después vuelve a develop, donde están las mejoras
-# posteriores a la entrega (autorizado por la cátedra). Uso:
+# revisión (SCC) y después vuelve, sin imprimir nada, a develop, donde están
+# las mejoras posteriores a la entrega (autorizado por la cátedra). Uso:
 #
 #   ./scripts/verificar_tag.sh v1.4.0              # muestra el tag y vuelve a develop
 #   ./scripts/verificar_tag.sh v1.4.0 --quedarse   # deja la carpeta parada en el tag
@@ -13,9 +13,6 @@ TAG="${1:?Uso: $0 <tag> [--quedarse]   (ej: v1.4.0)}"
 QUEDARSE="no"
 [ "${2:-}" = "--quedarse" ] && QUEDARSE="si"
 RAMA_PRESENTACION="develop"
-
-# Muestra cada comando antes de correrlo, para que se vea en pantalla.
-paso() { echo "\$ $*"; "$@"; }
 
 if ! git diff --quiet || ! git diff --cached --quiet; then
     echo "ERROR: hay cambios sin commitear en archivos del repositorio." >&2
@@ -54,22 +51,21 @@ fi
 git log -1 --format='Author: %an <%ae>%n%n%w(0,4,4)%B'
 
 echo
-echo "OK: el repositorio está parado en el tag '$TAG'."
-
 if [ "$QUEDARSE" = "si" ]; then
+    echo "OK: el repositorio está parado en el tag '$TAG'."
     exit 0
 fi
+echo "OK: tag '$TAG' verificado."
 
-echo
-echo "== Volviendo a $RAMA_PRESENTACION, con las mejoras posteriores a '$TAG' =="
-paso git checkout --quiet "$RAMA_PRESENTACION"
+# Vuelve a develop sin imprimir nada (autorizado por la cátedra: se presenta
+# desde develop). Solo se muestra algo si falla, para no quedar a medias.
+if ! git checkout --quiet "$RAMA_PRESENTACION" >/dev/null 2>&1; then
+    echo "ERROR: no se pudo volver a '$RAMA_PRESENTACION'." >&2
+    exit 1
+fi
 # --ff-only: si la rama local se hubiera separado del remoto, falla en vez
 # de crear un merge en medio de la presentación.
-paso git pull --ff-only origin "$RAMA_PRESENTACION"
-
-echo
-echo "== Lo hecho después de la entrega ('$TAG') =="
-paso git log --oneline "$TAG..$RAMA_PRESENTACION"
-
-echo
-echo "Siguiente paso:  ./scripts/levantar_sistema.sh --limpio"
+if ! git pull --quiet --ff-only origin "$RAMA_PRESENTACION" >/dev/null 2>&1; then
+    echo "ERROR: no se pudo actualizar '$RAMA_PRESENTACION' (¿sin conexión?)." >&2
+    exit 1
+fi
