@@ -1,11 +1,15 @@
-"""Crea (si no existen) 3 usuarios de demostración, uno por cada rol de
-negocio, con contraseña fija -- pensado para que cualquiera del equipo
-pueda levantar el sistema (ej. con Docker Compose) y probar los 3 roles
-sin tener que andar generando ni compartiendo contraseñas.
+"""Crea (si no existen) los usuarios de demostración con contraseña fija:
+uno por cada rol de negocio, más ``angel``, **sin ningún rol**, para
+demostrar en la revisión que un administrador le asigna el rol desde
+"Administración de Roles". Pensado para que cualquiera del equipo pueda
+levantar el sistema (ej. con Docker Compose) y probar los roles sin tener
+que andar generando ni compartiendo contraseñas.
 
 Es **idempotente**: si un usuario ya existe, no le toca la contraseña (para
 no pisar una que alguien ya cambió); solo se asegura de que tenga asignado
-el rol de negocio correspondiente.
+el rol de negocio correspondiente. A ``angel`` nunca se le asigna ni se le
+quita un rol: si en la demo se le asignó uno, volver a correr el comando no
+se lo saca.
 
 Uso::
 
@@ -22,18 +26,20 @@ from apps.usuarios import services
 
 DEFAULT_PASSWORD = "Demo1234!"
 
-# username -> (nombre, apellido, rol de negocio)
+# username -> (nombre, apellido, rol de negocio). ``None`` = sin rol.
 USUARIOS_DEMO = {
     "admin_demo": ("Admin", "Demo", "administrador"),
     "analista_demo": ("Analista", "Demo", "analista"),
     "cliente_demo": ("Cliente", "Demo", "usuario_final"),
+    "angel": ("Angel", "Prueba", None),
 }
 
 
 class Command(BaseCommand):
     help = (
         "Crea admin_demo/analista_demo/cliente_demo (uno por rol de "
-        "negocio) con contraseña fija, para pruebas en equipo. Idempotente."
+        "negocio) y angel (sin rol) con contraseña fija, para pruebas en "
+        "equipo. Idempotente."
     )
 
     def add_arguments(self, parser):
@@ -45,7 +51,9 @@ class Command(BaseCommand):
         admin = services._keycloak_admin()
 
         for username, (nombre, apellido, rol) in USUARIOS_DEMO.items():
-            self.stdout.write(self.style.MIGRATE_HEADING(f"'{username}' ({rol}):"))
+            self.stdout.write(self.style.MIGRATE_HEADING(
+                f"'{username}' ({rol or 'sin rol'}):"
+            ))
 
             try:
                 user_id = admin.get_user_id(username)
@@ -80,6 +88,13 @@ class Command(BaseCommand):
             else:
                 self.stdout.write("  ya existe. No se toca la contraseña.")
 
+            if rol is None:
+                self.stdout.write(
+                    "  sin rol de negocio, a propósito: para asignárselo en la "
+                    "demo desde Administración de Roles."
+                )
+                continue
+
             if options["dry_run"]:
                 self.stdout.write(f"[dry-run] asignar_rol_negocio('{username}', '{rol}')")
                 continue
@@ -92,6 +107,6 @@ class Command(BaseCommand):
 
         if not options["dry_run"]:
             self.stdout.write(self.style.SUCCESS(
-                f"\nListo. Los 3 usan la contraseña '{password}' "
-                "(admin_demo / analista_demo / cliente_demo)."
+                f"\nListo. Todos usan la contraseña '{password}' "
+                "(admin_demo / analista_demo / cliente_demo / angel)."
             ))

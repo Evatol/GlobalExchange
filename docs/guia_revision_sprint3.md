@@ -4,9 +4,9 @@ Tener esta guía abierta en una pantalla aparte durante la revisión. La
 profesora dirige: saltá directo a la sección que pida.
 
 **Cómo se presenta este sprint.** El tag `v1.4.0` es la entrega del viernes
-1/10 y no se modifica. Las mejoras posteriores están en `main` y se presentan
+1/10 y no se modifica. Las mejoras posteriores están en `develop` y se presentan
 desde ahí, con la autorización de la cátedra. Primero se muestra el tag;
-después se pasa a `main`.
+después se pasa a `develop`.
 
 Los números de esta guía son los que salen con los datos de demostración:
 USD a 7.300 (compra) / 7.400 (venta), y `cliente_demo` operando sobre
@@ -19,9 +19,18 @@ USD a 7.300 (compra) / 7.400 (venta), y `cliente_demo` operando sobre
 1. Docker andando: `docker info`.
 2. Liberar los puertos, por si quedó algo corriendo:
    `docker stop keycloak-dev` y `pkill -f 'manage.py runserver'`.
-3. Hacer **una vez** los pasos 1 a 3 de abajo. La primera vez Keycloak tarda
+3. Estar en `develop` actualizado (**obligatorio**: `verificar_tag.sh` se
+   corre desde tu carpeta, y la versión que vuelve a `develop` solo está ahí
+   si la actualizaste):
+
+   ```
+   git checkout develop
+   git pull origin develop
+   ```
+
+4. Hacer **una vez** los pasos 1 y 2 de abajo. La primera vez Keycloak tarda
    en arrancar; después, frente a la profe, tarda segundos.
-4. Abrir dos ventanas del navegador: una **normal** (cliente) y una
+5. Abrir dos ventanas del navegador: una **normal** (cliente) y una
    **privada** (analista).
 
 ---
@@ -33,46 +42,63 @@ cd ~/Escritorio/IS2/GlobalExchange
 ./scripts/verificar_tag.sh v1.4.0
 ```
 
-Tiene que terminar con `OK: el repositorio está parado en el tag 'v1.4.0'.`
-
-El aviso amarillo de *detached HEAD* **no es un error**: significa que estás
-parado en un commit fijo y no en una rama, que es justo lo que se pide
+El script hace checkout del tag, confirma que HEAD es exactamente `v1.4.0`
+y muestra su commit: `OK: el repositorio está parado en el tag 'v1.4.0'.`
+El aviso amarillo de *detached HEAD* no es un error: es justo lo que se pide
 demostrar.
 
-Los tags del proyecto: `v1.0.0`, `v1.1.0`, `v1.2.0` (Sprint 1), `v1.3.0`
-(Sprint 2), `v1.4.0` (Sprint 3).
-
-## 2. Pasar a `main`, con las mejoras
+Después vuelve solo a `develop`, a la vista:
 
 ```
-git checkout main
-git pull origin main
-git log --oneline v1.4.0..main
+== Volviendo a develop, con las mejoras posteriores a 'v1.4.0' ==
+$ git checkout --quiet develop
+$ git pull --ff-only origin develop
+== Lo hecho después de la entrega ('v1.4.0') ==
+$ git log --oneline v1.4.0..develop
+...                                   <- todo lo que cambió desde el viernes
 ```
-
-El último comando lista **todo lo que se hizo después de la entrega**.
-Mostrarlo es la forma transparente de presentar desde `main`.
 
 🗣️ *"El tag es lo entregado el viernes. Después de la entrega encontramos
 dos errores y los corregimos: las tasas de compra y venta se aplicaban al
 revés, y la cancelación por cambio de cotización no se podía ver en
-pantalla. Presentamos desde main con esas correcciones."*
+pantalla. Presentamos desde develop con esas correcciones; esta lista es
+exactamente lo que cambió."*
 
-## 3. Levantar el sistema
+Si la profe quiere revisar algo parada en el tag:
+`./scripts/verificar_tag.sh v1.4.0 --quedarse`.
+
+Los tags del proyecto: `v1.0.0`, `v1.1.0`, `v1.2.0` (Sprint 1), `v1.3.0`
+(Sprint 2), `v1.4.0` (Sprint 3).
+
+## 2. Levantar el sistema
 
 ```
 ./scripts/levantar_sistema.sh --limpio
 ```
 
-`--limpio` borra los datos y arranca de cero: la primera operación es la
-#1 y los números de esta guía coinciden exactos. Termina con
-**SISTEMA LISTO**. Los tres usuarios usan la contraseña `Demo1234!`.
+`--limpio` borra los datos y arranca de cero: la primera operación es la #1
+y los números de esta guía coinciden exactos. Termina con **SISTEMA LISTO**.
+
+Todos los usuarios usan la contraseña `Demo1234!`.
 
 | Usuario | Rol | Ve |
 |---|---|---|
 | `admin_demo` | administrador | todo, incluidos Roles y Métodos de Pago |
 | `analista_demo` | analista | CRUD de Clientes, Monedas y Cotizaciones |
 | `cliente_demo` | usuario final | Divisas, Mis Medios de Pago, Comprar/Vender, Historial |
+| `angel` | **sin rol** | el menú básico; sirve para la demo de asignación de roles (sección 3) |
+
+## 3. Asignación de roles (con `angel`)
+
+1. **Ventana privada:** `angel` → el menú no tiene ningún CRUD. Si escribís
+   `http://localhost:8000/api/divisas/gestion/monedas/`, responde 403.
+2. **Ventana normal:** `admin_demo` → **Administración de Roles**: `angel`
+   aparece **sin rol** → elegí **analista** → **Guardar**.
+3. **Ventana privada:** **Cerrar Sesión** y volver a entrar como `angel`:
+   ahora el menú tiene **CRUD Clientes, CRUD Monedas y CRUD Cotizaciones**.
+
+🗣️ *"El rol vive en Keycloak, que es la fuente de verdad. Django lo toma en
+el próximo login; por eso hay que volver a entrar para ver el cambio."*
 
 ---
 
@@ -238,10 +264,10 @@ docker compose -f docker-compose.prod.yml down
 
 ## 10. Preguntas que ya tenés respondidas
 
-**"¿Por qué presentan desde main y no desde el tag?"**
+**"¿Por qué presentan desde develop y no desde el tag?"**
 Porque después de la entrega corregimos dos errores, y la cátedra autorizó
 presentar con las mejoras. El tag del viernes no se tocó: está para comparar,
-y `git log --oneline v1.4.0..main` muestra exactamente qué cambió.
+y `git log --oneline v1.4.0..develop` muestra exactamente qué cambió.
 
 **"¿Por qué la tasa de compra se aplica a la venta?"**
 La pizarra muestra las tasas desde el punto de vista de la casa: a cuánto
@@ -276,9 +302,9 @@ integrante lo pone en su `.env`, que git ignora.
 
 ## 12. Ensayo recomendado (una vez antes de la revisión)
 
-1. `./scripts/verificar_tag.sh v1.4.0` y `git checkout main`
+1. `./scripts/verificar_tag.sh v1.4.0`
 2. `./scripts/levantar_sistema.sh --limpio`
-3. Compra de 13 USD con confirmación de pago (5.1)
+3. Asignarle un rol a `angel` (3) y compra de 13 USD con confirmación de pago (5.1)
 4. Cancelación por cambio de cotización, con las dos ventanas (5.2)
 5. Historial con filtro y exportación (5.3)
 6. `./scripts/pruebas.sh` y `./scripts/documentacion.sh`
