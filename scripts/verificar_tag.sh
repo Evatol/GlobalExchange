@@ -33,7 +33,13 @@ git tag -l
 
 echo
 echo "== Haciendo checkout de '$TAG' =="
-git checkout "$TAG"
+# Se muestra el aviso de detached HEAD, pero no la línea final "HEAD está
+# ahora en <hash> <mensaje del commit>": el commit ya se muestra abajo.
+if ! SALIDA_CHECKOUT="$(git checkout "$TAG" 2>&1)"; then
+    echo "$SALIDA_CHECKOUT" >&2
+    exit 1
+fi
+printf '%s\n' "$SALIDA_CHECKOUT" | grep -vE '^(HEAD está ahora en|HEAD is now at) ' || true
 
 echo
 echo "== Confirmando que HEAD es EXACTAMENTE '$TAG' (falla si no lo es) =="
@@ -41,14 +47,15 @@ git describe --tags --exact-match
 
 echo
 echo "== Commit en ese punto =="
-# Mismo formato que "git log -1" pero sin la línea Date. La fecha sigue en
-# el historial: se ve con "git log -1".
+# Mismo formato que "git log -1" pero sin el mensaje del commit (sigue en
+# el historial: se ve con "git log -1"). La fecha es la que Git tiene
+# guardada en el commit del tag.
 git log -1 --format='commit %H%d'
 PADRES="$(git log -1 --format='%p')"
 if [ "$(wc -w <<<"$PADRES")" -gt 1 ]; then
     echo "Merge: $PADRES"
 fi
-git log -1 --format='Author: %an <%ae>%n%n%w(0,4,4)%B'
+git log -1 --format='Author: %an <%ae>%nDate:   %ad'
 
 echo
 if [ "$QUEDARSE" = "si" ]; then
