@@ -12,7 +12,7 @@
 #   ./scripts/levantar_sistema.sh --forzar        # sigue aunque haya puertos ocupados
 #   ./scripts/levantar_sistema.sh --con-correo    # + verificacion por correo (necesita
 #                                                 #   KEYCLOAK_SMTP_PASSWORD en tu .env)
-#   ./scripts/levantar_sistema.sh --presentacion  # pasa a main actualizado, muestra lo
+#   ./scripts/levantar_sistema.sh --presentacion  # pasa a develop actualizado, muestra lo
 #                                                 #   hecho desde v1.4.0 y levanta --limpio
 #
 set -euo pipefail
@@ -28,7 +28,8 @@ CARGAR_DATOS="si"
 FORZAR="no"
 CON_CORREO="no"
 PRESENTACION="no"
-TAG_ENTREGA="v1.4.0"   # la entrega del Sprint 3; se presenta lo hecho después
+TAG_ENTREGA="v1.4.0"         # la entrega del Sprint 3; se presenta lo hecho después
+RAMA_PRESENTACION="develop"  # rama desde la que se presenta (autorizado por la cátedra)
 
 for arg in "$@"; do
     case "$arg" in
@@ -49,7 +50,7 @@ if [ "$PRESENTACION" = "si" ]; then
     # Muestra cada comando antes de correrlo, para que se vea en pantalla.
     paso() { echo "\$ $*"; "$@"; }
 
-    echo "== Presentacion: pasar a main actualizado =="
+    echo "== Presentacion: pasar a $RAMA_PRESENTACION actualizado =="
     if ! git diff --quiet || ! git diff --cached --quiet; then
         echo "ERROR: hay cambios sin commitear en archivos del repositorio." >&2
         echo "Commitealos o descartalos antes de cambiar de rama:" >&2
@@ -57,16 +58,15 @@ if [ "$PRESENTACION" = "si" ]; then
         exit 1
     fi
     git fetch --quiet --tags --force origin
-    paso git checkout main
-    # --ff-only: si main local se hubiera separado del remoto, falla en vez
-    # de crear un merge en medio de la presentacion.
-    paso git pull --ff-only origin main
+    paso git checkout "$RAMA_PRESENTACION"
+    # --ff-only: si la rama local se hubiera separado del remoto, falla en
+    # vez de crear un merge en medio de la presentacion.
+    paso git pull --ff-only origin "$RAMA_PRESENTACION"
     echo
     echo "== Lo hecho despues de la entrega ($TAG_ENTREGA) =="
-    paso git log --oneline "$TAG_ENTREGA..main"
-    if [ -z "$(git log --oneline "$TAG_ENTREGA..main")" ]; then
-        echo "   (main no tiene nada nuevo respecto de $TAG_ENTREGA:"
-        echo "    falta mergear el PR de develop a main)"
+    paso git log --oneline "$TAG_ENTREGA..$RAMA_PRESENTACION"
+    if [ -z "$(git log --oneline "$TAG_ENTREGA..$RAMA_PRESENTACION")" ]; then
+        echo "   ($RAMA_PRESENTACION no tiene nada nuevo respecto de $TAG_ENTREGA)"
     fi
     echo
 

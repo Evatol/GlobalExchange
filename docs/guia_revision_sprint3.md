@@ -4,9 +4,9 @@ Tener esta guía abierta en una pantalla aparte durante la revisión. La
 profesora dirige: saltá directo a la sección que pida.
 
 **Cómo se presenta este sprint.** El tag `v1.4.0` es la entrega del viernes
-1/10 y no se modifica. Las mejoras posteriores están en `main` y se presentan
+1/10 y no se modifica. Las mejoras posteriores están en `develop` y se presentan
 desde ahí, con la autorización de la cátedra. Primero se muestra el tag;
-después se pasa a `main`.
+después se pasa a `develop`.
 
 Los números de esta guía son los que salen con los datos de demostración:
 USD a 7.300 (compra) / 7.400 (venta), y `cliente_demo` operando sobre
@@ -19,13 +19,13 @@ USD a 7.300 (compra) / 7.400 (venta), y `cliente_demo` operando sobre
 1. Docker andando: `docker info`.
 2. Liberar los puertos, por si quedó algo corriendo:
    `docker stop keycloak-dev` y `pkill -f 'manage.py runserver'`.
-3. Actualizar `main` (**obligatorio**: si tu `main` local está atrasado, el
+3. Actualizar `develop` (**obligatorio**: si tu `develop` local está atrasado, el
    script de la presentación todavía es la versión vieja y no conoce la
    opción `--presentacion`):
 
    ```
-   git checkout main
-   git pull origin main
+   git checkout develop
+   git pull origin develop
    ```
 
 4. Hacer **una vez** los pasos 1 y 2 de abajo. La primera vez Keycloak tarda
@@ -51,20 +51,20 @@ demostrar.
 Los tags del proyecto: `v1.0.0`, `v1.1.0`, `v1.2.0` (Sprint 1), `v1.3.0`
 (Sprint 2), `v1.4.0` (Sprint 3).
 
-## 2. Pasar a `main` con las mejoras y levantar el sistema
+## 2. Pasar a `develop` con las mejoras y levantar el sistema
 
 ```
-git checkout main && ./scripts/levantar_sistema.sh --presentacion
+git checkout develop && ./scripts/levantar_sistema.sh --presentacion
 ```
 
-El `git checkout main` hay que tipearlo: parado en el tag, los archivos son
+El `git checkout develop` hay que tipearlo: parado en el tag, los archivos son
 los del viernes y el script todavía no tiene la opción `--presentacion`.
-Desde `main`, el script muestra y ejecuta:
+Desde `develop`, el script muestra y ejecuta:
 
 ```
-$ git checkout main
-$ git pull --ff-only origin main
-$ git log --oneline v1.4.0..main      <- todo lo hecho después de la entrega
+$ git checkout develop
+$ git pull --ff-only origin develop
+$ git log --oneline v1.4.0..develop      <- todo lo hecho después de la entrega
 ```
 
 y después levanta el sistema **en limpio** (borra los datos y arranca de
@@ -74,7 +74,7 @@ exactos). Termina con **SISTEMA LISTO**.
 🗣️ *"El tag es lo entregado el viernes. Después de la entrega encontramos
 dos errores y los corregimos: las tasas de compra y venta se aplicaban al
 revés, y la cancelación por cambio de cotización no se podía ver en
-pantalla. Presentamos desde main con esas correcciones; esta lista es
+pantalla. Presentamos desde develop con esas correcciones; esta lista es
 exactamente lo que cambió."*
 
 Todos los usuarios usan la contraseña `Demo1234!`.
@@ -262,10 +262,10 @@ docker compose -f docker-compose.prod.yml down
 
 ## 10. Preguntas que ya tenés respondidas
 
-**"¿Por qué presentan desde main y no desde el tag?"**
+**"¿Por qué presentan desde develop y no desde el tag?"**
 Porque después de la entrega corregimos dos errores, y la cátedra autorizó
 presentar con las mejoras. El tag del viernes no se tocó: está para comparar,
-y `git log --oneline v1.4.0..main` muestra exactamente qué cambió.
+y `git log --oneline v1.4.0..develop` muestra exactamente qué cambió.
 
 **"¿Por qué la tasa de compra se aplica a la venta?"**
 La pizarra muestra las tasas desde el punto de vista de la casa: a cuánto
@@ -301,7 +301,7 @@ integrante lo pone en su `.env`, que git ignora.
 ## 12. Ensayo recomendado (una vez antes de la revisión)
 
 1. `./scripts/verificar_tag.sh v1.4.0`
-2. `git checkout main && ./scripts/levantar_sistema.sh --presentacion`
+2. `git checkout develop && ./scripts/levantar_sistema.sh --presentacion`
 3. Asignarle un rol a `angel` (3) y compra de 13 USD con confirmación de pago (5.1)
 4. Cancelación por cambio de cotización, con las dos ventanas (5.2)
 5. Historial con filtro y exportación (5.3)
