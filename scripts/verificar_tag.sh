@@ -47,14 +47,15 @@ git describe --tags --exact-match
 
 echo
 echo "== Commit en ese punto =="
-# Mismo formato que "git log -1" pero sin la línea Date ni el mensaje del
-# commit. Los dos siguen en el historial: se ven con "git log -1".
+# Mismo formato que "git log -1" pero sin el mensaje del commit (sigue en
+# el historial: se ve con "git log -1"). La fecha es la que Git tiene
+# guardada en el commit del tag.
 git log -1 --format='commit %H%d'
 PADRES="$(git log -1 --format='%p')"
 if [ "$(wc -w <<<"$PADRES")" -gt 1 ]; then
     echo "Merge: $PADRES"
 fi
-git log -1 --format='Author: %an <%ae>'
+git log -1 --format='Author: %an <%ae>%nDate:   %ad'
 
 echo
 if [ "$QUEDARSE" = "si" ]; then
