@@ -19,9 +19,9 @@ USD a 7.300 (compra) / 7.400 (venta), y `cliente_demo` operando sobre
 1. Docker andando: `docker info`.
 2. Liberar los puertos, por si quedó algo corriendo:
    `docker stop keycloak-dev` y `pkill -f 'manage.py runserver'`.
-3. Actualizar `develop` (**obligatorio**: si tu `develop` local está atrasado, el
-   script de la presentación todavía es la versión vieja y no conoce la
-   opción `--presentacion`):
+3. Estar en `develop` actualizado (**obligatorio**: `verificar_tag.sh` se
+   corre desde tu carpeta, y la versión que vuelve a `develop` solo está ahí
+   si la actualizaste):
 
    ```
    git checkout develop
@@ -42,40 +42,42 @@ cd ~/Escritorio/IS2/GlobalExchange
 ./scripts/verificar_tag.sh v1.4.0
 ```
 
-Tiene que terminar con `OK: el repositorio está parado en el tag 'v1.4.0'.`
-
-El aviso amarillo de *detached HEAD* **no es un error**: significa que estás
-parado en un commit fijo y no en una rama, que es justo lo que se pide
+El script hace checkout del tag, confirma que HEAD es exactamente `v1.4.0`
+y muestra su commit: `OK: el repositorio está parado en el tag 'v1.4.0'.`
+El aviso amarillo de *detached HEAD* no es un error: es justo lo que se pide
 demostrar.
 
-Los tags del proyecto: `v1.0.0`, `v1.1.0`, `v1.2.0` (Sprint 1), `v1.3.0`
-(Sprint 2), `v1.4.0` (Sprint 3).
-
-## 2. Pasar a `develop` con las mejoras y levantar el sistema
+Después vuelve solo a `develop`, a la vista:
 
 ```
-git checkout develop && ./scripts/levantar_sistema.sh --presentacion
-```
-
-El `git checkout develop` hay que tipearlo: parado en el tag, los archivos son
-los del viernes y el script todavía no tiene la opción `--presentacion`.
-Desde `develop`, el script muestra y ejecuta:
-
-```
-$ git checkout develop
+== Volviendo a develop, con las mejoras posteriores a 'v1.4.0' ==
+$ git checkout --quiet develop
 $ git pull --ff-only origin develop
-$ git log --oneline v1.4.0..develop      <- todo lo hecho después de la entrega
+== Lo hecho después de la entrega ('v1.4.0') ==
+$ git log --oneline v1.4.0..develop
+...                                   <- todo lo que cambió desde el viernes
 ```
-
-y después levanta el sistema **en limpio** (borra los datos y arranca de
-cero: la primera operación es la #1 y los números de esta guía coinciden
-exactos). Termina con **SISTEMA LISTO**.
 
 🗣️ *"El tag es lo entregado el viernes. Después de la entrega encontramos
 dos errores y los corregimos: las tasas de compra y venta se aplicaban al
 revés, y la cancelación por cambio de cotización no se podía ver en
 pantalla. Presentamos desde develop con esas correcciones; esta lista es
 exactamente lo que cambió."*
+
+Si la profe quiere revisar algo parada en el tag:
+`./scripts/verificar_tag.sh v1.4.0 --quedarse`.
+
+Los tags del proyecto: `v1.0.0`, `v1.1.0`, `v1.2.0` (Sprint 1), `v1.3.0`
+(Sprint 2), `v1.4.0` (Sprint 3).
+
+## 2. Levantar el sistema
+
+```
+./scripts/levantar_sistema.sh --limpio
+```
+
+`--limpio` borra los datos y arranca de cero: la primera operación es la #1
+y los números de esta guía coinciden exactos. Termina con **SISTEMA LISTO**.
 
 Todos los usuarios usan la contraseña `Demo1234!`.
 
@@ -301,7 +303,7 @@ integrante lo pone en su `.env`, que git ignora.
 ## 12. Ensayo recomendado (una vez antes de la revisión)
 
 1. `./scripts/verificar_tag.sh v1.4.0`
-2. `git checkout develop && ./scripts/levantar_sistema.sh --presentacion`
+2. `./scripts/levantar_sistema.sh --limpio`
 3. Asignarle un rol a `angel` (3) y compra de 13 USD con confirmación de pago (5.1)
 4. Cancelación por cambio de cotización, con las dos ventanas (5.2)
 5. Historial con filtro y exportación (5.3)
