@@ -37,9 +37,6 @@
 
                 <div class="card shadow-sm border-0">
                     <div class="card-body">
-                        {% if exito %}
-                            <div class="alert alert-success py-2">{{ exito }}</div>
-                        {% endif %}
                         {% if error %}
                             <div class="alert alert-danger py-2">{{ error }}</div>
                         {% endif %}
@@ -81,11 +78,33 @@
                                     {% endfor %}
                                 </select>
                             </div>
-                            <button type="submit" class="btn btn-primary w-100">Confirmar Operación</button>
+                            <button type="submit" class="btn btn-primary w-100">Continuar al pago</button>
+                            <p class="text-muted small text-center mt-2 mb-0">
+                                En el paso siguiente vas a ver el detalle con la tasa y la comisión antes de pagar.
+                            </p>
                         </form>
                         {% endif %}
                     </div>
                 </div>
+
+                {% if pendientes %}
+                <div class="card shadow-sm border-0 mt-4">
+                    <div class="card-body">
+                        <h6 class="card-title mb-3">Operaciones pendientes de pago</h6>
+                        <ul class="list-group list-group-flush">
+                            {% for p in pendientes %}
+                            <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                                <span>
+                                    #{{ p.id }} · {{ p.get_tipo_display }} de {{ p.cantidad }} {{ p.moneda.codigo }}
+                                    <span class="text-muted small">· {{ p.monto_total|floatformat:"2g" }} PYG</span>
+                                </span>
+                                <a href="{% url 'operacion_detalle' p.id %}" class="btn btn-sm btn-outline-primary">Ver y pagar</a>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+                {% endif %}
             </div>
         </div>
     </div>

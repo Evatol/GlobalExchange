@@ -96,6 +96,16 @@ class MedioPagoCliente(models.Model):
 
 
 class Transaccion(models.Model):
+    """Operación de compra o venta de divisas de un cliente (E4-19/E4-20).
+
+    Ciclo de vida: se crea ``PENDIENTE`` con la tasa vigente en ese momento
+    y su comisión ya calculada (E4-144). Desde ahí, ``confirmar()`` (el
+    pago) la pasa a ``EXITOSA``, salvo que la cotización haya cambiado en el
+    medio, en cuyo caso la cancela (E4-28); ``cancelar()`` la cancela a
+    pedido del usuario (RF23). ``EXITOSA`` y ``CANCELADA`` son estados
+    finales.
+    """
+
     TIPOS = [
         ('COMPRA', 'Compra'),
         ('VENTA', 'Venta'),
@@ -195,30 +205,66 @@ class Transaccion(models.Model):
     def validar(self):
         return self.cantidad > 0 and self.tasa_cambio > 0 and self.metodo_pago.estado
 
+    @property
+    def subtotal(self):
+        """Cantidad por tasa aplicada, antes de la comisión (en guaraníes)."""
+        return _a_guaranies(self.cantidad * self.tasa_cambio)
+
     def confirmar(self):
+        """Confirma el pago de una transacción ``PENDIENTE`` (E4-28).
+
+        Antes de confirmar vuelve a leer la cotización vigente de la moneda y
+        la compara con la tasa guardada cuando se inició la operación:
+
+        * si es la misma, la transacción pasa a ``EXITOSA``;
+        * si cambió, la transacción pasa a ``CANCELADA`` y se lanza
+          ``ValidationError`` con las dos tasas, para que el cliente vuelva a
+          operar con la cotización actual.
+
+        Solo se puede confirmar una transacción pendiente: sin esa guarda,
+        una transacción ya cancelada podía volver a confirmarse si la
+        cotización regresaba a su valor original.
+        """
+        if self.estado != 'PENDIENTE':
+            raise ValidationError(
+                f'Solo se puede confirmar una transacción pendiente '
+                f'(esta está {self.get_estado_display().lower()}).'
+            )
         if not self.validar():
             raise ValidationError('La transacción no es válida.')
-        
+
         # Obtenemos la tasa de cambio vigente desde el modelo TasaCambio asociado
         tasa_obj = self.moneda.tasas.filter(estado=True).order_by('-fecha_hora').first()
         if not tasa_obj:
             raise ValidationError('No hay una tasa de cambio vigente para esta moneda.')
-        
+
         tasa_actual = tasa_obj.tasa_compra if self.tipo == 'COMPRA' else tasa_obj.tasa_venta
-        
+
         # Verificamos si la tasa cambió desde que se creó la transacción
         if self.tasa_cambio != tasa_actual:
             self.estado = 'CANCELADA'
             self.save()
-            raise ValidationError('La transacción ha sido cancelada porque la tasa de cambio ha sufrido modificaciones.')
+            raise ValidationError(
+                f'La transacción ha sido cancelada porque la tasa de cambio ha sufrido '
+                f'modificaciones (se inició a {self.tasa_cambio:.2f} y la vigente es '
+                f'{tasa_actual:.2f}).'
+            )
 
         self.calcular_monto_total()
         self.estado = 'EXITOSA'
         self.save()
 
     def cancelar(self):
-        if self.estado == 'EXITOSA':
-            raise ValidationError('No se puede cancelar una transacción exitosa.')
+        """Cancela a pedido del usuario una transacción todavía no pagada (RF23).
+
+        Solo aplica a transacciones ``PENDIENTE``: una exitosa ya se pagó y
+        una cancelada ya terminó.
+        """
+        if self.estado != 'PENDIENTE':
+            raise ValidationError(
+                f'Solo se puede cancelar una transacción pendiente '
+                f'(esta está {self.get_estado_display().lower()}).'
+            )
         self.estado = 'CANCELADA'
         self.save()
 

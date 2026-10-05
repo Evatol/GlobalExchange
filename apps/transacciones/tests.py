@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.contrib.auth.models import Group, User
 from django.core.exceptions import ValidationError
+from django.template.defaultfilters import floatformat
 from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -488,7 +489,8 @@ class OperarDivisaViewTests(TestCase):
             medio_pago_id=self.medio_propio.id,
         )
         datos.update(overrides)
-        return self.client.post(self.url, datos)
+        # follow=True: si la operación se crea, redirige a su resumen.
+        return self.client.post(self.url, datos, follow=True)
 
     def test_requiere_login(self):
         self.assertEqual(self.client.get(self.url).status_code, 302)
@@ -496,14 +498,14 @@ class OperarDivisaViewTests(TestCase):
     def test_comprar_crea_la_transaccion_con_el_usuario_de_negocio_correcto(self):
         self.client.force_login(self.user_final)
         resp = self._comprar()
-        self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, 'realizada con éxito')
-
         tx = Transaccion.objects.get(cliente=self.cliente)
+        self.assertRedirects(resp, f'/api/transacciones/gestion/operar/{tx.pk}/')
+        self.assertContains(resp, 'Pendiente de pago')
+
         self.assertEqual(tx.usuario, self.usuario_negocio)  # no el auth.User
         self.assertEqual(tx.tipo, 'COMPRA')
         self.assertEqual(tx.tasa_cambio, Decimal('7300'))
-        self.assertEqual(tx.estado, 'EXITOSA')
+        self.assertEqual(tx.estado, 'PENDIENTE')  # hasta que se confirme el pago
 
     def test_vender_usa_la_tasa_de_venta(self):
         self.client.force_login(self.user_final)
@@ -573,7 +575,8 @@ class OperarDivisaAPITests(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         tx = Transaccion.objects.get(id=resp.data['transaccion_id'])
         self.assertEqual(tx.usuario, self.usuario_negocio)
-        self.assertEqual(tx.estado, 'EXITOSA')
+        self.assertEqual(tx.estado, 'PENDIENTE')
+        self.assertEqual(resp.data['subtotal'], Decimal('73000.00'))
 
     def test_requiere_autenticacion(self):
         resp = self.client.post('/api/transacciones/operar/', {
@@ -739,24 +742,25 @@ class LimitesPorClienteTests(TestCase):
         self.url = '/api/transacciones/gestion/operar/'
 
     def _operar(self, tipo='COMPRA', cantidad='10'):
+        # follow=True: si pasa la validación, redirige al resumen pendiente.
         return self.client.post(self.url, {
             'tipo': tipo, 'moneda_codigo': 'USD', 'cantidad': cantidad,
             'medio_pago_id': self.medio.id,
-        })
+        }, follow=True)
 
     def test_limite_en_cero_significa_sin_limite(self):
         # valor por defecto de todo cliente nuevo: no debe bloquear nada
         self.assertEqual(self.cliente.limite_compra, Decimal('0.00'))
         self.client.force_login(self.user_final)
         resp = self._operar()
-        self.assertContains(resp, 'realizada con éxito')
-        self.assertTrue(Transaccion.objects.filter(estado='EXITOSA').exists())
+        self.assertContains(resp, 'Pendiente de pago')
+        self.assertTrue(Transaccion.objects.filter(estado='PENDIENTE').exists())
 
     def test_compra_dentro_del_limite_se_permite(self):
         self.cliente.establecer_limite_compra(Decimal('100000.00'))
         self.client.force_login(self.user_final)
         resp = self._operar()
-        self.assertContains(resp, 'realizada con éxito')
+        self.assertContains(resp, 'Pendiente de pago')
 
     def test_compra_que_supera_el_limite_se_rechaza(self):
         self.cliente.establecer_limite_compra(Decimal('50000.00'))  # < 74.095
@@ -776,7 +780,7 @@ class LimitesPorClienteTests(TestCase):
         self.cliente.establecer_limite_compra(Decimal('1.00'))  # bloquearía comprar
         self.client.force_login(self.user_final)
         resp = self._operar(tipo='VENTA')  # pero vender no tiene tope
-        self.assertContains(resp, 'realizada con éxito')
+        self.assertContains(resp, 'Pendiente de pago')
 
     def test_tambien_aplica_en_el_endpoint_api(self):
         self.cliente.establecer_limite_compra(Decimal('50000.00'))
@@ -788,3 +792,139 @@ class LimitesPorClienteTests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('supera el límite', resp.data['error'])
         self.assertFalse(Transaccion.objects.exists())
+
+
+class ConfirmacionDePagoTests(TestCase):
+    """E4-28 en la interfaz: la operación queda PENDIENTE, se ve el desglose
+    y el pago se confirma (o se cancela si la cotización cambió) desde la
+    pantalla. También la cancelación a pedido del cliente (RF23)."""
+
+    def setUp(self):
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
+        self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        self.tasa = TasaCambio.objects.create(
+            moneda=self.moneda, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
+            origen='BCP', estado=True,
+        )
+        self.cliente = _cliente(
+            nombre='Cliente Pago', documento='PG1',
+            preferencia_tipo_cambio=Cliente.PREFERENCIA_MAYORISTA,
+        )
+        self.otro_cliente = _cliente(nombre='Cliente Ajeno Pago', documento='PG2')
+        self.user_final = _usuario_con_rol('final_pago', rol='usuario_final')
+        usuario_negocio = Usuario.objects.create(
+            username='final_pago', email='fp@example.com', nombres='F', apellidos='P',
+        )
+        usuario_negocio.clientes.add(self.cliente)
+        self.medio = MedioPagoCliente.objects.create(
+            cliente=self.cliente, metodo_pago=self.metodo, alias='Mio', identificador='1',
+        )
+        self.client.force_login(self.user_final)
+
+    def _iniciar(self, tipo='COMPRA', cantidad='13'):
+        self.client.post('/api/transacciones/gestion/operar/', {
+            'tipo': tipo, 'moneda_codigo': 'USD', 'cantidad': cantidad,
+            'medio_pago_id': self.medio.id,
+        })
+        return Transaccion.objects.latest('id')
+
+    def _url(self, tx, accion=''):
+        return f'/api/transacciones/gestion/operar/{tx.pk}/{accion}'
+
+    def test_el_resumen_muestra_tasa_subtotal_comision_y_total(self):
+        tx = self._iniciar()
+        resp = self.client.get(self._url(tx))
+        # 13 x 7300 = 94.900 + 0,5% (mayorista) = 474,50 -> 95.374,50.
+        # Los montos se comparan con el mismo filtro que usa el template, para
+        # no depender del separador de miles del idioma configurado.
+        def gs(valor):
+            return floatformat(Decimal(valor), '2g')
+        for texto in ('Pendiente de pago', gs('7300'), gs('94900'), '0,50%', gs('474.50'),
+                      gs('95374.50'), 'Confirmar pago', 'Cancelar operación'):
+            self.assertContains(resp, texto)
+
+    def test_confirmar_sin_cambio_de_cotizacion_queda_exitosa(self):
+        tx = self._iniciar()
+        resp = self.client.post(self._url(tx, 'confirmar/'), follow=True)
+        tx.refresh_from_db()
+        self.assertEqual(tx.estado, 'EXITOSA')
+        self.assertContains(resp, 'Pago confirmado')
+        self.assertNotContains(resp, 'Confirmar pago')  # ya no se puede volver a pagar
+
+    def test_si_la_cotizacion_cambio_al_confirmar_se_cancela(self):
+        tx = self._iniciar()
+        self.tasa.tasa_compra = Decimal('7350')
+        self.tasa.tasa_venta = Decimal('7450')
+        self.tasa.save()
+
+        resp = self.client.post(self._url(tx, 'confirmar/'), follow=True)
+        tx.refresh_from_db()
+        self.assertEqual(tx.estado, 'CANCELADA')
+        self.assertContains(resp, 'se inició a 7300.00 y la vigente es 7350.00')
+
+    def test_una_cancelada_no_revive_aunque_la_cotizacion_vuelva(self):
+        tx = self._iniciar()
+        self.tasa.tasa_compra = Decimal('7350')
+        self.tasa.save()
+        self.client.post(self._url(tx, 'confirmar/'))
+        self.tasa.tasa_compra = Decimal('7300')  # vuelve al valor original
+        self.tasa.save()
+
+        self.client.post(self._url(tx, 'confirmar/'))
+        tx.refresh_from_db()
+        self.assertEqual(tx.estado, 'CANCELADA')
+
+    def test_el_cliente_puede_cancelar_antes_de_pagar(self):
+        tx = self._iniciar()
+        resp = self.client.post(self._url(tx, 'cancelar/'), follow=True)
+        tx.refresh_from_db()
+        self.assertEqual(tx.estado, 'CANCELADA')
+        self.assertContains(resp, f'Cancelaste la operación #{tx.pk}')
+
+    def test_no_se_puede_cancelar_una_ya_pagada(self):
+        tx = self._iniciar()
+        self.client.post(self._url(tx, 'confirmar/'))
+        resp = self.client.post(self._url(tx, 'cancelar/'), follow=True)
+        tx.refresh_from_db()
+        self.assertEqual(tx.estado, 'EXITOSA')
+        self.assertContains(resp, 'Solo se puede cancelar una transacción pendiente')
+
+    def test_confirmar_y_cancelar_solo_aceptan_post(self):
+        tx = self._iniciar()
+        self.assertEqual(self.client.get(self._url(tx, 'confirmar/')).status_code, 405)
+        self.assertEqual(self.client.get(self._url(tx, 'cancelar/')).status_code, 405)
+
+    def test_no_puede_ver_ni_pagar_la_operacion_de_otro_cliente(self):
+        ajena = Transaccion.objects.create(
+            usuario=Usuario.objects.get(username='final_pago'), cliente=self.otro_cliente,
+            moneda=self.moneda, metodo_pago=self.metodo, tipo='COMPRA',
+            cantidad=Decimal('1'), tasa_cambio=Decimal('7300'),
+        )
+        self.assertEqual(self.client.get(self._url(ajena)).status_code, 404)
+        self.assertEqual(self.client.post(self._url(ajena, 'confirmar/')).status_code, 404)
+        ajena.refresh_from_db()
+        self.assertEqual(ajena.estado, 'PENDIENTE')
+
+    def test_la_pantalla_de_operar_lista_las_pendientes(self):
+        tx = self._iniciar()
+        resp = self.client.get('/api/transacciones/gestion/operar/')
+        self.assertContains(resp, 'Operaciones pendientes de pago')
+        self.assertContains(resp, self._url(tx))
+
+    def test_api_confirmar_y_cancelar(self):
+        tx = self._iniciar()
+        resp = self.client.post(f'/api/transacciones/transacciones/{tx.pk}/confirmar/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['estado'], 'EXITOSA')
+
+        tx2 = self._iniciar()
+        self.tasa.tasa_compra = Decimal('7350')
+        self.tasa.save()
+        resp = self.client.post(f'/api/transacciones/transacciones/{tx2.pk}/confirmar/')
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.json()['estado'], 'CANCELADA')
+
+        tx3 = self._iniciar()
+        resp = self.client.post(f'/api/transacciones/transacciones/{tx3.pk}/cancelar/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['estado'], 'CANCELADA')
