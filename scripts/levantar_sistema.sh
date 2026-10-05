@@ -16,6 +16,9 @@
 #                                                 #   hecho desde v1.4.0 y levanta --limpio
 #
 set -euo pipefail
+# Ruta absoluta del script, para poder volver a ejecutarlo (--presentacion)
+# aunque se lo haya llamado desde otra carpeta.
+ESTE_SCRIPT="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 cd "$(dirname "$0")/.."
 
 COMPOSE_FILE="docker-compose.yml"
@@ -73,7 +76,7 @@ if [ "$PRESENTACION" = "si" ]; then
     for arg in "$@"; do
         [ "$arg" != "--presentacion" ] && [ "$arg" != "--limpio" ] && OTRAS+=("$arg")
     done
-    exec "$0" --limpio ${OTRAS[@]+"${OTRAS[@]}"}
+    exec "$ESTE_SCRIPT" --limpio ${OTRAS[@]+"${OTRAS[@]}"}
 fi
 
 echo "== 1/5 Verificando Docker =="
