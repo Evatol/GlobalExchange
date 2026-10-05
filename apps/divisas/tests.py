@@ -53,8 +53,9 @@ class DivisasApiTests(APITestCase):
         }
         response = self.client.post(self.url_simular, payload)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        # 100 * 7300 = 730000.00
-        self.assertEqual(Decimal(response.data['resultado']), Decimal('730000.00'))
+        # El cliente compra: la casa le vende a su tasa de venta.
+        # 100 * 7400 = 740000.00
+        self.assertEqual(Decimal(response.data['resultado']), Decimal('740000.00'))
 
     def test_simulador_conversion_venta(self):
         """Verifica el cálculo correcto en una simulación de venta."""
@@ -65,8 +66,9 @@ class DivisasApiTests(APITestCase):
         }
         response = self.client.post(self.url_simular, payload)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        # 100 * 7400 = 740000.00
-        self.assertEqual(Decimal(response.data['resultado']), Decimal('740000.00'))
+        # El cliente vende: la casa le compra a su tasa de compra.
+        # 100 * 7300 = 730000.00
+        self.assertEqual(Decimal(response.data['resultado']), Decimal('730000.00'))
 
     def test_simulador_moneda_no_encontrada(self):
         """Verifica que retorne un error 404 si la moneda no existe o no tiene tasa activa."""
@@ -324,7 +326,7 @@ class PantallaPublicaCambiosViewTests(TestCase):
             'cantidad': '100.00',
         })
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.context['resultado'], Decimal('730000.00'))
+        self.assertEqual(response.context['resultado'], Decimal('740000.00'))  # tasa de venta
         self.assertIsNone(response.context['error'])
 
     def test_calculadora_conversion_venta(self):
@@ -333,7 +335,7 @@ class PantallaPublicaCambiosViewTests(TestCase):
             'tipo_operacion': 'venta',
             'cantidad': '100.00',
         })
-        self.assertEqual(response.context['resultado'], Decimal('740000.00'))
+        self.assertEqual(response.context['resultado'], Decimal('730000.00'))  # tasa de compra
 
     def test_calculadora_moneda_sin_tasa_activa(self):
         response = self.client.post(self.url, {
@@ -571,3 +573,32 @@ class CotizacionEditarViewTests(TestCase):
         self.cotizacion.refresh_from_db()
         self.assertTrue(self.otra_usd.estado)
         self.assertFalse(self.cotizacion.estado)
+
+
+class TasaParaClienteTests(TestCase):
+    """``TasaCambio.tasa_para``: la tasa que se le aplica al cliente se cruza
+    con la de la pizarra de la casa, para que el spread quede para la casa."""
+
+    def setUp(self):
+        moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        self.tasa = TasaCambio.objects.create(
+            moneda=moneda, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
+            origen='BCP', estado=True,
+        )
+
+    def test_el_cliente_compra_a_la_tasa_de_venta_de_la_casa(self):
+        self.assertEqual(self.tasa.tasa_para('COMPRA'), Decimal('7400'))
+        self.assertEqual(self.tasa.tasa_para('compra'), Decimal('7400'))
+
+    def test_el_cliente_vende_a_la_tasa_de_compra_de_la_casa(self):
+        self.assertEqual(self.tasa.tasa_para('VENTA'), Decimal('7300'))
+
+    def test_comprar_y_vender_seguido_no_le_deja_ganancia_al_cliente(self):
+        cantidad = Decimal('13')
+        paga = cantidad * self.tasa.tasa_para('COMPRA')
+        recibe = cantidad * self.tasa.tasa_para('VENTA')
+        self.assertGreater(paga, recibe)
+
+    def test_operacion_invalida(self):
+        with self.assertRaises(ValueError):
+            self.tasa.tasa_para('CANJE')

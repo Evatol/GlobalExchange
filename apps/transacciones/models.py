@@ -238,7 +238,8 @@ class Transaccion(models.Model):
         if not tasa_obj:
             raise ValidationError('No hay una tasa de cambio vigente para esta moneda.')
 
-        tasa_actual = tasa_obj.tasa_compra if self.tipo == 'COMPRA' else tasa_obj.tasa_venta
+        # Misma regla que al crearla: si no, cancelaría todo (ver tasa_para).
+        tasa_actual = tasa_obj.tasa_para(self.tipo)
 
         # Verificamos si la tasa cambió desde que se creó la transacción
         if self.tasa_cambio != tasa_actual:

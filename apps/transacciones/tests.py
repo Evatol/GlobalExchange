@@ -504,15 +504,15 @@ class OperarDivisaViewTests(TestCase):
 
         self.assertEqual(tx.usuario, self.usuario_negocio)  # no el auth.User
         self.assertEqual(tx.tipo, 'COMPRA')
-        self.assertEqual(tx.tasa_cambio, Decimal('7300'))
+        self.assertEqual(tx.tasa_cambio, Decimal('7400'))  # el cliente compra a la tasa de venta
         self.assertEqual(tx.estado, 'PENDIENTE')  # hasta que se confirme el pago
 
-    def test_vender_usa_la_tasa_de_venta(self):
+    def test_vender_usa_la_tasa_de_compra_de_la_casa(self):
         self.client.force_login(self.user_final)
         resp = self._comprar(tipo='VENTA')
         self.assertEqual(resp.status_code, 200)
         tx = Transaccion.objects.get(cliente=self.cliente, tipo='VENTA')
-        self.assertEqual(tx.tasa_cambio, Decimal('7400'))
+        self.assertEqual(tx.tasa_cambio, Decimal('7300'))
 
     def test_no_puede_usar_el_medio_de_pago_de_otro_cliente(self):
         self.client.force_login(self.user_final)
@@ -563,7 +563,8 @@ class OperarDivisaAPITests(APITestCase):
             'moneda_codigo': 'USD', 'cantidad': '10', 'tipo': 'COMPRA',
         })
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertEqual(resp.data['monto_total'], Decimal('74095.00'))
+        # 10 x 7400 (tasa de venta) = 74.000 + 1,5% (cliente estándar) = 75.110
+        self.assertEqual(resp.data['monto_total'], Decimal('75110.00'))
         self.assertFalse(Transaccion.objects.exists())
 
     def test_operar_crea_la_transaccion(self):
@@ -576,7 +577,7 @@ class OperarDivisaAPITests(APITestCase):
         tx = Transaccion.objects.get(id=resp.data['transaccion_id'])
         self.assertEqual(tx.usuario, self.usuario_negocio)
         self.assertEqual(tx.estado, 'PENDIENTE')
-        self.assertEqual(resp.data['subtotal'], Decimal('73000.00'))
+        self.assertEqual(resp.data['subtotal'], Decimal('74000.00'))
 
     def test_requiere_autenticacion(self):
         resp = self.client.post('/api/transacciones/operar/', {
@@ -607,14 +608,15 @@ class TransaccionCancelacionPorCambioDeTasaTests(TestCase):
         return Transaccion.objects.create(
             usuario=self.usuario, cliente=self.cliente, moneda=self.moneda,
             metodo_pago=self.metodo_pago, tipo='COMPRA', cantidad=Decimal('10.00'),
-            tasa_cambio=Decimal('7300.00'), modalidad='DIGITAL',
+            tasa_cambio=Decimal('7400.00'), modalidad='DIGITAL',  # COMPRA -> tasa de venta
         )
 
     def test_cancelar_transaccion_si_cambia_tasa(self):
         transaccion = self._transaccion_pendiente()
 
-        # Simulamos que la tasa de compra cambia antes de confirmar
-        self.tasa_cambio_obj.tasa_compra = Decimal('7450.00')
+        # Simulamos que cambia la tasa que se le aplica a una compra (la de
+        # venta de la casa) antes de confirmar.
+        self.tasa_cambio_obj.tasa_venta = Decimal('7450.00')
         self.tasa_cambio_obj.save()
 
         with self.assertRaises(ValidationError):
@@ -834,13 +836,13 @@ class ConfirmacionDePagoTests(TestCase):
     def test_el_resumen_muestra_tasa_subtotal_comision_y_total(self):
         tx = self._iniciar()
         resp = self.client.get(self._url(tx))
-        # 13 x 7300 = 94.900 + 0,5% (mayorista) = 474,50 -> 95.374,50.
+        # 13 x 7400 (tasa de venta) = 96.200 + 0,5% (mayorista) = 481 -> 96.681.
         # Los montos se comparan con el mismo filtro que usa el template, para
         # no depender del separador de miles del idioma configurado.
         def gs(valor):
             return floatformat(Decimal(valor), '2g')
-        for texto in ('Pendiente de pago', gs('7300'), gs('94900'), '0,50%', gs('474.50'),
-                      gs('95374.50'), 'Confirmar pago', 'Cancelar operación'):
+        for texto in ('Pendiente de pago', gs('7400'), gs('96200'), '0,50%', gs('481'),
+                      gs('96681'), 'Confirmar pago', 'Cancelar operación'):
             self.assertContains(resp, texto)
 
     def test_confirmar_sin_cambio_de_cotizacion_queda_exitosa(self):
@@ -860,14 +862,14 @@ class ConfirmacionDePagoTests(TestCase):
         resp = self.client.post(self._url(tx, 'confirmar/'), follow=True)
         tx.refresh_from_db()
         self.assertEqual(tx.estado, 'CANCELADA')
-        self.assertContains(resp, 'se inició a 7300.00 y la vigente es 7350.00')
+        self.assertContains(resp, 'se inició a 7400.00 y la vigente es 7450.00')
 
     def test_una_cancelada_no_revive_aunque_la_cotizacion_vuelva(self):
         tx = self._iniciar()
-        self.tasa.tasa_compra = Decimal('7350')
+        self.tasa.tasa_venta = Decimal('7450')
         self.tasa.save()
         self.client.post(self._url(tx, 'confirmar/'))
-        self.tasa.tasa_compra = Decimal('7300')  # vuelve al valor original
+        self.tasa.tasa_venta = Decimal('7400')  # vuelve al valor original
         self.tasa.save()
 
         self.client.post(self._url(tx, 'confirmar/'))
@@ -911,6 +913,15 @@ class ConfirmacionDePagoTests(TestCase):
         self.assertContains(resp, 'Operaciones pendientes de pago')
         self.assertContains(resp, self._url(tx))
 
+    def test_la_vista_previa_cobra_la_misma_comision_que_la_operacion_real(self):
+        """Antes la vista previa ignoraba al cliente y cobraba siempre 1,5%."""
+        previa = self.client.post('/api/transacciones/calcular/', {
+            'tipo': 'COMPRA', 'moneda_codigo': 'USD', 'cantidad': '13',
+        }).json()
+        tx = self._iniciar()
+        self.assertEqual(Decimal(str(previa['comision_porcentaje'])), Decimal('0.50'))  # mayorista
+        self.assertEqual(Decimal(str(previa['monto_total'])), tx.monto_total)
+
     def test_api_confirmar_y_cancelar(self):
         tx = self._iniciar()
         resp = self.client.post(f'/api/transacciones/transacciones/{tx.pk}/confirmar/')
@@ -918,7 +929,7 @@ class ConfirmacionDePagoTests(TestCase):
         self.assertEqual(resp.json()['estado'], 'EXITOSA')
 
         tx2 = self._iniciar()
-        self.tasa.tasa_compra = Decimal('7350')
+        self.tasa.tasa_venta = Decimal('7450')
         self.tasa.save()
         resp = self.client.post(f'/api/transacciones/transacciones/{tx2.pk}/confirmar/')
         self.assertEqual(resp.status_code, 409)

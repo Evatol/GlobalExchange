@@ -180,11 +180,8 @@ class SimuladorConversionView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Seleccionar la tasa correspondiente según si es compra o venta
-        if tipo_operacion == 'compra':
-            tasa_aplicada = tasa_obj.tasa_compra
-        else:
-            tasa_aplicada = tasa_obj.tasa_venta
+        # Tasa que se le aplica al cliente (ver TasaCambio.tasa_para).
+        tasa_aplicada = tasa_obj.tasa_para(tipo_operacion)
 
         # Utilizar el modelo Simulacion para guardar y calcular
         simulacion = Simulacion(
@@ -246,9 +243,7 @@ class PantallaPublicaCambiosView(View):
             if not tasa_obj:
                 error = f"No se encontró una tasa de cambio activa para la moneda '{moneda_codigo}'."
             else:
-                tasa_aplicada = (
-                    tasa_obj.tasa_compra if tipo_operacion == 'compra' else tasa_obj.tasa_venta
-                )
+                tasa_aplicada = tasa_obj.tasa_para(tipo_operacion)
                 resultado = cantidad * tasa_aplicada
                 Simulacion.objects.create(
                     tipo_operacion=tipo_operacion,

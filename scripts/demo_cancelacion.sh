@@ -104,7 +104,7 @@ if tasa is None:
     sys.exit(f"No hay cotización vigente para {moneda}.")
 
 # Misma tasa que aplica la pantalla de Comprar/Vender.
-tasa_aplicada = tasa.tasa_compra if tipo == "COMPRA" else tasa.tasa_venta
+tasa_aplicada = tasa.tasa_para(tipo)
 tx = Transaccion(
     usuario=usuario, cliente=cliente, moneda=tasa.moneda,
     metodo_pago=medio.metodo_pago, tipo=tipo, cantidad=cantidad,
@@ -173,7 +173,7 @@ if tx is None:
 vigente = TasaCambio.objects.activa_para(tx.moneda.codigo)
 tasa_vigente = None
 if vigente:
-    tasa_vigente = vigente.tasa_compra if tx.tipo == "COMPRA" else vigente.tasa_venta
+    tasa_vigente = vigente.tasa_para(tx.tipo)
 
 print()
 print(f"  Confirmando el pago de la transacción #{tx.id}")

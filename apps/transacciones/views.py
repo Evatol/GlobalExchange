@@ -276,8 +276,9 @@ class CalcularTransaccionAPIView(APIView):
     """
     Endpoint para E4-144: Lógica de cálculo de tasas y comisiones en la transacción.
     Servicio API REST para simular/desglosar montos en tiempo real, sin
-    persistir nada (por eso la ``Transaccion`` temporal no lleva ``cliente``:
-    es solo una simulación, la comisión usada es la genérica por defecto).
+    persistir nada. Usa el cliente activo de la sesión para aplicar la misma
+    comisión que va a cobrar la operación real (según su categoría); sin
+    cliente activo, la estándar.
     """
     permission_classes = [IsAuthenticated]
 
@@ -285,6 +286,11 @@ class CalcularTransaccionAPIView(APIView):
         moneda_codigo = request.data.get('moneda_codigo')
         cantidad_str = request.data.get('cantidad', '0')
         tipo_operacion = request.data.get('tipo', 'COMPRA').upper()
+        if tipo_operacion not in ('COMPRA', 'VENTA'):
+            return Response(
+                {'error': 'Tipo de operación inválido (debe ser COMPRA o VENTA).'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         try:
             cantidad = Decimal(str(cantidad_str))
@@ -306,9 +312,12 @@ class CalcularTransaccionAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        tasa_aplicada = tasa_obj.tasa_compra if tipo_operacion == 'COMPRA' else tasa_obj.tasa_venta
+        tasa_aplicada = tasa_obj.tasa_para(tipo_operacion)
 
+        # Con el cliente activo, para que la comisión coincida con la que
+        # después cobra la operación real (antes daba siempre la estándar).
         tx_temporal = Transaccion(
+            cliente=sesion.get_cliente_activo(request),
             tipo=tipo_operacion,
             cantidad=cantidad,
             tasa_cambio=tasa_aplicada
@@ -369,7 +378,7 @@ def _crear_transaccion_digital(request, tipo_operacion, moneda_codigo, cantidad,
     if not medio_pago:
         return None, 'El medio de pago seleccionado no es válido o está inactivo.'
 
-    tasa_aplicada = tasa_obj.tasa_compra if tipo_operacion == 'COMPRA' else tasa_obj.tasa_venta
+    tasa_aplicada = tasa_obj.tasa_para(tipo_operacion)
 
     transaccion = Transaccion(
         usuario=usuario_negocio,
