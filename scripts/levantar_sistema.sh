@@ -12,6 +12,8 @@
 #   ./scripts/levantar_sistema.sh --forzar        # sigue aunque haya puertos ocupados
 #   ./scripts/levantar_sistema.sh --con-correo    # + verificacion por correo (necesita
 #                                                 #   KEYCLOAK_SMTP_PASSWORD en tu .env)
+#   ./scripts/levantar_sistema.sh --presentacion  # pasa a main actualizado, muestra lo
+#                                                 #   hecho desde v1.4.0 y levanta --limpio
 #
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -22,6 +24,8 @@ LIMPIO="no"
 CARGAR_DATOS="si"
 FORZAR="no"
 CON_CORREO="no"
+PRESENTACION="no"
+TAG_ENTREGA="v1.4.0"   # la entrega del Sprint 3; se presenta lo hecho después
 
 for arg in "$@"; do
     case "$arg" in
@@ -30,12 +34,47 @@ for arg in "$@"; do
         --sin-datos) CARGAR_DATOS="no" ;;
         --forzar)     FORZAR="si" ;;
         --con-correo) CON_CORREO="si" ;;
-        -h|--help)   sed -n '2,14p' "$0"; exit 0 ;;
+        --presentacion) PRESENTACION="si" ;;
+        -h|--help)   sed -n '2,16p' "$0"; exit 0 ;;
         *)           echo "Opcion desconocida: $arg (usa --help)"; exit 1 ;;
     esac
 done
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
+
+if [ "$PRESENTACION" = "si" ]; then
+    # Muestra cada comando antes de correrlo, para que se vea en pantalla.
+    paso() { echo "\$ $*"; "$@"; }
+
+    echo "== Presentacion: pasar a main actualizado =="
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        echo "ERROR: hay cambios sin commitear en archivos del repositorio." >&2
+        echo "Commitealos o descartalos antes de cambiar de rama:" >&2
+        git status --short --untracked-files=no >&2
+        exit 1
+    fi
+    git fetch --quiet --tags --force origin
+    paso git checkout main
+    # --ff-only: si main local se hubiera separado del remoto, falla en vez
+    # de crear un merge en medio de la presentacion.
+    paso git pull --ff-only origin main
+    echo
+    echo "== Lo hecho despues de la entrega ($TAG_ENTREGA) =="
+    paso git log --oneline "$TAG_ENTREGA..main"
+    if [ -z "$(git log --oneline "$TAG_ENTREGA..main")" ]; then
+        echo "   (main no tiene nada nuevo respecto de $TAG_ENTREGA:"
+        echo "    falta mergear el PR de develop a main)"
+    fi
+    echo
+
+    # Se vuelve a ejecutar el script ya actualizado por el pull, en limpio.
+    # Se pasan las demas opciones (por ejemplo --forzar) tal cual.
+    OTRAS=()
+    for arg in "$@"; do
+        [ "$arg" != "--presentacion" ] && [ "$arg" != "--limpio" ] && OTRAS+=("$arg")
+    done
+    exec "$0" --limpio ${OTRAS[@]+"${OTRAS[@]}"}
+fi
 
 echo "== 1/5 Verificando Docker =="
 if ! command -v docker >/dev/null 2>&1; then
@@ -141,11 +180,12 @@ cat <<'FIN'
   Aplicacion .... http://localhost:8000/
   Keycloak ...... http://localhost:8080/   (admin / admin)
 
-  Usuarios (misma contrasena para los tres: Demo1234!)
+  Usuarios (misma contrasena para todos: Demo1234!)
 
     admin_demo      administrador   ve y administra todo
     analista_demo   analista        monedas y cotizaciones, sin roles
     cliente_demo    usuario final   opera sobre "Comercial Uno"
+    angel           (sin rol)       para asignarle un rol en la demo
 
   Para apagar:   docker compose down
   Ver los logs:  docker compose logs -f web
