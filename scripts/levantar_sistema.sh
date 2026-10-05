@@ -12,13 +12,8 @@
 #   ./scripts/levantar_sistema.sh --forzar        # sigue aunque haya puertos ocupados
 #   ./scripts/levantar_sistema.sh --con-correo    # + verificacion por correo (necesita
 #                                                 #   KEYCLOAK_SMTP_PASSWORD en tu .env)
-#   ./scripts/levantar_sistema.sh --presentacion  # pasa a develop actualizado, muestra lo
-#                                                 #   hecho desde v1.4.0 y levanta --limpio
 #
 set -euo pipefail
-# Ruta absoluta del script, para poder volver a ejecutarlo (--presentacion)
-# aunque se lo haya llamado desde otra carpeta.
-ESTE_SCRIPT="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 cd "$(dirname "$0")/.."
 
 COMPOSE_FILE="docker-compose.yml"
@@ -27,9 +22,6 @@ LIMPIO="no"
 CARGAR_DATOS="si"
 FORZAR="no"
 CON_CORREO="no"
-PRESENTACION="no"
-TAG_ENTREGA="v1.4.0"         # la entrega del Sprint 3; se presenta lo hecho después
-RAMA_PRESENTACION="develop"  # rama desde la que se presenta (autorizado por la cátedra)
 
 for arg in "$@"; do
     case "$arg" in
@@ -38,46 +30,12 @@ for arg in "$@"; do
         --sin-datos) CARGAR_DATOS="no" ;;
         --forzar)     FORZAR="si" ;;
         --con-correo) CON_CORREO="si" ;;
-        --presentacion) PRESENTACION="si" ;;
-        -h|--help)   sed -n '2,16p' "$0"; exit 0 ;;
+        -h|--help)   sed -n '2,14p' "$0"; exit 0 ;;
         *)           echo "Opcion desconocida: $arg (usa --help)"; exit 1 ;;
     esac
 done
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
-
-if [ "$PRESENTACION" = "si" ]; then
-    # Muestra cada comando antes de correrlo, para que se vea en pantalla.
-    paso() { echo "\$ $*"; "$@"; }
-
-    echo "== Presentacion: pasar a $RAMA_PRESENTACION actualizado =="
-    if ! git diff --quiet || ! git diff --cached --quiet; then
-        echo "ERROR: hay cambios sin commitear en archivos del repositorio." >&2
-        echo "Commitealos o descartalos antes de cambiar de rama:" >&2
-        git status --short --untracked-files=no >&2
-        exit 1
-    fi
-    git fetch --quiet --tags --force origin
-    paso git checkout "$RAMA_PRESENTACION"
-    # --ff-only: si la rama local se hubiera separado del remoto, falla en
-    # vez de crear un merge en medio de la presentacion.
-    paso git pull --ff-only origin "$RAMA_PRESENTACION"
-    echo
-    echo "== Lo hecho despues de la entrega ($TAG_ENTREGA) =="
-    paso git log --oneline "$TAG_ENTREGA..$RAMA_PRESENTACION"
-    if [ -z "$(git log --oneline "$TAG_ENTREGA..$RAMA_PRESENTACION")" ]; then
-        echo "   ($RAMA_PRESENTACION no tiene nada nuevo respecto de $TAG_ENTREGA)"
-    fi
-    echo
-
-    # Se vuelve a ejecutar el script ya actualizado por el pull, en limpio.
-    # Se pasan las demas opciones (por ejemplo --forzar) tal cual.
-    OTRAS=()
-    for arg in "$@"; do
-        [ "$arg" != "--presentacion" ] && [ "$arg" != "--limpio" ] && OTRAS+=("$arg")
-    done
-    exec "$ESTE_SCRIPT" --limpio ${OTRAS[@]+"${OTRAS[@]}"}
-fi
 
 echo "== 1/5 Verificando Docker =="
 if ! command -v docker >/dev/null 2>&1; then
