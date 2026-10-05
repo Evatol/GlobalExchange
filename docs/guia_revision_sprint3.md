@@ -19,9 +19,18 @@ USD a 7.300 (compra) / 7.400 (venta), y `cliente_demo` operando sobre
 1. Docker andando: `docker info`.
 2. Liberar los puertos, por si quedó algo corriendo:
    `docker stop keycloak-dev` y `pkill -f 'manage.py runserver'`.
-3. Hacer **una vez** los pasos 1 a 3 de abajo. La primera vez Keycloak tarda
+3. Actualizar `main` (**obligatorio**: si tu `main` local está atrasado, el
+   script de la presentación todavía es la versión vieja y no conoce la
+   opción `--presentacion`):
+
+   ```
+   git checkout main
+   git pull origin main
+   ```
+
+4. Hacer **una vez** los pasos 1 y 2 de abajo. La primera vez Keycloak tarda
    en arrancar; después, frente a la profe, tarda segundos.
-4. Abrir dos ventanas del navegador: una **normal** (cliente) y una
+5. Abrir dos ventanas del navegador: una **normal** (cliente) y una
    **privada** (analista).
 
 ---
@@ -42,37 +51,52 @@ demostrar.
 Los tags del proyecto: `v1.0.0`, `v1.1.0`, `v1.2.0` (Sprint 1), `v1.3.0`
 (Sprint 2), `v1.4.0` (Sprint 3).
 
-## 2. Pasar a `main`, con las mejoras
+## 2. Pasar a `main` con las mejoras y levantar el sistema
 
 ```
-git checkout main
-git pull origin main
-git log --oneline v1.4.0..main
+git checkout main && ./scripts/levantar_sistema.sh --presentacion
 ```
 
-El último comando lista **todo lo que se hizo después de la entrega**.
-Mostrarlo es la forma transparente de presentar desde `main`.
+El `git checkout main` hay que tipearlo: parado en el tag, los archivos son
+los del viernes y el script todavía no tiene la opción `--presentacion`.
+Desde `main`, el script muestra y ejecuta:
+
+```
+$ git checkout main
+$ git pull --ff-only origin main
+$ git log --oneline v1.4.0..main      <- todo lo hecho después de la entrega
+```
+
+y después levanta el sistema **en limpio** (borra los datos y arranca de
+cero: la primera operación es la #1 y los números de esta guía coinciden
+exactos). Termina con **SISTEMA LISTO**.
 
 🗣️ *"El tag es lo entregado el viernes. Después de la entrega encontramos
 dos errores y los corregimos: las tasas de compra y venta se aplicaban al
 revés, y la cancelación por cambio de cotización no se podía ver en
-pantalla. Presentamos desde main con esas correcciones."*
+pantalla. Presentamos desde main con esas correcciones; esta lista es
+exactamente lo que cambió."*
 
-## 3. Levantar el sistema
-
-```
-./scripts/levantar_sistema.sh --limpio
-```
-
-`--limpio` borra los datos y arranca de cero: la primera operación es la
-#1 y los números de esta guía coinciden exactos. Termina con
-**SISTEMA LISTO**. Los tres usuarios usan la contraseña `Demo1234!`.
+Todos los usuarios usan la contraseña `Demo1234!`.
 
 | Usuario | Rol | Ve |
 |---|---|---|
 | `admin_demo` | administrador | todo, incluidos Roles y Métodos de Pago |
 | `analista_demo` | analista | CRUD de Clientes, Monedas y Cotizaciones |
 | `cliente_demo` | usuario final | Divisas, Mis Medios de Pago, Comprar/Vender, Historial |
+| `angel` | **sin rol** | el menú básico; sirve para la demo de asignación de roles (sección 3) |
+
+## 3. Asignación de roles (con `angel`)
+
+1. **Ventana privada:** `angel` → el menú no tiene ningún CRUD. Si escribís
+   `http://localhost:8000/api/divisas/gestion/monedas/`, responde 403.
+2. **Ventana normal:** `admin_demo` → **Administración de Roles**: `angel`
+   aparece **sin rol** → elegí **analista** → **Guardar**.
+3. **Ventana privada:** **Cerrar Sesión** y volver a entrar como `angel`:
+   ahora el menú tiene **CRUD Clientes, CRUD Monedas y CRUD Cotizaciones**.
+
+🗣️ *"El rol vive en Keycloak, que es la fuente de verdad. Django lo toma en
+el próximo login; por eso hay que volver a entrar para ver el cambio."*
 
 ---
 
@@ -276,9 +300,9 @@ integrante lo pone en su `.env`, que git ignora.
 
 ## 12. Ensayo recomendado (una vez antes de la revisión)
 
-1. `./scripts/verificar_tag.sh v1.4.0` y `git checkout main`
-2. `./scripts/levantar_sistema.sh --limpio`
-3. Compra de 13 USD con confirmación de pago (5.1)
+1. `./scripts/verificar_tag.sh v1.4.0`
+2. `git checkout main && ./scripts/levantar_sistema.sh --presentacion`
+3. Asignarle un rol a `angel` (3) y compra de 13 USD con confirmación de pago (5.1)
 4. Cancelación por cambio de cotización, con las dos ventanas (5.2)
 5. Historial con filtro y exportación (5.3)
 6. `./scripts/pruebas.sh` y `./scripts/documentacion.sh`
