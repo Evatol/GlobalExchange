@@ -42,27 +42,24 @@ cd ~/Escritorio/IS2/GlobalExchange
 ./scripts/verificar_tag.sh v1.4.0
 ```
 
-El script hace checkout del tag, confirma que HEAD es exactamente `v1.4.0`
-y muestra su commit: `OK: el repositorio está parado en el tag 'v1.4.0'.`
-El aviso amarillo de *detached HEAD* no es un error: es justo lo que se pide
+El script hace checkout del tag, confirma que HEAD es exactamente `v1.4.0`,
+muestra su commit y termina con `OK: tag 'v1.4.0' verificado.` El aviso
+amarillo de *detached HEAD* no es un error: es justo lo que se pide
 demostrar.
 
-Después vuelve solo a `develop`, a la vista:
+Al terminar, el script vuelve solo a `develop` (actualizado), **sin
+imprimir nada**: ahí están las mejoras posteriores a la entrega, y desde ahí
+se presenta, como autorizó la cátedra. Si piden ver qué cambió desde el
+viernes:
 
 ```
-== Volviendo a develop, con las mejoras posteriores a 'v1.4.0' ==
-$ git checkout --quiet develop
-$ git pull --ff-only origin develop
-== Lo hecho después de la entrega ('v1.4.0') ==
-$ git log --oneline v1.4.0..develop
-...                                   <- todo lo que cambió desde el viernes
+git log --oneline v1.4.0..develop
 ```
 
-🗣️ *"El tag es lo entregado el viernes. Después de la entrega encontramos
-dos errores y los corregimos: las tasas de compra y venta se aplicaban al
-revés, y la cancelación por cambio de cotización no se podía ver en
-pantalla. Presentamos desde develop con esas correcciones; esta lista es
-exactamente lo que cambió."*
+🗣️ *"Después de la entrega encontramos dos errores y los corregimos: las
+tasas de compra y venta se aplicaban al revés, y la cancelación por cambio
+de cotización no se podía ver en pantalla. Presentamos desde develop con
+esas correcciones."*
 
 Si la profe quiere revisar algo parada en el tag:
 `./scripts/verificar_tag.sh v1.4.0 --quedarse`.
