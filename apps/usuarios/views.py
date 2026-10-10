@@ -10,7 +10,7 @@ from rest_framework.response import Response
 from . import services, sesion
 from .models import Cliente, Usuario
 from .oidc import account_console_url
-from .permissions import ADMINISTRADOR, ANALISTA, ClientesPermission, tiene_rol
+from .permissions import ADMINISTRADOR, ANALISTA, ClientesPermission, es_cajero, tiene_rol
 from .serializers import (
     AsignacionUsuarioSerializer,
     ClienteResumenSerializer,
@@ -31,6 +31,10 @@ def _es_administrador(user):
 def menu_principal_view(request):
     """Menú principal, con el selector de cliente activo (RF43) y los
     accesos a cada CRUD según el rol de quien inició sesión."""
+    if es_cajero(request.user):
+        # El cajero solo accede al módulo de caja (RF109): menú propio, sin
+        # tarjetas a pantallas que el middleware le rechazaría con 403.
+        return render(request, 'usuarios/menu_cajero.html', {'usuario': request.user})
     context = {
         'usuario': request.user,
         'mis_clientes': sesion.clientes_disponibles(request),

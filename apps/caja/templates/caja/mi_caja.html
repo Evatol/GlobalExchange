@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GlobalExchange - Mi Caja</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="{% url 'menu_principal' %}">GlobalExchange</a>
+            <div class="d-flex align-items-center text-white">
+                <span class="me-3">Bienvenido, <strong>{{ usuario.username }}</strong></span>
+                <a href="{% url 'menu_principal' %}" class="btn btn-outline-light btn-sm">Volver al Portal</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container my-5">
+        <div class="row">
+            <div class="col-md-12 text-center mb-4">
+                <h2>Mi Caja</h2>
+                {% if caja %}
+                    <p class="text-muted">Caja #{{ caja.id }} · Sucursal {{ caja.sucursal.nombre }}</p>
+                {% endif %}
+            </div>
+        </div>
+
+        {% for m in messages %}
+            <div class="alert alert-success">{{ m }}</div>
+        {% endfor %}
+        {% if error %}
+            <div class="alert alert-danger">{{ error }}</div>
+        {% endif %}
+
+        {% if not caja %}
+            <div class="alert alert-info text-center">No tenés una caja abierta. Pedile al administrador que abra tu caja.</div>
+        {% else %}
+            {% for g in monedas %}
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">{{ g.moneda }}</h5>
+                    <form method="post">
+                        {% csrf_token %}
+                        <input type="hidden" name="moneda" value="{{ g.moneda_id }}">
+                        <div class="table-responsive">
+                            <table class="table align-middle mb-3">
+                                <thead>
+                                    <tr class="text-muted">
+                                        <th>Denominación</th>
+                                        <th>En sistema</th>
+                                        <th>Subtotal</th>
+                                        <th style="width: 160px;">Contado</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for d in g.denominaciones %}
+                                    <tr>
+                                        <td>{{ d.denominacion|floatformat:"-2" }}</td>
+                                        <td>{{ d.cantidad }}</td>
+                                        <td>{{ d.subtotal|floatformat:"-2" }}</td>
+                                        <td>
+                                            <input type="number" name="contado_{{ d.billete_id }}" class="form-control form-control-sm" min="0" step="1" placeholder="0">
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                                <tfoot>
+                                    <tr>
+                                        <th colspan="2">Total en sistema</th>
+                                        <th>{{ g.total|floatformat:"-2" }}</th>
+                                        <th></th>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                        <div class="d-flex align-items-center justify-content-between">
+                            <span class="text-muted small">Lo que dejes vacío cuenta como 0 billetes.</span>
+                            <button type="submit" class="btn btn-primary">Registrar arqueo de {{ g.moneda }}</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            {% empty %}
+                <div class="alert alert-info text-center">El administrador todavía no cargó denominaciones de billetes.</div>
+            {% endfor %}
+        {% endif %}
+
+        <div class="card shadow-sm border-0">
+            <div class="card-body">
+                <h5 class="card-title mb-3">Últimos arqueos</h5>
+                <div class="table-responsive">
+                    <table class="table align-middle mb-0">
+                        <thead>
+                            <tr class="text-muted">
+                                <th>Fecha</th>
+                                <th>Moneda</th>
+                                <th>Esperado</th>
+                                <th>Contado</th>
+                                <th>Diferencia</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for a in arqueos %}
+                            <tr>
+                                <td>{{ a.fecha_hora|date:"d/m/Y H:i" }}</td>
+                                <td>{{ a.moneda.codigo }}</td>
+                                <td>{{ a.total_esperado|floatformat:"-2" }}</td>
+                                <td>{{ a.total_contado|floatformat:"-2" }}</td>
+                                <td>
+                                    {% if a.diferencia == 0 %}
+                                        <span class="badge bg-success">sin diferencia</span>
+                                    {% else %}
+                                        <span class="badge bg-danger">{{ a.diferencia|floatformat:"-2" }}</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="5" class="text-center text-muted">Todavía no hiciste arqueos.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

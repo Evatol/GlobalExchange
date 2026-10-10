@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GlobalExchange - Cajas</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="{% url 'menu_principal' %}">GlobalExchange</a>
+            <div class="d-flex align-items-center text-white">
+                <span class="me-3">Bienvenido, <strong>{{ usuario.username }}</strong></span>
+                <a href="{% url 'menu_principal' %}" class="btn btn-outline-light btn-sm">Volver al Portal</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container my-5">
+        <div class="row">
+            <div class="col-md-12 text-center mb-4">
+                <h2>Cajas</h2>
+                <p class="text-muted">Cada caja tiene un cajero responsable y su propio stock de billetes.</p>
+            </div>
+        </div>
+
+        {% if error %}
+            <div class="alert alert-danger">{{ error }}</div>
+        {% endif %}
+
+        <div class="row g-4">
+            <div class="col-md-8">
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table align-middle mb-0">
+                                <thead>
+                                    <tr class="text-muted">
+                                        <th>Caja</th>
+                                        <th>Sucursal</th>
+                                        <th>Cajero</th>
+                                        <th>Apertura</th>
+                                        <th>Estado</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for c in cajas %}
+                                    <tr>
+                                        <td><strong>#{{ c.id }}</strong></td>
+                                        <td>{{ c.sucursal.nombre }}</td>
+                                        <td>{{ c.cajero.username|default:"—" }}</td>
+                                        <td>{{ c.fecha_apertura|date:"d/m/Y H:i"|default:"—" }}</td>
+                                        <td>
+                                            {% if c.estado == 'ABIERTA' %}
+                                                <span class="badge bg-success">abierta</span>
+                                            {% else %}
+                                                <span class="badge bg-secondary">cerrada</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-end">
+                                            {% if c.estado != 'ABIERTA' %}
+                                                <a href="{% url 'caja_abrir' c.id %}" class="btn btn-sm btn-outline-primary">Abrir</a>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% empty %}
+                                    <tr>
+                                        <td colspan="6" class="text-center text-muted">No hay cajas registradas.</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Nueva Caja</h5>
+                        {% if asignaciones %}
+                        <form method="post">
+                            {% csrf_token %}
+                            <div class="mb-3">
+                                <label class="form-label">Cajero y sucursal</label>
+                                <select name="asignacion" class="form-select" required>
+                                    {% for a in asignaciones %}
+                                        <option value="{{ a.id }}">{{ a.usuario.username }} — {{ a.sucursal.nombre }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Crear Caja</button>
+                        </form>
+                        {% else %}
+                            <p class="text-muted small mb-0">Primero asigná un cajero a una sucursal en <a href="{% url 'gestion_sucursales' %}">Sucursales y Cajeros</a>.</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
