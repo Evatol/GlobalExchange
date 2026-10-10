@@ -7,6 +7,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.divisas.models import Moneda
 from . import services, sesion
 from .models import Cliente, Usuario
 from .oidc import account_console_url
@@ -45,24 +46,32 @@ def menu_principal_view(request):
 def mi_perfil_view(request):
     """RF9/RF10: cualquier usuario logueado (sin importar su rol) actualiza
     sus propios datos personales complementarios (nombres, apellidos,
-    teléfono, dirección). El usuario y el correo se muestran pero no se
-    pueden editar acá: quedan bloqueados para garantizar la identificación
-    única (RF10) y porque son los que vienen de Keycloak."""
+    teléfono, dirección) y gestiona sus monedas favoritas."""
     perfil = sesion.usuario_negocio(request)
     if perfil is None:
         raise PermissionDenied('No se encontró tu perfil de usuario.')
 
     error_datos = None
     exito_datos = False
+    
     if request.method == 'POST':
-        serializer = PerfilSerializer(instance=perfil, data=request.POST, partial=True)
-        if serializer.is_valid():
-            serializer.save()
+        # Verificamos si la petición corresponde a la actualización de favoritos
+        if 'monedas_favoritas' in request.POST or 'actualizar_favoritos' in request.POST:
+            monedas_ids = request.POST.getlist('monedas_favoritas')
+            # Validamos estrictamente que solo se guarden monedas que estén activas
+            monedas_activas = Moneda.objects.filter(id__in=monedas_ids, estado=True)
+            perfil.monedas_favoritas.set(monedas_activas)
             exito_datos = True
         else:
-            error_datos = ' '.join(
-                str(msg) for errores in serializer.errors.values() for msg in errores
-            )
+            # Actualización normal de datos personales del perfil
+            serializer = PerfilSerializer(instance=perfil, data=request.POST, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                exito_datos = True
+            else:
+                error_datos = ' '.join(
+                    str(msg) for errores in serializer.errors.values() for msg in errores
+                )
 
     context = {
         'usuario': request.user,
@@ -70,6 +79,7 @@ def mi_perfil_view(request):
         'error_datos': error_datos,
         'exito_datos': exito_datos,
         'cambiar_password_url': account_console_url(request),
+        'monedas_disponibles': Moneda.objects.filter(estado=True),
     }
     return render(request, 'usuarios/mi_perfil.html', context)
 
