@@ -1,12 +1,14 @@
 from decimal import Decimal
 from django.conf import settings
+from django.core.mail import send_mail
+from django.db import transaction
 from apps.notificaciones.models import Notificaciones
 from apps.usuarios.models import Usuario
 
 def procesar_cambio_cotizacion(cotizacion_nueva, cotizacion_anterior=None):
     """
     Evalúa si la variación entre la cotización anterior y la nueva supera el umbral (E4-32)
-    y genera notificaciones para los usuarios que tienen la moneda como favorita.
+    y genera notificaciones internas y por correo (E4-33) para los usuarios que tienen la moneda como favorita.
     """
     if not cotizacion_anterior:
         return None
@@ -50,6 +52,7 @@ def procesar_cambio_cotizacion(cotizacion_nueva, cotizacion_anterior=None):
 
     notificaciones_creadas = []
     for usuario in usuarios_favoritos:
+        # 1. Crear notificación interna (E4-32)
         notif = Notificaciones.objects.create(
             usuario=usuario,
             titulo=titulo,
@@ -58,5 +61,22 @@ def procesar_cambio_cotizacion(cotizacion_nueva, cotizacion_anterior=None):
             leida=False
         )
         notificaciones_creadas.append(notif)
+
+        # 2. Enviar notificación por correo electrónico de forma segura tras el commit (E4-33)
+        if getattr(usuario, 'email', None):
+            def enviar_correo_seguro(u_email=usuario.email, subj=titulo, msg=mensaje):
+                try:
+                    send_mail(
+                        subject=subj,
+                        message=msg,
+                        from_email=settings.DEFAULT_FROM_EMAIL,
+                        recipient_list=[u_email],
+                        fail_silently=False,
+                    )
+                except Exception as e:
+                    # Criterio: Si falla el envío del correo, la cotización se guarda igual
+                    print(f"Advertencia: No se pudo enviar el correo a {u_email}: {e}")
+
+            transaction.on_commit(enviar_correo_seguro)
 
     return notificaciones_creadas

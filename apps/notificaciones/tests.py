@@ -1,8 +1,6 @@
-from django.test import TestCase
-
-# Create your tests here. 
 from decimal import Decimal
 from django.contrib.auth.models import User as DjangoUser
+from django.core import mail
 from django.test import TestCase
 from django.urls import reverse
 from apps.divisas.models import Moneda, TasaCambio
@@ -11,7 +9,7 @@ from apps.notificaciones.models import Notificaciones
 from apps.usuarios.models import Usuario
 
 
-class NotificacionesVariacionPrecioTests(TestCase): #E4-32
+class NotificacionesVariacionPrecioTests(TestCase): # E4-32 y E4-33
     def setUp(self):
         # Crear monedas
         self.moneda_usd = Moneda.objects.create(codigo='USD', nombre='Dólar', estado=True)
@@ -37,7 +35,7 @@ class NotificacionesVariacionPrecioTests(TestCase): #E4-32
             direccion='Dirección de prueba',
         )
 
-    def test_variacion_menor_o_igual_a_uno_por_ciento_no_genera_aviso(self,):
+    def test_variacion_menor_o_igual_a_uno_por_ciento_no_genera_aviso(self):
         # Cotización inicial
         tasa_ant = TasaCambio.objects.create(
             moneda=self.moneda_usd,
@@ -55,10 +53,11 @@ class NotificacionesVariacionPrecioTests(TestCase): #E4-32
 
         procesar_cambio_cotizacion(tasa_nueva, tasa_ant)
 
-        # No debe crearse ninguna notificación
+        # No debe crearse ninguna notificación ni correo
         self.assertEqual(Notificaciones.objects.count(), 0)
+        self.assertEqual(len(mail.outbox), 0)
 
-    def test_variacion_mayor_a_uno_por_ciento_genera_aviso_para_favoritos(self):
+    def test_variacion_mayor_a_uno_por_ciento_genera_aviso_y_correo_para_favoritos(self):
         # Cotización inicial
         tasa_ant = TasaCambio.objects.create(
             moneda=self.moneda_usd,
@@ -74,13 +73,21 @@ class NotificacionesVariacionPrecioTests(TestCase): #E4-32
             estado=True
         )
 
-        procesar_cambio_cotizacion(tasa_nueva, tasa_ant)
+        # Capturar y ejecutar callbacks de transacción on_commit para los correos
+        with self.captureOnCommitCallbacks(execute=True):
+            procesar_cambio_cotizacion(tasa_nueva, tasa_ant)
 
         # Debe crearse una notificación únicamente para el usuario con la moneda en favorita
         notificaciones = Notificaciones.objects.all()
         self.assertEqual(notificaciones.count(), 1)
         self.assertEqual(notificaciones[0].usuario, self.user_con_favorita)
         self.assertIn('USD', notificaciones[0].titulo)
+
+        # Verificar que se envió el correo electrónico correspondiente (E4-33)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn('USD', mail.outbox[0].subject)
+        self.assertIn('romina@example.com', mail.outbox[0].to)
+        self.assertIn('100.00', mail.outbox[0].body)
 
     def test_endpoint_consultar_notificaciones_nuevas(self):
         # Crear una notificación directa para romina
@@ -118,7 +125,9 @@ class NotificacionesVariacionPrecioTests(TestCase): #E4-32
             estado=True
         )
 
-        procesar_cambio_cotizacion(tasa_nueva, tasa_ant)
+        with self.captureOnCommitCallbacks(execute=True):
+            procesar_cambio_cotizacion(tasa_nueva, tasa_ant)
 
-        # Ningún usuario tiene EUR como favorita, no debe haber notificacioneses
+        # Ningún usuario tiene EUR como favorita, no debe haber notificaciones ni correos
         self.assertEqual(Notificaciones.objects.count(), 0)
+        self.assertEqual(len(mail.outbox), 0)
