@@ -1,0 +1,57 @@
+{% comment %}
+Avisos de variación de cotización en tiempo real (E4-32). Se incluye en las pantallas del
+cliente: pone el contenedor y consulta cada 5 segundos las notificaciones no leídas.
+Cerrar un aviso lo marca como leído, así no vuelve a aparecer en otra pantalla ni en la
+próxima visita. Requiere que la página cargue Bootstrap (el evento close.bs.alert).
+{% endcomment %}
+<div class="container mt-3" id="contenedor-alertas-divisas"></div>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        let ultimoIdNotificacion = 0;
+        const urlNuevas = "{% url 'api_notificaciones_nuevas' %}";
+        const urlLeida = (id) => "{% url 'api_notificacion_leida' 0 %}".replace("/0/", "/" + id + "/");
+
+        function marcarLeida(id) {
+            fetch(urlLeida(id), {method: "POST", headers: {"X-CSRFToken": "{{ csrf_token }}"}})
+                .catch(error => console.error('Error al marcar la notificación como leída:', error));
+        }
+
+        setInterval(function() {
+            fetch(`${urlNuevas}?desde_id=${ultimoIdNotificacion}`)
+                .then(response => response.json())
+                .then(data => {
+                    const contenedor = document.getElementById('contenedor-alertas-divisas');
+                    if (data.notificaciones && data.notificaciones.length > 0) {
+                        data.notificaciones.forEach(notif => {
+                            if (notif.id > ultimoIdNotificacion) {
+                                ultimoIdNotificacion = notif.id;
+                            }
+
+                            // El texto se asigna con textContent: incluye el nombre de la moneda,
+                            // que carga un usuario, y no debe interpretarse como HTML.
+                            const alertaDiv = document.createElement('div');
+                            alertaDiv.className = "alert alert-warning alert-dismissible fade show shadow-sm mb-2";
+                            alertaDiv.role = "alert";
+
+                            const titulo = document.createElement('strong');
+                            titulo.textContent = notif.titulo;
+                            const fecha = document.createElement('small');
+                            fecha.className = "text-muted d-block";
+                            fecha.textContent = notif.fecha;
+                            const cerrar = document.createElement('button');
+                            cerrar.type = "button";
+                            cerrar.className = "btn-close";
+                            cerrar.setAttribute("data-bs-dismiss", "alert");
+                            cerrar.setAttribute("aria-label", "Close");
+
+                            alertaDiv.append(titulo, " " + notif.mensaje, fecha, cerrar);
+                            alertaDiv.addEventListener("close.bs.alert", () => marcarLeida(notif.id));
+                            contenedor.appendChild(alertaDiv);
+                        });
+                    }
+                })
+                .catch(error => console.error('Error al consultar notificaciones:', error));
+        }, 5000); // Consulta cada 5 segundos
+    });
+</script>

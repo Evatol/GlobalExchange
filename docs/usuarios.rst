@@ -84,6 +84,14 @@ usuarios.apps module
    :show-inheritance:
    :undoc-members:
 
+usuarios.middleware module
+--------------------------
+
+.. automodule:: apps.usuarios.middleware
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 usuarios.models module
 ----------------------
 
