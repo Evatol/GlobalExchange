@@ -35,6 +35,19 @@ class TasaCambioQuerySet(models.QuerySet):
             .first()
         )
 
+    def vigentes(self):
+        """La cotización vigente de cada moneda activa: la última activa,
+        que es la que ``activa_para`` le aplica a una operación. Para mostrar
+        "el cambio del día" sin repetir monedas que tengan cotizaciones
+        anteriores todavía activas."""
+        ultimas = (
+            self.filter(estado=True, moneda__estado=True)
+            .order_by('moneda_id', '-fecha_hora')
+            .distinct('moneda_id')
+            .values('id')
+        )
+        return self.filter(id__in=ultimas).select_related('moneda').order_by('moneda_id')
+
 
 class TasaCambio(models.Model):
     id = models.AutoField(primary_key=True)

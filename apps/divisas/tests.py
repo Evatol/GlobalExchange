@@ -309,8 +309,12 @@ class PantallaPublicaCambiosViewTests(TestCase):
 
     def test_muestra_las_tasas_activas(self):
         response = self.client.get(self.url)
+        self.assertContains(response, 'Cambio del Día')
         self.assertContains(response, 'USD')
         self.assertContains(response, '7300')
+        # la pantalla pública sigue con las columnas de la pizarra de la casa
+        self.assertContains(response, '<th>COMPRA</th>', html=True)
+        self.assertNotContains(response, 'COMPRÁS A')
 
     def test_login_apunta_a_keycloak_no_al_admin_de_django(self):
         """El link de login debe ir al flujo OIDC (Keycloak), no al admin de Django."""
@@ -636,3 +640,33 @@ class EndpointsPublicosTests(APITestCase):
         for url in ('/api/usuarios/clientes/', '/api/transacciones/transacciones/',
                     '/api/transacciones/medios-pago-cliente/'):
             self.assertIn(self.client.get(url).status_code, (401, 403), url)
+
+
+class CotizacionesVigentesTests(TestCase):
+    """``TasaCambio.objects.vigentes()``: una cotización por moneda activa,
+    la última activa (la misma que se aplica al operar)."""
+
+    def setUp(self):
+        self.usd = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        self.eur = Moneda.objects.create(codigo='EUR', nombre='Euro', simbolo='€')
+        TasaCambio.objects.create(
+            moneda=self.usd, tasa_compra=Decimal('7000'), tasa_venta=Decimal('7100'), origen='x',
+        )
+        self.usd_actual = TasaCambio.objects.create(
+            moneda=self.usd, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'), origen='x',
+        )
+        self.eur_actual = TasaCambio.objects.create(
+            moneda=self.eur, tasa_compra=Decimal('7900'), tasa_venta=Decimal('8050'), origen='x',
+        )
+
+    def test_una_por_moneda_la_mas_reciente(self):
+        vigentes = list(TasaCambio.objects.vigentes())
+        self.assertEqual(vigentes, [self.usd_actual, self.eur_actual])
+        self.assertEqual(TasaCambio.objects.activa_para('USD'), self.usd_actual)
+
+    def test_ignora_cotizaciones_y_monedas_inactivas(self):
+        self.usd_actual.estado = False
+        self.usd_actual.save()
+        self.eur.desactivar()
+        vigentes = list(TasaCambio.objects.vigentes())
+        self.assertEqual([t.tasa_compra for t in vigentes], [Decimal('7000')])
