@@ -79,13 +79,42 @@ Mejoras posteriores al tag, en `develop`:
 | 2026-10-09 | `5dcd6a6` | `apps/usuarios` (Cliente) | Categoría Minorista/Mayorista/VIP fija el límite por operación (2 tests reemplazados) | +0 | 247 | Angel |
 | 2026-10-09 | `e79718b` | `apps/divisas` | "Cambio del Día" compartido y cotización vigente por moneda | +2 | 249 | Angel |
 | 2026-10-09 | `700f108` | `apps/transacciones` | Pago con banco, operaciones fallidas, tarjeta solo en compras, cambio entre divisas (+42 nuevos, 6 reemplazados) | +36 | 285 | Angel |
-| 2026-10-09 | _este PR_ | `apps/divisas` | La calculadora pública y el simulador por API convierten entre divisas | +7 | 292 | Angel |
+| 2026-10-09 | `51f1834` | `apps/divisas` | La calculadora pública y el simulador por API convierten entre divisas | +7 | 292 | Angel |
 
 **Estado actual de Sprint 3: 292 tests (+208 desde el cierre de Sprint 2).**
 
 Verificación: `./scripts/pruebas.sh` → `Ran 292 tests ... OK`. Cada cifra sale de
 contar `def test_` agregados y quitados por commit (`git show <hash> -- 'apps/*/tests.py'`)
 y coincide con las corridas reales: 220 antes del banco y 285 al mergear el PR #43.
+
+### Sprint 4 (Hito 6)
+
+Parte de los **292 tests** con los que cerró el Sprint 3. El "Acumulado" sigue el orden en
+que cada historia se integró a `develop`.
+
+| Fecha | Commit | Artefacto | Detalle | Tests nuevos | Acumulado | Autor |
+|---|---|---|---|---:|---:|---|
+| 2026-10-10 | `ecd4ede` | `apps/transacciones` (pago externo) | E4-157/E4-158: métodos `iniciar_pago_externo` y `confirmar_pago_webhook`; **sin tests ni endpoint** (se completó en `f1d39ea`) | +0 | 292 | Eduardo |
+| 2026-10-09 | `51ecc5a` | `apps/usuarios` (favoritas) | Marcar monedas como favoritas (E4-24) | +2 | 294 | Romina Pérez |
+| 2026-10-10 | `2c4bf26` | `apps/notificaciones` | Avisos de variación de cotización en tiempo real (E4-32) | +4 | 298 | Romina Pérez |
+| 2026-10-10 | `5bb0648` | `apps/notificaciones` | Aviso por correo de cambios de cotización (E4-33): extiende los tests de E4-32 en vez de crear nuevos | +0 | 298 | Romina Pérez |
+| 2026-10-10 | `fb95b11` | `apps/caja` (sucursales) | Sucursales, asignación de cajeros (máx. 2) y rol cajero (E4-98) | +17 | 315 | Eva Torres |
+| 2026-10-10 | `d8e5c7c` | `apps/caja` (billetes) | Inventario de billetes, denominaciones, cajas y arqueo (E4-99) | +28 | 343 | Eva Torres |
+| 2026-10-10 | `f1d39ea` | `apps/transacciones` (webhook) | Webhook firmado, pago por la pasarela, sin doble cobro; completa E4-157/E4-158 | +25 | 368 | Angel |
+| 2026-10-10 | `a07d445` | `apps/caja` (balance y cierre) | Balance y cierre de caja, mostrador y registro automático de billetes (E4-100/E4-101); incluye los tests de la operación presencial de E4-99, que no los tenía | +54 | 422 | Angel |
+| 2026-10-10 | `3156b41` | `apps/usuarios` (seed demo) | Rol cajero, `cajero_demo` y caja demo abierta | +4 | 426 | Angel |
+| 2026-10-10 | `f249cae` | `apps/notificaciones` | Los avisos se marcan como leídos al cerrarlos y aparecen también en Operar | +10 | 436 | Angel |
+| 2026-10-10 | `718d58a` | `apps/pasarela` (nueva) | Pasarela de pago simulada con pantalla de pago, sin comandos (E4-157/E4-158) | +16 | 452 | Angel |
+| 2026-10-10 | `6f395ad` | `apps/notificaciones` | Editar la cotización vigente también avisa (E4-32/E4-33) | +8 | 460 | Angel |
+
+**Estado actual de Sprint 4: 460 tests (+168 desde el cierre de Sprint 3).**
+El cierre del sprint (tag `v1.5.0`) se completa al ponerlo.
+
+Verificación: `./scripts/pruebas.sh` → `Ran 460 tests ... OK`. Cada cifra sale de contar los
+`def test_` de cada commit contra su commit padre (`git show <hash>`); coincide con las
+corridas reales: 343 al integrar a Romina y Eva, 426 al mergear el PR #48 y 452 con la
+pasarela (PR #50). Los merges conservan los tests de las dos ramas que unen (revisado uno
+por uno).
 
 ---
 
@@ -120,6 +149,20 @@ Nota: `sphinx-build` consulta la base de datos (autodoc hace `repr()` de los
 se migra antes del build.
 
 Verificación: mismo comando → sin warnings.
+
+### Sprint 4 (Hito 6)
+
+| Fecha | Commit | Artefacto | Detalle | Autor |
+|---|---|---|---|---|
+| 2026-10-10 | `f1d39ea` | `transacciones.webhook` | Módulo de firma del webhook (E4-158) | Angel |
+| 2026-10-10 | `a07d445` | `caja.services`, `caja.serializers`, `caja.serializers_billetes`, `caja.views_billetes`, `caja.views_pantallas` | Los módulos de caja (E4-98/99/100/101) no figuraban en la documentación | Angel |
+| 2026-10-10 | `f249cae` | `divisas.services`, `usuarios.middleware` | Módulos de E4-32/33 y E4-98 que no figuraban | Angel |
+| 2026-10-10 | `718d58a` | `pasarela` | App nueva: `apps`, `urls`, `views` y `tests` | Angel |
+| 2026-10-10 | `919bb84`, `f1d39ea` | Docstrings de `divisas.views`, `transacciones.models`, `transacciones.views` | Se restauraron 35 docstrings que habían borrado las ramas de E4-24/32/33 y E4-157/158 al integrarse (7 + 28; solo docstrings, la lógica no cambia) | Angel |
+
+Verificación: `sphinx-build -b html -W --keep-going docs docs/_build/html` → sin warnings,
+con todos los módulos de las apps de negocio incluidos (se revisó que no quede ninguno sin
+entrada).
 
 ---
 
