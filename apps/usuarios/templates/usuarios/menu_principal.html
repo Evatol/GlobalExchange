@@ -37,12 +37,15 @@
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'gestion_cotizaciones' %}">CRUD Cotizaciones</a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'gestion_cuentas_banco' %}">Banco</a>
+                    </li>
                     {% endif %}
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'gestion_medios_pago' %}">Mis Medios de Pago</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'operar_divisa' %}">Comprar/Vender Divisas</a>
+                        <a class="nav-link" href="{% url 'operar_divisa' %}">Operar Divisas</a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'historial_transacciones' %}">Historial</a>
@@ -131,8 +134,8 @@
             <div class="col-md-4">
                 <div class="card h-100 shadow-sm border-0">
                     <div class="card-body text-center">
-                        <h5 class="card-title">Comprar/Vender Divisas</h5>
-                        <p class="card-text">Operá de forma digital, con la comisión de tu categoría de cliente.</p>
+                        <h5 class="card-title">Operar Divisas</h5>
+                        <p class="card-text">Comprá, vendé o cambiá divisas de forma digital.</p>
                         <a href="{% url 'operar_divisa' %}" class="btn btn-primary w-100">Operar</a>
                     </div>
                 </div>
@@ -166,6 +169,16 @@
                         <h5 class="card-title">CRUD de Cotizaciones</h5>
                         <p class="card-text">Ajuste manual de tasas de compra y venta.</p>
                         <a href="{% url 'gestion_cotizaciones' %}" class="btn btn-primary w-100">Gestionar Cotizaciones</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">Banco (simulado)</h5>
+                        <p class="card-text">Cuentas, billeteras y tarjetas de los clientes, con su disponible.</p>
+                        <a href="{% url 'gestion_cuentas_banco' %}" class="btn btn-primary w-100">Ver Banco</a>
                     </div>
                 </div>
             </div>

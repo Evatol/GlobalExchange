@@ -29,8 +29,11 @@ class Cliente(models.Model):
     """Cliente (persona física o jurídica) sobre el que operan los usuarios.
 
     Cubre RF40 (niveles/categorías entre clientes), RF41 (preferencias:
-    frecuencia, límites de compra/venta, preferencia de tipo de cambio) y
+    frecuencia, límites de operación, preferencia de tipo de cambio) y
     RF42 (un cliente asociado a uno o más usuarios, vía ``Usuario.clientes``).
+
+    El límite de cada operación lo fija la categoría (``LIMITE_POR_CATEGORIA``)
+    y la comisión, la preferencia de tipo de cambio.
     """
 
     TIPO_CHOICES = [
@@ -40,13 +43,21 @@ class Cliente(models.Model):
 
     # RF40: niveles o categorías (segmentación) de los clientes.
     CATEGORIA_MINORISTA = 'MINORISTA'
-    CATEGORIA_CORPORATIVO = 'CORPORATIVO'
+    CATEGORIA_MAYORISTA = 'MAYORISTA'
     CATEGORIA_VIP = 'VIP'
     CATEGORIA_CHOICES = [
         (CATEGORIA_MINORISTA, 'Minorista'),
-        (CATEGORIA_CORPORATIVO, 'Corporativo'),
+        (CATEGORIA_MAYORISTA, 'Mayorista'),
         (CATEGORIA_VIP, 'VIP'),
     ]
+
+    # Monto máximo (en guaraníes) de cada operación según la categoría.
+    # ``None`` = sin límite.
+    LIMITE_POR_CATEGORIA = {
+        CATEGORIA_MINORISTA: Decimal('100000.00'),
+        CATEGORIA_MAYORISTA: Decimal('1000000.00'),
+        CATEGORIA_VIP: None,
+    }
 
     # RF41: preferencia de tipo de cambio aplicada al cliente.
     PREFERENCIA_ESTANDAR = 'ESTANDAR'
@@ -74,12 +85,6 @@ class Cliente(models.Model):
         default=CATEGORIA_MINORISTA,
     )
     estado = models.BooleanField('activo', default=True)
-    limite_compra = models.DecimalField(
-        max_digits=15, decimal_places=2, default=Decimal('0.00')
-    )
-    limite_venta = models.DecimalField(
-        max_digits=15, decimal_places=2, default=Decimal('0.00')
-    )
     frecuencia_transacciones = models.IntegerField(default=0)
     preferencia_tipo_cambio = models.CharField(
         max_length=20,
@@ -93,10 +98,6 @@ class Cliente(models.Model):
 
     def clean(self):
         errores = {}
-        if self.limite_compra is not None and self.limite_compra < 0:
-            errores['limite_compra'] = 'El límite de compra no puede ser negativo.'
-        if self.limite_venta is not None and self.limite_venta < 0:
-            errores['limite_venta'] = 'El límite de venta no puede ser negativo.'
         if self.frecuencia_transacciones is not None and self.frecuencia_transacciones < 0:
             errores['frecuencia_transacciones'] = (
                 'La frecuencia de transacciones no puede ser negativa.'
@@ -108,16 +109,14 @@ class Cliente(models.Model):
         if errores:
             raise ValidationError(errores)
 
+    @property
+    def limite_por_operacion(self):
+        """Monto máximo en guaraníes de cada operación, o ``None`` si no
+        tiene límite (VIP)."""
+        return self.LIMITE_POR_CATEGORIA.get(self.categoria)
+
     def actualizar_categoria(self, categoria):
         self.categoria = categoria
-        self.save()
-
-    def establecer_limite_compra(self, limite):
-        self.limite_compra = limite
-        self.save()
-
-    def establecer_limite_venta(self, limite):
-        self.limite_venta = limite
         self.save()
 
     def establecer_frecuencia(self, frecuencia):
