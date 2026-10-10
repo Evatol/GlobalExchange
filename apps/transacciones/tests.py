@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 
 from django.contrib.auth.models import Group, User
@@ -1375,3 +1376,308 @@ class CambioEntreDivisasTests(TestCase):
         resp = self.client.get('/api/transacciones/gestion/historial/', {'moneda': self.eur.pk})
         self.assertEqual(len(resp.context['transacciones']), 1)
         self.assertContains(resp, 'USD → EUR')
+
+
+class PagoExternoModeloTests(TestCase):
+    """Los métodos de E4-157/E4-158 del modelo no dejan reabrir una operación
+    ya terminada ni pagar por la pasarela lo que no corresponde."""
+
+    def setUp(self):
+        self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        TasaCambio.objects.create(
+            moneda=self.moneda, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
+            origen='BCP', estado=True,
+        )
+        self.cliente = _cliente(nombre='Cliente Pasarela', documento='PAS-C')
+        self.usuario = Usuario.objects.create(
+            username='pas_user', email='pas@example.com', nombres='P', apellidos='U',
+        )
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='EFECTIVO')
+
+    def _tx(self, tipo='COMPRA', **extra):
+        return Transaccion.objects.create(
+            usuario=self.usuario, cliente=self.cliente, moneda=self.moneda,
+            metodo_pago=self.metodo, tipo=tipo, cantidad=Decimal('10'),
+            tasa_cambio=Decimal('7400') if tipo == 'COMPRA' else Decimal('7300'),
+            monto_total=Decimal('75110'), **extra,
+        )
+
+    def test_iniciar_deja_la_operacion_esperando_el_pago(self):
+        tx = self._tx()
+        tx.iniciar_pago_externo('PAS-1')
+        tx.refresh_from_db()
+        self.assertEqual((tx.estado, tx.referencia_pago_externo), ('PENDIENTE_PAGO', 'PAS-1'))
+
+    def test_no_se_inicia_sobre_una_operacion_ya_terminada(self):
+        for estado in ('EXITOSA', 'CANCELADA', 'FALLIDA', 'PENDIENTE_PAGO'):
+            with self.subTest(estado=estado):
+                tx = self._tx(estado=estado)
+                with self.assertRaises(ValidationError):
+                    tx.iniciar_pago_externo(f'PAS-{estado}')
+                tx.refresh_from_db()
+                self.assertEqual(tx.estado, estado)
+
+    def test_solo_las_compras_se_pagan_por_la_pasarela(self):
+        for tipo in ('VENTA', 'CAMBIO'):
+            with self.subTest(tipo=tipo), self.assertRaises(ValidationError):
+                self._tx(tipo=tipo).iniciar_pago_externo(f'PAS-{tipo}')
+
+    def test_el_webhook_no_reabre_una_cancelada_ni_una_fallida(self):
+        for estado in ('CANCELADA', 'FALLIDA', 'EXITOSA', 'PENDIENTE'):
+            with self.subTest(estado=estado):
+                tx = self._tx(estado=estado)
+                with self.assertRaises(ValidationError):
+                    tx.confirmar_pago_webhook()
+                tx.refresh_from_db()
+                self.assertEqual(tx.estado, estado)
+
+    def test_confirmar_pago_webhook_es_repetible(self):
+        tx = self._tx(estado='PENDIENTE_PAGO')
+        tx.confirmar_pago_webhook()
+        tx.confirmar_pago_webhook()
+        self.assertEqual(Transaccion.objects.get(pk=tx.pk).estado, 'PAGADO')
+
+
+class WebhookPagoExternoTests(TestCase):
+    """E4-157/E4-158: el cliente inicia el pago por la pasarela y el webhook,
+    firmado, termina de confirmarlo. No hay doble cobro con el banco."""
+
+    URL = '/api/transacciones/webhook/pago/'
+
+    def setUp(self):
+        from apps.banco.models import CuentaBancaria
+        self.CuentaBancaria = CuentaBancaria
+        self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        self.tasa = TasaCambio.objects.create(
+            moneda=self.moneda, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
+            origen='BCP', estado=True,
+        )
+        self.cliente = _cliente(
+            nombre='Cliente Webhook', documento='WH-1', categoria=Cliente.CATEGORIA_VIP,
+        )
+        self.user_final = _usuario_con_rol('final_webhook', rol='usuario_final')
+        Usuario.objects.create(
+            username='final_webhook', email='wh@example.com', nombres='W', apellidos='H',
+        ).clientes.add(self.cliente)
+        _abrir_cuenta('CA-WH', CuentaBancaria.TIPO_CUENTA, 'WH-1', saldo=Decimal('1000000'))
+        self.medio = MedioPagoCliente.objects.create(
+            cliente=self.cliente, alias='Cuenta',
+            metodo_pago=MetodoPago.objects.create(nombre='Transferencia', tipo='TRANSFERENCIA'),
+            identificador='CA-WH',
+        )
+        self.client.force_login(self.user_final)
+        self.client.post('/api/transacciones/gestion/operar/', {
+            'tipo': 'COMPRA', 'moneda_codigo': 'USD', 'cantidad': '10',
+            'medio_pago_id': self.medio.id,
+        })
+        self.tx = Transaccion.objects.get()
+
+    def _iniciar(self):
+        resp = self.client.post(f'/api/transacciones/gestion/operar/{self.tx.pk}/pago-externo/', follow=True)
+        self.tx.refresh_from_db()
+        return resp
+
+    def _aviso(self, referencia=None, estado='PAGADO', firma=None, cuerpo=None):
+        from . import webhook
+        cuerpo = cuerpo if cuerpo is not None else json.dumps({
+            'referencia': referencia or self.tx.referencia_pago_externo, 'estado': estado,
+        }).encode()
+        headers = {webhook.ENCABEZADO_FIRMA: firma if firma is not None else webhook.firmar(cuerpo)}
+        # El webhook lo llama la pasarela, no el cliente logueado.
+        return self.client_anonimo.post(
+            self.URL, data=cuerpo, content_type='application/json', headers=headers,
+        )
+
+    @property
+    def client_anonimo(self):
+        from django.test import Client
+        return Client()
+
+    def _saldo(self):
+        return self.CuentaBancaria.objects.get(numero='CA-WH').saldo
+
+    def test_iniciar_el_pago_externo_desde_la_pantalla(self):
+        resp = self._iniciar()
+        self.assertEqual(self.tx.estado, 'PENDIENTE_PAGO')
+        self.assertTrue(self.tx.referencia_pago_externo.startswith('PAS-'))
+        self.assertContains(resp, self.tx.referencia_pago_externo)
+        self.assertContains(resp, 'Esperando el pago externo')
+        self.assertNotContains(resp, 'Confirmar pago')  # ya no se confirma a mano
+
+    def test_la_pasarela_confirma_y_la_operacion_queda_exitosa(self):
+        self._iniciar()
+        resp = self._aviso()
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.tx.refresh_from_db()
+        self.assertEqual(self.tx.estado, 'EXITOSA')
+
+    def test_no_se_cobra_dos_veces_la_pasarela_y_el_banco(self):
+        self._iniciar()
+        self._aviso()
+        self.assertEqual(self._saldo(), Decimal('1000000.00'))  # el banco no se tocó
+        self.assertFalse(self.CuentaBancaria.objects.get(numero='CA-WH').movimientos.exclude(
+            concepto='Saldo inicial').exists())
+
+    def test_el_pago_normal_sigue_debitando_el_banco(self):
+        self.client.post(f'/api/transacciones/gestion/operar/{self.tx.pk}/confirmar/')
+        self.assertLess(self._saldo(), Decimal('1000000.00'))
+
+    def test_aviso_repetido_no_hace_nada_dos_veces(self):
+        self._iniciar()
+        self._aviso()
+        resp = self._aviso()
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('ya procesado', resp.json()['detail'])
+        self.assertEqual(Transaccion.objects.get().estado, 'EXITOSA')
+
+    def test_firma_invalida_se_rechaza_y_no_toca_nada(self):
+        self._iniciar()
+        for firma in ('x' * 64, 'firma-incorrecta'):
+            with self.subTest(firma=firma):
+                self.assertEqual(self._aviso(firma=firma).status_code, 403)
+        self.tx.refresh_from_db()
+        self.assertEqual(self.tx.estado, 'PENDIENTE_PAGO')
+
+    def test_sin_firma_se_rechaza(self):
+        from django.test import Client
+        self._iniciar()
+        resp = Client().post(self.URL, data={'referencia': self.tx.referencia_pago_externo, 'estado': 'PAGADO'},
+                             content_type='application/json')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_firma_de_otro_cuerpo_no_sirve(self):
+        """Reusar una firma válida con otro cuerpo (cambiar la referencia) falla."""
+        from . import webhook
+        self._iniciar()
+        firma = webhook.firmar(b'{"referencia": "OTRA", "estado": "PAGADO"}')
+        self.assertEqual(self._aviso(firma=firma).status_code, 403)
+
+    def test_sin_secreto_configurado_se_rechaza_todo(self):
+        self._iniciar()
+        with self.settings(WEBHOOK_PAGO_SECRET=''):
+            self.assertEqual(self._aviso(firma='').status_code, 403)
+        self.assertEqual(Transaccion.objects.get().estado, 'PENDIENTE_PAGO')
+
+    def test_no_pide_login_ni_csrf(self):
+        """La pasarela no tiene sesión: la firma es la autenticación."""
+        from django.test import Client
+        self._iniciar()
+        cuerpo = json.dumps({'referencia': self.tx.referencia_pago_externo, 'estado': 'PAGADO'}).encode()
+        from . import webhook
+        resp = Client(enforce_csrf_checks=True).post(
+            self.URL, data=cuerpo, content_type='application/json',
+            headers={webhook.ENCABEZADO_FIRMA: webhook.firmar(cuerpo)},
+        )
+        self.assertEqual(resp.status_code, 200)
+
+    def test_referencia_desconocida(self):
+        self.assertEqual(self._aviso(referencia='PAS-NO-EXISTE').status_code, 404)
+
+    def test_cuerpo_invalido_o_estado_desconocido(self):
+        from . import webhook
+        no_json = b'no es json'
+        self.assertEqual(self._aviso(cuerpo=no_json, firma=webhook.firmar(no_json)).status_code, 400)
+        self.assertEqual(self._aviso(referencia='x', estado='QUIEN SABE').status_code, 400)
+
+    def test_la_pasarela_rechaza_el_cobro(self):
+        self._iniciar()
+        resp = self._aviso(estado='RECHAZADO')
+        self.assertEqual(resp.status_code, 200)
+        self.tx.refresh_from_db()
+        self.assertEqual(self.tx.estado, 'FALLIDA')
+        self.assertIn('pasarela', self.tx.observacion)
+        self.assertEqual(self._saldo(), Decimal('1000000.00'))
+
+    def test_si_cambio_la_cotizacion_se_cancela_y_queda_para_devolver(self):
+        self._iniciar()
+        self.tasa.tasa_venta = Decimal('7450')
+        self.tasa.save()
+        resp = self._aviso()
+        self.assertEqual(resp.status_code, 409)
+        self.tx.refresh_from_db()
+        self.assertEqual(self.tx.estado, 'CANCELADA')
+        self.assertIn('debe devolverse', self.tx.observacion)
+        self.assertIn(self.tx.referencia_pago_externo, self.tx.observacion)
+
+    def test_el_pago_llega_tarde_a_una_operacion_cancelada(self):
+        self._iniciar()
+        self.client.post(f'/api/transacciones/gestion/operar/{self.tx.pk}/cancelar/')
+        resp = self._aviso()
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(Transaccion.objects.get().estado, 'CANCELADA')  # no revive
+
+    def test_no_se_puede_iniciar_el_pago_externo_de_una_venta(self):
+        self.client.post('/api/transacciones/gestion/operar/', {
+            'tipo': 'VENTA', 'moneda_codigo': 'USD', 'cantidad': '10', 'medio_pago_id': self.medio.id,
+        })
+        venta = Transaccion.objects.get(tipo='VENTA')
+        resp = self.client.post(f'/api/transacciones/gestion/operar/{venta.pk}/pago-externo/', follow=True)
+        self.assertContains(resp, 'solo aplica a las compras')
+        venta.refresh_from_db()
+        self.assertEqual(venta.estado, 'PENDIENTE')
+
+    def test_api_iniciar_pago_externo(self):
+        resp = self.client.post(f'/api/transacciones/transacciones/{self.tx.pk}/iniciar-pago-externo/')
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertEqual(resp.json()['estado'], 'PENDIENTE_PAGO')
+        self.assertTrue(resp.json()['referencia_pago_externo'].startswith('PAS-'))
+        # una segunda vez ya no se puede
+        self.assertEqual(
+            self.client.post(f'/api/transacciones/transacciones/{self.tx.pk}/iniciar-pago-externo/').status_code,
+            409,
+        )
+
+    def test_no_puede_iniciar_el_pago_de_la_operacion_de_otro_cliente(self):
+        otro = _cliente(nombre='Ajeno', documento='WH-2')
+        ajena = Transaccion.objects.create(
+            usuario=Usuario.objects.get(username='final_webhook'), cliente=otro, moneda=self.moneda,
+            metodo_pago=self.medio.metodo_pago, tipo='COMPRA', cantidad=Decimal('1'),
+            tasa_cambio=Decimal('7400'),
+        )
+        resp = self.client.post(f'/api/transacciones/gestion/operar/{ajena.pk}/pago-externo/')
+        self.assertEqual(resp.status_code, 404)
+        ajena.refresh_from_db()
+        self.assertEqual(ajena.estado, 'PENDIENTE')
+
+    def test_la_operacion_esperando_aparece_en_pendientes_y_en_el_historial(self):
+        self._iniciar()
+        resp = self.client.get('/api/transacciones/gestion/operar/')
+        self.assertContains(resp, 'Operaciones pendientes de pago')
+        resp = self.client.get('/api/transacciones/gestion/historial/')
+        self.assertContains(resp, 'Pendiente de Pago Externo')
+        self.assertContains(resp, 'bg-info')
+
+
+class SimularWebhookPagoComandoTests(TestCase):
+    """El comando que hace de pasarela firma con el mismo código que verifica
+    el webhook: si se desalinearan, la demo dejaría de funcionar."""
+
+    def test_el_aviso_que_firma_el_comando_lo_acepta_el_webhook(self):
+        from io import StringIO
+        from unittest import mock
+        from django.core.management import call_command
+        from . import webhook
+
+        capturado = {}
+
+        class Respuesta:
+            status = 200
+            def read(self): return b'{}'
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        def falso_urlopen(pedido, timeout=None):
+            capturado['cuerpo'] = pedido.data
+            capturado['firma'] = pedido.get_header('X-signature')
+            capturado['url'] = pedido.full_url
+            return Respuesta()
+
+        with mock.patch('urllib.request.urlopen', falso_urlopen):
+            call_command('simular_webhook_pago', 'PAS-ABC', stdout=StringIO())
+        self.assertTrue(webhook.firma_valida(capturado['cuerpo'], capturado['firma']))
+        self.assertEqual(json.loads(capturado['cuerpo']), {'referencia': 'PAS-ABC', 'estado': 'PAGADO'})
+        self.assertTrue(capturado['url'].endswith('/api/transacciones/webhook/pago/'))
+
+        with mock.patch('urllib.request.urlopen', falso_urlopen):
+            call_command('simular_webhook_pago', 'PAS-ABC', '--firma-invalida', stdout=StringIO())
+        self.assertFalse(webhook.firma_valida(capturado['cuerpo'], capturado['firma']))

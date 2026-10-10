@@ -11,12 +11,25 @@ from apps.divisas.models import Moneda
 def _a_guaranies(monto):
     """Redondea un importe a 2 decimales, que es la precisión con la que se
     guarda en la base (``decimal_places=2``).
+
+    Sin esto, el cálculo intermedio arrastra la precisión de ``tasa_cambio``
+    (6 decimales) y los montos se muestran como ``67935.99000000`` en los
+    mensajes de la pantalla y en las respuestas de la API, aunque en la base
+    queden bien.
     """
     return monto.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
 class MetodoPago(models.Model):
-    """Catálogo de métodos de pago admitidos (transferencia, billetera, efectivo…)."""
+    """Catálogo de métodos de pago admitidos (transferencia, billetera, efectivo…).
+
+    El ``tipo`` define cómo se cobra: el efectivo no pasa por el banco; los
+    demás se asocian a una cuenta del banco simulado del tipo equivalente
+    (``CUENTA_BANCO_POR_TIPO``), cuyo disponible se descuenta en cada compra
+    y se acredita en cada venta. La tarjeta de crédito solo sirve para
+    comprar: en una venta el cliente recibe plata, y eso no se acredita en
+    una tarjeta.
+    """
 
     TIPO_EFECTIVO = 'EFECTIVO'
     TIPO_TRANSFERENCIA = 'TRANSFERENCIA'
@@ -42,6 +55,7 @@ class MetodoPago(models.Model):
 
     @property
     def usa_banco(self):
+        """True si se paga desde una cuenta del banco (todo menos efectivo)."""
         return self.tipo in self.CUENTA_BANCO_POR_TIPO
 
     @property
@@ -50,6 +64,7 @@ class MetodoPago(models.Model):
 
     @property
     def permite_venta(self):
+        """En una venta el cliente recibe la plata: no se acredita en una tarjeta."""
         return self.tipo != self.TIPO_TARJETA_CREDITO
 
     def activar(self):
@@ -68,7 +83,16 @@ class MetodoPago(models.Model):
 
 
 class MedioPagoCliente(models.Model):
-    """Medio de pago concreto registrado por un cliente (RF17)."""
+    """Medio de pago concreto registrado por un cliente (RF17).
+
+    Un cliente puede tener varios: una cuenta bancaria, una billetera
+    electrónica, etc. ``metodo_pago`` es el tipo (del catálogo) e
+    ``identificador`` guarda el nº de cuenta / alias de billetera / etc.
+
+    Salvo el efectivo, el ``identificador`` es el número de una cuenta del
+    banco simulado, del tipo que corresponde y a nombre del cliente: de ahí
+    sale el disponible con el que se paga.
+    """
 
     id = models.AutoField(primary_key=True)
     cliente = models.ForeignKey(
@@ -108,6 +132,8 @@ class MedioPagoCliente(models.Model):
             raise ValidationError({'identificador': error})
 
     def validar_cuenta_banco(self):
+        """``None`` si el medio es efectivo o si su cuenta existe en el banco,
+        es del tipo correcto y está a nombre del cliente; si no, el mensaje."""
         if not self.metodo_pago_id or not self.cliente_id or not self.metodo_pago.usa_banco:
             return None
         return banco.verificar_titular(
@@ -116,12 +142,14 @@ class MedioPagoCliente(models.Model):
 
     @property
     def cuenta_banco(self):
+        """La cuenta del banco que respalda este medio (``None`` si es efectivo)."""
         if not self.metodo_pago.usa_banco:
             return None
         return banco.buscar_cuenta(self.identificador)
 
     @property
     def disponible(self):
+        """Disponible en el banco, o ``None`` si es efectivo (no tiene saldo)."""
         cuenta = self.cuenta_banco
         return cuenta.saldo if cuenta is not None else None
 
@@ -138,8 +166,29 @@ class MedioPagoCliente(models.Model):
 
 
 class Transaccion(models.Model):
-    """Operación de un cliente: compra o venta de divisas contra guaraníes,
-    o cambio de una divisa por otra.
+    """Operación de un cliente: compra o venta de divisas contra guaraníes
+    (E4-19/E4-20), o cambio de una divisa por otra (``CAMBIO``).
+
+    Ciclo de vida: se crea ``PENDIENTE`` con la tasa vigente en ese momento
+    y su comisión ya calculada (E4-144). Desde ahí, ``confirmar()`` (el
+    pago) la pasa a ``EXITOSA``, salvo que la cotización haya cambiado en el
+    medio, en cuyo caso la cancela (E4-28), o que el banco rechace el pago
+    por falta de saldo, en cuyo caso queda ``FALLIDA``; ``cancelar()`` la
+    cancela a pedido del usuario (RF23). ``EXITOSA``, ``CANCELADA`` y
+    ``FALLIDA`` son estados finales.
+
+    Una compra también puede pagarse por una pasarela externa (E4-157/E4-158):
+    ``iniciar_pago_externo()`` la deja en ``PENDIENTE_PAGO`` esperando el aviso;
+    el webhook la pasa a ``PAGADO`` (``confirmar_pago_webhook()``) y se termina
+    de confirmar con ``confirmar()``, o la deja ``FALLIDA`` si la pasarela
+    rechazó el cobro (``rechazar_pago_webhook()``). En ese caso el cobro lo hizo
+    la pasarela, así que no se debita además el banco.
+
+    En un ``CAMBIO``, ``moneda``/``cantidad``/``tasa_cambio`` son los de la
+    divisa que entrega el cliente, y ``moneda_destino``/``cantidad_destino``/
+    ``tasa_cambio_destino`` los de la que recibe. La conversión pasa por el
+    guaraní, como en una casa de cambio real: la casa le compra la divisa de
+    origen y le vende la de destino.
     """
 
     TIPOS = [
@@ -204,20 +253,65 @@ class Transaccion(models.Model):
     }
 
     def iniciar_pago_externo(self, referencia, proveedor='PASARELA_LOCAL'):
-        """Ticket E4-157: Registra la referencia e inicia la confirmación externa."""
+        """Ticket E4-157: Registra la referencia e inicia la confirmación externa.
+
+        Solo una compra ``PENDIENTE`` puede pagarse por la pasarela: en una
+        venta el cliente recibe plata (no la paga) y en un cambio solo hay
+        efectivo.
+        """
+        if self.estado != 'PENDIENTE':
+            raise ValidationError(
+                f'Solo se puede iniciar el pago externo de una transacción pendiente '
+                f'(esta está {self.get_estado_display().lower()}).'
+            )
+        if self.tipo != 'COMPRA':
+            raise ValidationError('El pago externo solo aplica a las compras.')
         self.referencia_pago_externo = referencia
         self.proveedor_pago = proveedor
         self.estado = 'PENDIENTE_PAGO'
         self.save()
 
     def confirmar_pago_webhook(self):
-        """Ticket E4-158: Confirma el pago recibido desde el Webhook pasándolo a PAGADO."""
-        if self.estado == 'CANCELADA':
-            raise ValidationError('No se puede confirmar una transacción cancelada.')
+        """Ticket E4-158: Confirma el pago recibido desde el Webhook pasándolo a PAGADO.
+
+        Solo una transacción que espera el pago externo (``PENDIENTE_PAGO``)
+        pasa a ``PAGADO``; ``PAGADO`` queda como está (el webhook puede
+        repetirse). Una cancelada, fallida o ya exitosa no se reabre.
+        """
+        if self.estado == 'PAGADO':
+            return
+        if self.estado != 'PENDIENTE_PAGO':
+            raise ValidationError(
+                f'No se puede confirmar el pago de una transacción '
+                f'{self.get_estado_display().lower()}.'
+            )
         self.estado = 'PAGADO'
         self.save()
 
+    def rechazar_pago_webhook(self, motivo='Pago rechazado por la pasarela.'):
+        """Ticket E4-158: la pasarela informó que el pago no se pudo cobrar; la
+        operación queda ``FALLIDA`` con el motivo."""
+        if self.estado != 'PENDIENTE_PAGO':
+            raise ValidationError(
+                f'No se puede rechazar el pago de una transacción '
+                f'{self.get_estado_display().lower()}.'
+            )
+        self.estado = 'FALLIDA'
+        self.observacion = motivo[:255]
+        self.save()
+
     def calcular_tasas_y_comisiones(self):
+        """
+        Lógica del Ticket E4-144:
+        Calcula el subtotal, la comisión aplicada (según la preferencia de
+        tipo de cambio del cliente, si hay uno asociado) y el monto total
+        definitivo de la transacción.
+
+        En un ``CAMBIO`` el subtotal es lo que vale en guaraníes la divisa
+        que entrega el cliente; se le descuenta la comisión y lo que queda
+        (``monto_total``) se convierte a la divisa de destino. Se redondea
+        hacia abajo: la casa no entrega centavos que no cubrió.
+        """
         if self.cliente_id:
             self.comision_porcentaje = self.COMISION_POR_PREFERENCIA.get(
                 self.cliente.preferencia_tipo_cambio, self.comision_porcentaje
@@ -250,6 +344,15 @@ class Transaccion(models.Model):
         return res['monto_total']
 
     def validar_limite_cliente(self):
+        """E4-143 (RF41): el monto de la operación no puede superar el límite
+        por operación de la categoría del cliente (Minorista 100.000 Gs,
+        Mayorista 1.000.000 Gs, VIP sin límite). Aplica igual a compras,
+        ventas y cambios, siempre sobre el ``monto_total`` en guaraníes.
+
+        Devuelve ``None`` si está dentro del límite, o el mensaje de error
+        correspondiente si lo supera. Requiere que ``monto_total`` ya esté
+        calculado (``calcular_tasas_y_comisiones``).
+        """
         if not self.cliente_id:
             return None
 
@@ -267,15 +370,40 @@ class Transaccion(models.Model):
 
     @property
     def subtotal(self):
+        """Cantidad por tasa aplicada, antes de la comisión (en guaraníes)."""
         return _a_guaranies(self.cantidad * self.tasa_cambio)
 
     def confirmar(self):
+        """Confirma el pago de una transacción ``PENDIENTE`` (E4-28).
+
+        Antes de confirmar vuelve a leer la cotización vigente y la compara
+        con la tasa guardada cuando se inició la operación (en un cambio,
+        las de las dos divisas):
+
+        * si cambió, la transacción pasa a ``CANCELADA`` (si ya la había cobrado
+          la pasarela externa, queda anotado que ese pago debe devolverse);
+        * si no, se cobra (compra) o se paga (venta) en la cuenta del banco
+          del medio de pago. Si el banco la rechaza (por ejemplo, por saldo
+          insuficiente) la transacción pasa a ``FALLIDA``;
+        * si el banco la acepta, pasa a ``EXITOSA``.
+
+        Cancelada o fallida, lanza ``ValidationError`` con el motivo.
+
+        Solo se puede confirmar una transacción pendiente: sin esa guarda,
+        una transacción ya cancelada podía volver a confirmarse si la
+        cotización regresaba a su valor original. La fila queda bloqueada
+        mientras se procesa, para que dos confirmaciones simultáneas no
+        cobren dos veces.
+        """
         with transaction.atomic():
             error = self._procesar_pago()
         if error:
             raise ValidationError(error)
 
     def _procesar_pago(self):
+        """Lo que hace ``confirmar()``, dentro de su transacción. Devuelve el
+        mensaje de error en vez de lanzarlo, para que el cambio de estado
+        (cancelada o fallida) se guarde igual."""
         self.estado = (
             Transaccion.objects.select_for_update()
             .filter(pk=self.pk).values_list('estado', flat=True).get()
@@ -294,6 +422,11 @@ class Transaccion(models.Model):
         if cambios:
             self.estado = 'CANCELADA'
             self.observacion = 'Cambió la cotización antes del pago.'
+            if self.referencia_pago_externo:
+                self.observacion = (
+                    f'Cambió la cotización antes de confirmar: el pago externo '
+                    f'{self.referencia_pago_externo} debe devolverse al cliente.'
+                )
             self.save()
             return (
                 f'La transacción ha sido cancelada porque la tasa de cambio ha sufrido '
@@ -313,6 +446,9 @@ class Transaccion(models.Model):
         return None
 
     def _cambios_de_cotizacion(self):
+        """Compara las tasas guardadas con las vigentes. Devuelve
+        ``(cambios, error)``: la lista de las que cambiaron (vacía si
+        ninguna) o el error si alguna moneda ya no tiene cotización."""
         if self.tipo == 'CAMBIO':
             a_comparar = [
                 (self.moneda, 'VENTA', self.tasa_cambio),
@@ -333,7 +469,12 @@ class Transaccion(models.Model):
         return cambios, None
 
     def _mover_fondos(self):
+        """Cobra la compra o paga la venta en la cuenta del banco del medio
+        de pago. Devuelve el motivo si el banco la rechaza, o ``None``. El
+        efectivo no pasa por el banco."""
         medio = self.medio_pago
+        if self.referencia_pago_externo:
+            return None  # ya lo cobró la pasarela externa: no se debita además el banco
         if medio is None or not medio.metodo_pago.usa_banco:
             return None
         if self.tipo == 'CAMBIO':
@@ -358,6 +499,12 @@ class Transaccion(models.Model):
         return None
 
     def cancelar(self):
+        """Cancela a pedido del usuario una transacción todavía no pagada (RF23).
+
+        Aplica a transacciones ``PENDIENTE`` y a las que esperan la pasarela
+        (``PENDIENTE_PAGO``): una exitosa ya se pagó y una cancelada ya terminó.
+        Si la pasarela cobra después de cancelar, el webhook la rechaza (409).
+        """
         if self.estado not in ['PENDIENTE', 'PENDIENTE_PAGO']:
             raise ValidationError(
                 f'Solo se puede cancelar una transacción pendiente '

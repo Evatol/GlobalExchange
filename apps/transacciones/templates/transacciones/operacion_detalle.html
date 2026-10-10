@@ -26,6 +26,10 @@
                     <p class="text-muted mb-1">{{ transaccion.cliente.nombre }}</p>
                     {% if transaccion.estado == 'PENDIENTE' %}
                         <span class="badge bg-warning text-dark">Pendiente de pago</span>
+                    {% elif transaccion.estado == 'PENDIENTE_PAGO' %}
+                        <span class="badge bg-info text-dark">Esperando el pago externo</span>
+                    {% elif transaccion.estado == 'PAGADO' %}
+                        <span class="badge bg-info text-dark">Pagado, confirmando</span>
                     {% elif transaccion.estado == 'EXITOSA' %}
                         <span class="badge bg-success">Exitosa</span>
                     {% elif transaccion.estado == 'CANCELADA' %}
@@ -79,7 +83,16 @@
                     </div>
                 </div>
 
-                {% if transaccion.estado == 'PENDIENTE' %}
+                {% if transaccion.estado == 'PENDIENTE_PAGO' %}
+                    <div class="alert alert-info small mt-3 mb-3">
+                        Pago externo iniciado. Referencia: <strong>{{ transaccion.referencia_pago_externo }}</strong>.
+                        La operación se confirma sola cuando la pasarela avise que cobró.
+                    </div>
+                    <form method="post" action="{% url 'operacion_cancelar' transaccion.id %}" class="m-0">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-secondary w-100">Cancelar operación</button>
+                    </form>
+                {% elif transaccion.estado == 'PENDIENTE' %}
                     <p class="text-muted small text-center mt-3">
                         Si la cotización cambia antes de confirmar, la operación se cancela.
                     </p>
@@ -93,6 +106,12 @@
                             <button type="submit" class="btn btn-success w-100">Confirmar pago</button>
                         </form>
                     </div>
+                    {% if transaccion.tipo == 'COMPRA' %}
+                    <form method="post" action="{% url 'operacion_pago_externo' transaccion.id %}" class="mt-2 mb-0">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-link btn-sm w-100">Pagar por la pasarela externa</button>
+                    </form>
+                    {% endif %}
                 {% else %}
                     <div class="d-flex gap-2 mt-3">
                         <a href="{% url 'operar_divisa' %}" class="btn btn-primary flex-fill">Nueva operación</a>
