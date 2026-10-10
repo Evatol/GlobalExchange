@@ -88,6 +88,9 @@
                         Pago externo iniciado. Referencia: <strong>{{ transaccion.referencia_pago_externo }}</strong>.
                         La operación se confirma sola cuando la pasarela avise que cobró.
                     </div>
+                    {% if pasarela_activa %}
+                    <a href="{% url 'pasarela_pagar' transaccion.referencia_pago_externo %}" class="btn btn-primary w-100 mb-2">Ir a la pasarela para pagar</a>
+                    {% endif %}
                     <form method="post" action="{% url 'operacion_cancelar' transaccion.id %}" class="m-0">
                         {% csrf_token %}
                         <button type="submit" class="btn btn-outline-secondary w-100">Cancelar operación</button>
@@ -106,10 +109,10 @@
                             <button type="submit" class="btn btn-success w-100">Confirmar pago</button>
                         </form>
                     </div>
-                    {% if transaccion.tipo == 'COMPRA' %}
+                    {% if transaccion.tipo == 'COMPRA' and pasarela_activa %}
                     <form method="post" action="{% url 'operacion_pago_externo' transaccion.id %}" class="mt-2 mb-0">
                         {% csrf_token %}
-                        <button type="submit" class="btn btn-link btn-sm w-100">Pagar por la pasarela externa</button>
+                        <button type="submit" class="btn btn-outline-primary w-100">Pagar con la pasarela</button>
                     </form>
                     {% endif %}
                 {% else %}

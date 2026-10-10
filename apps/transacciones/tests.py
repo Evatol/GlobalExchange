@@ -1473,7 +1473,7 @@ class WebhookPagoExternoTests(TestCase):
         self.tx = Transaccion.objects.get()
 
     def _iniciar(self):
-        resp = self.client.post(f'/api/transacciones/gestion/operar/{self.tx.pk}/pago-externo/', follow=True)
+        resp = self.client.post(f'/api/transacciones/gestion/operar/{self.tx.pk}/pago-externo/')
         self.tx.refresh_from_db()
         return resp
 
@@ -1500,9 +1500,16 @@ class WebhookPagoExternoTests(TestCase):
         resp = self._iniciar()
         self.assertEqual(self.tx.estado, 'PENDIENTE_PAGO')
         self.assertTrue(self.tx.referencia_pago_externo.startswith('PAS-'))
-        self.assertContains(resp, self.tx.referencia_pago_externo)
-        self.assertContains(resp, 'Esperando el pago externo')
-        self.assertNotContains(resp, 'Confirmar pago')  # ya no se confirma a mano
+        # lleva al cliente a la pantalla de pago de la pasarela
+        self.assertRedirects(
+            resp, f'/api/pasarela/pagar/{self.tx.referencia_pago_externo}/', fetch_redirect_response=False,
+        )
+        # y si vuelve sin pagar, el resumen muestra cómo seguir
+        resumen = self.client.get(f'/api/transacciones/gestion/operar/{self.tx.pk}/')
+        self.assertContains(resumen, self.tx.referencia_pago_externo)
+        self.assertContains(resumen, 'Esperando el pago externo')
+        self.assertContains(resumen, 'Ir a la pasarela para pagar')
+        self.assertNotContains(resumen, 'Confirmar pago')  # ya no se confirma a mano
 
     def test_la_pasarela_confirma_y_la_operacion_queda_exitosa(self):
         self._iniciar()
