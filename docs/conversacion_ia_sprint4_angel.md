@@ -174,7 +174,9 @@ En varios momentos corregí a la IA (ver la sección 14), y eso cambió el resul
 > **pasarela simulada completa por pantallas**, con el protocolo de una real:
 > pantalla de pago, aviso firmado y confirmación solo por el webhook (commit
 > `718d58a`), apagable con `PASARELA_SIMULADA_ACTIVA`. Se probó por HTTP real contra
-> un servidor levantado.
+> un servidor levantado. Más adelante informé en la conversación que la profesora
+> confirmó que se puede entregar con la pasarela simulada, sin proveedor real, y con
+> eso quedó cerrado el punto de confirmación de pago del alcance.
 
 ## 11. Módulo de Caja: E4-100 y E4-101
 

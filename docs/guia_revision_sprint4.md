@@ -134,12 +134,13 @@ cotización entre que se inició el pago y el aviso, se cancela y queda anotado
 que hay que devolver el pago. Solo se paga así una compra, y no se debita
 además el banco."*
 
-**Si preguntan por SIPAP, Stripe o Bancard:** no pudimos confirmar el acceso a
-un ambiente de pruebas de ninguno desde Paraguay. La pasarela quedó como un
-módulo aparte (`apps/pasarela`), y para usar un proveedor real se reemplaza esa
-pantalla por la página de pago del proveedor y se agrega la verificación de su
-firma; el resto del flujo (referencia, webhook, confirmación, devolución) no
-cambia.
+**Si preguntan por SIPAP, Stripe o Bancard:** la cátedra confirmó que esta
+integración se puede entregar con una **pasarela simulada**, y así quedó. No
+pudimos confirmar acceso a un ambiente de pruebas de ninguno de esos servicios
+desde Paraguay. La pasarela es un módulo aparte (`apps/pasarela`): para usar un
+proveedor real se reemplaza esa pantalla por la página de pago del proveedor y se
+agrega la verificación de su firma; el resto del flujo (referencia, webhook,
+confirmación, devolución) no cambia.
 
 **Seguridad:** la pantalla solo existe si `PASARELA_SIMULADA_ACTIVA` está
 encendida, cada cliente solo llega a sus propias operaciones, y el webhook
@@ -318,11 +319,11 @@ docker compose -f docker-compose.prod.yml down
 
 ## 9. Preguntas que ya tenés respondidas
 
-**"¿Por qué la pasarela es simulada?"** No pudimos confirmar acceso a un ambiente
-de pruebas de SIPAP, Bancard o Stripe desde Paraguay. Se hizo con el protocolo de
-una real (referencia, webhook firmado, confirmación asíncrona, no doble cobro) y
-como módulo aparte, para enchufar un proveedor cambiando solo la pantalla y la
-verificación de firma.
+**"¿Por qué la pasarela es simulada?"** Porque la cátedra confirmó que se podía
+entregar así, y porque no pudimos confirmar acceso a un ambiente de pruebas de
+SIPAP, Bancard o Stripe desde Paraguay. Tiene el protocolo de una real (referencia,
+webhook firmado, confirmación asíncrona, no doble cobro) y es un módulo aparte, para
+enchufar un proveedor cambiando solo la pantalla y la verificación de firma.
 
 **"¿Qué significa 'registro automático de movimientos' (E4-101)?"** Que el
 sistema calcula solo qué billetes recibe y entrega la caja en cada operación y
