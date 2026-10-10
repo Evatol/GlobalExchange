@@ -238,7 +238,14 @@ def _simular(moneda_codigo, tipo_operacion, cantidad, moneda_destino_codigo=None
 
 class PantallaPublicaCambiosView(View):
     """Pantalla pública en HTML (RF13, RF20, RF24): cotizaciones del día y
-    calculadora de conversión, visible sin haber iniciado sesión."""
+    calculadora de conversión, visible sin haber iniciado sesión.
+
+    No repite la lógica de consulta/cálculo: reutiliza el mismo serializer
+    de validación que usa el simulador por API (``SimulacionRequestSerializer``)
+    y el mismo manager de ``TasaCambio`` (``objects.activa_para``), para que
+    ambas puertas de entrada (esta vista HTML y ``/api/divisas/simular/``)
+    calculen siempre igual.
+    """
 
     def get(self, request):
         tasas = TasaCambio.objects.filter(estado=True).select_related('moneda')
@@ -285,6 +292,9 @@ class PantallaPublicaCambiosView(View):
 
 @login_required
 def gestion_monedas_view(request):
+    """Pantalla propia para el CRUD de Monedas (E4-137), en vez de la API
+    navegable de DRF. Reutiliza ``MonedaSerializer`` para no duplicar las
+    validaciones (código único, etc.). Solo administrador/analista."""
     _exige_administrador_o_analista(request.user)
 
     error = None
@@ -307,6 +317,9 @@ def gestion_monedas_view(request):
 
 @login_required
 def moneda_editar_view(request, pk):
+    """Edita el código, nombre y símbolo de una moneda existente. Reutiliza
+    ``MonedaSerializer`` (misma validación que el alta: código único).
+    Solo administrador/analista."""
     _exige_administrador_o_analista(request.user)
     moneda = Moneda.objects.filter(pk=pk).first()
     if moneda is None:
@@ -328,6 +341,7 @@ def moneda_editar_view(request, pk):
 
 @login_required
 def moneda_toggle_view(request, pk):
+    """Activa/desactiva una moneda desde la pantalla de gestión (borrado lógico)."""
     _exige_administrador_o_analista(request.user)
     moneda = Moneda.objects.filter(pk=pk).first()
     if moneda is not None:
@@ -337,6 +351,11 @@ def moneda_toggle_view(request, pk):
 
 @login_required
 def gestion_cotizaciones_view(request):
+    """Pantalla propia para el CRUD de Cotizaciones (E4-26), sobre
+    ``TasaCambio``. Reutiliza ``TasaCambioSerializer`` (misma validación
+    que la API: la venta no puede ser menor a la compra) y, al crear una
+    activa, desactiva automáticamente la anterior de esa misma moneda
+    (igual que ``CotizacionViewSet``). Solo administrador/analista."""
     _exige_administrador_o_analista(request.user)
 
     error = None
@@ -370,6 +389,10 @@ def gestion_cotizaciones_view(request):
 
 @login_required
 def cotizacion_editar_view(request, pk):
+    """Edita una cotización existente (moneda, tasas, origen, estado).
+    Reutiliza ``TasaCambioSerializer`` (misma validación: la venta no puede
+    ser menor a la compra) y, si queda activa, desactiva las demás activas
+    de esa misma moneda (igual que al crear). Solo administrador/analista."""
     _exige_administrador_o_analista(request.user)
     cotizacion_obj = TasaCambio.objects.select_related('moneda').filter(pk=pk).first()
     if cotizacion_obj is None:
@@ -405,6 +428,9 @@ def cotizacion_editar_view(request, pk):
 
 @login_required
 def cotizacion_toggle_view(request, pk):
+    """Activa/desactiva una cotización desde la pantalla de gestión. Al
+    reactivar, desactiva las demás activas de esa misma moneda (una sola
+    cotización vigente por moneda, igual que la API)."""
     _exige_administrador_o_analista(request.user)
     cotizacion = TasaCambio.objects.filter(pk=pk).first()
     if cotizacion is not None:
