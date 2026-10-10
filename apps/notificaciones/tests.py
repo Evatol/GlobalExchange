@@ -257,3 +257,84 @@ class PlantillasSinComentariosRotosTests(TestCase):
                 if '{#' in linea and '#}' not in linea:
                     rotos.append(f'{plantilla.relative_to(settings.BASE_DIR)}:{n}')
         self.assertEqual(rotos, [], 'Usá {% comment %} para comentarios de varias líneas.')
+
+
+class EditarLaCotizacionVigenteAvisaTests(TestCase):
+    """Editar la cotización vigente (la forma más natural de cambiar una tasa) también
+    avisa a quienes tienen la moneda como favorita. Antes solo avisaba al crear una
+    cotización nueva: al editar no había una cotización "anterior" con la que comparar."""
+
+    def setUp(self):
+        from django.contrib.auth.models import Group
+        self.usd = Moneda.objects.create(codigo='USD', nombre='Dólar', estado=True)
+        self.eur = Moneda.objects.create(codigo='EUR', nombre='Euro', estado=True)
+        self.tasa = TasaCambio.objects.create(
+            moneda=self.usd, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'), origen='x', estado=True,
+        )
+        self.favorito = Usuario.objects.create(
+            username='fav_edit', email='fe@example.com', nombres='F', apellidos='E', telefono='1', direccion='x',
+        )
+        self.favorito.monedas_favoritas.add(self.usd)
+        analista = DjangoUser.objects.create_user('analista_edit')
+        analista.groups.add(Group.objects.get_or_create(name='analista')[0])
+        self.client.force_login(analista)
+        self.url = reverse('cotizacion_editar', args=[self.tasa.pk])
+
+    def _editar(self, compra, venta, **extra):
+        datos = {'moneda': self.usd.pk, 'tasa_compra': compra, 'tasa_venta': venta, 'origen': 'x', 'estado': 'on'}
+        datos.update(extra)
+        return self.client.post(self.url, datos)
+
+    def test_editar_la_vigente_con_una_variacion_grande_avisa_y_manda_correo(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            self.assertEqual(self._editar('7500', '7600').status_code, 302)
+        aviso = Notificaciones.objects.get(usuario=self.favorito)
+        self.assertIn('USD', aviso.titulo)
+        self.assertIn('7300', aviso.mensaje)  # de cuánto a cuánto cambió
+        self.assertIn('7500', aviso.mensaje)
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_editar_con_una_variacion_chica_no_avisa(self):
+        self._editar('7310', '7410')  # +0,14%
+        self.assertEqual(Notificaciones.objects.count(), 0)
+
+    def test_guardar_sin_cambiar_las_tasas_no_avisa(self):
+        self._editar('7300', '7400', origen='otro origen')
+        self.assertEqual(Notificaciones.objects.count(), 0)
+
+    def test_no_avisa_a_quien_no_tiene_la_moneda_como_favorita(self):
+        Usuario.objects.create(
+            username='sin_fav', email='sf@example.com', nombres='S', apellidos='F', telefono='2', direccion='x',
+        )
+        self._editar('7500', '7600')
+        self.assertEqual(list(Notificaciones.objects.values_list('usuario__username', flat=True)), ['fav_edit'])
+
+    def test_cambiar_la_moneda_de_la_cotizacion_no_compara_dolares_con_euros(self):
+        self._editar('1', '1', moneda=self.eur.pk)  # 7300 USD -> 1 EUR no es una "variación"
+        self.assertEqual(Notificaciones.objects.count(), 0)
+
+    def test_reactivar_editando_una_inactiva_compara_con_la_vigente(self):
+        inactiva = TasaCambio.objects.create(
+            moneda=self.usd, tasa_compra=Decimal('9000'), tasa_venta=Decimal('9100'), origen='x', estado=False,
+        )
+        self.client.post(reverse('cotizacion_editar', args=[inactiva.pk]), {
+            'moneda': self.usd.pk, 'tasa_compra': '9000', 'tasa_venta': '9100', 'origen': 'x', 'estado': 'on',
+        })
+        self.assertEqual(Notificaciones.objects.filter(usuario=self.favorito).count(), 1)  # 7300 -> 9000
+        self.tasa.refresh_from_db()
+        self.assertFalse(self.tasa.estado)  # y la anterior dejó de ser la vigente
+
+    def test_por_la_api_tambien_avisa(self):
+        resp = self.client.patch(
+            f'/api/divisas/cotizaciones/{self.tasa.pk}/', {'tasa_compra': '7500', 'tasa_venta': '7600'},
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(Notificaciones.objects.filter(usuario=self.favorito).count(), 1)
+
+    def test_por_la_api_una_variacion_chica_no_avisa(self):
+        self.client.patch(
+            f'/api/divisas/cotizaciones/{self.tasa.pk}/', {'tasa_compra': '7305', 'tasa_venta': '7405'},
+            content_type='application/json',
+        )
+        self.assertEqual(Notificaciones.objects.count(), 0)
