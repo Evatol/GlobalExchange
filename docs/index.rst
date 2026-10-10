@@ -13,6 +13,7 @@ Cómo regenerar esta documentación::
    :caption: Módulos:
 
    usuarios
+   banco
    caja
    divisas
    facturacion

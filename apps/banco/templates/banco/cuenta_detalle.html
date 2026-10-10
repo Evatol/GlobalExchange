@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GlobalExchange - Cuenta {{ cuenta.numero }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="{% url 'menu_principal' %}">GlobalExchange</a>
+            <div class="d-flex align-items-center text-white">
+                <span class="me-3">Bienvenido, <strong>{{ usuario.username }}</strong></span>
+                <a href="{% url 'gestion_cuentas_banco' %}" class="btn btn-outline-light btn-sm">Volver al Banco</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container my-5">
+        <div class="row justify-content-center">
+            <div class="col-md-9">
+                <div class="text-center mb-4">
+                    <h2>{{ cuenta.get_tipo_display }} {{ cuenta.numero }}</h2>
+                    <p class="text-muted mb-1">{{ cuenta.entidad }} · {{ cuenta.titular_nombre }} ({{ cuenta.titular_documento }})</p>
+                    <p class="fs-5 mb-0">
+                        Disponible: <strong>{{ cuenta.saldo|floatformat:"2g" }} Gs</strong>
+                        {% if cuenta.es_tarjeta %}
+                            <span class="text-muted fs-6">de una línea de {{ cuenta.linea_credito|floatformat:"0g" }} Gs</span>
+                        {% endif %}
+                    </p>
+                    {% if not cuenta.estado %}<span class="badge bg-secondary">inactiva</span>{% endif %}
+                </div>
+
+                {% for m in messages %}
+                    <div class="alert {% if m.tags == 'error' %}alert-danger{% elif m.tags == 'success' %}alert-success{% else %}alert-info{% endif %} py-2">{{ m }}</div>
+                {% endfor %}
+
+                {% if puede_escribir and cuenta.estado %}
+                <form method="post" action="{% url 'cuenta_banco_cargar' cuenta.id %}" class="d-flex justify-content-center gap-2 mb-4">
+                    {% csrf_token %}
+                    <input type="hidden" name="volver" value="detalle">
+                    <input type="number" step="0.01" min="0.01" name="monto" class="form-control" style="max-width: 200px" placeholder="Monto Gs" required>
+                    <button type="submit" class="btn btn-outline-secondary">
+                        {% if cuenta.es_tarjeta %}Registrar pago de tarjeta{% else %}Cargar saldo{% endif %}
+                    </button>
+                </form>
+                {% endif %}
+
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table align-middle mb-0">
+                                <thead>
+                                    <tr class="text-muted">
+                                        <th>Fecha</th>
+                                        <th>Concepto</th>
+                                        <th>Referencia</th>
+                                        <th class="text-end">Monto</th>
+                                        <th class="text-end">Saldo</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for mov in movimientos %}
+                                    <tr>
+                                        <td class="text-nowrap">{{ mov.fecha_hora|date:"d/m/Y H:i" }}</td>
+                                        <td>{{ mov.concepto }}</td>
+                                        <td><small class="text-muted">{{ mov.referencia|default:"-" }}</small></td>
+                                        <td class="text-end text-nowrap {% if mov.tipo == 'DEBITO' %}text-danger{% else %}text-success{% endif %}">
+                                            {% if mov.tipo == 'DEBITO' %}−{% else %}+{% endif %}{{ mov.monto|floatformat:"2g" }}
+                                        </td>
+                                        <td class="text-end text-nowrap">{{ mov.saldo_resultante|floatformat:"2g" }}</td>
+                                    </tr>
+                                    {% empty %}
+                                    <tr>
+                                        <td colspan="5" class="text-center text-muted">La cuenta todavía no tiene movimientos.</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
