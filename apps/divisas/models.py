@@ -1,3 +1,5 @@
+from decimal import ROUND_DOWN, Decimal
+
 from django.db import models
 
 
@@ -96,6 +98,20 @@ class TasaCambio(models.Model):
         if operacion == 'VENTA':
             return self.tasa_compra
         raise ValueError(f'Operación inválida: {operacion!r} (debe ser COMPRA o VENTA).')
+
+    @staticmethod
+    def convertir_entre_divisas(tasa_origen, tasa_destino, cantidad):
+        """Cuánto recibe quien cambia ``cantidad`` de la divisa de
+        ``tasa_origen`` por la de ``tasa_destino``, sin comisión.
+
+        Pasa por el guaraní: la casa le compra la divisa que entrega (tasa de
+        compra de la pizarra) y le vende la que recibe (tasa de venta). Se
+        redondea hacia abajo, como en la operación real de ``Transaccion``.
+        """
+        guaranies = cantidad * tasa_origen.tasa_para('VENTA')
+        return (guaranies / tasa_destino.tasa_para('COMPRA')).quantize(
+            Decimal('0.01'), rounding=ROUND_DOWN
+        )
 
     def obtener_tasa_compra(self):
         return self.tasa_compra

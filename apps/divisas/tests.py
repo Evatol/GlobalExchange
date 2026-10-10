@@ -670,3 +670,76 @@ class CotizacionesVigentesTests(TestCase):
         self.eur.desactivar()
         vigentes = list(TasaCambio.objects.vigentes())
         self.assertEqual([t.tasa_compra for t in vigentes], [Decimal('7000')])
+
+
+class CalculadoraCambioEntreDivisasTests(TestCase):
+    """La calculadora pública y el simulador por API también convierten de
+    una divisa a otra (antes solo contra guaraní)."""
+
+    def setUp(self):
+        self.usd = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        self.eur = Moneda.objects.create(codigo='EUR', nombre='Euro', simbolo='€')
+        TasaCambio.objects.create(
+            moneda=self.usd, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'), origen='x',
+        )
+        TasaCambio.objects.create(
+            moneda=self.eur, tasa_compra=Decimal('7900'), tasa_venta=Decimal('8050'), origen='x',
+        )
+        self.url = reverse('pantalla-publica')
+        self.url_api = reverse('simulador-conversion')
+
+    def _datos(self, **extra):
+        datos = {
+            'moneda_codigo': 'USD', 'tipo_operacion': 'cambio',
+            'moneda_destino_codigo': 'EUR', 'cantidad': '100',
+        }
+        datos.update(extra)
+        return datos
+
+    def test_pantalla_publica_convierte_de_usd_a_eur(self):
+        resp = self.client.post(self.url, self._datos())
+        # 100 USD x 7300 (la casa compra) = 730.000 / 8050 (la casa vende EUR) = 90,68
+        self.assertEqual(resp.context['resultado'], Decimal('90.68'))
+        self.assertContains(resp, 'EUR')
+        self.assertContains(resp, 'Moneda que recibís')
+
+    def test_api_da_lo_mismo_que_la_pantalla(self):
+        html = self.client.post(self.url, self._datos())
+        api = self.client.post(self.url_api, self._datos())
+        self.assertEqual(api.status_code, status.HTTP_200_OK, api.data)
+        self.assertEqual(html.context['resultado'], Decimal(api.data['resultado']))
+        self.assertEqual(api.data['moneda_destino'], 'EUR')
+
+    def test_exige_la_moneda_de_destino(self):
+        resp = self.client.post(self.url_api, self._datos(moneda_destino_codigo=''))
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_las_monedas_tienen_que_ser_distintas(self):
+        resp = self.client.post(self.url, self._datos(moneda_destino_codigo='usd'))
+        self.assertIsNone(resp.context['resultado'])
+        self.assertContains(resp, 'tienen que ser distintas')
+
+    def test_moneda_de_destino_sin_cotizacion(self):
+        Moneda.objects.create(codigo='BRL', nombre='Real', simbolo='R$')
+        resp = self.client.post(self.url_api, self._datos(moneda_destino_codigo='BRL'))
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_compra_y_venta_siguen_igual(self):
+        resp = self.client.post(self.url_api, {
+            'moneda_codigo': 'USD', 'tipo_operacion': 'compra', 'cantidad': '10',
+        })
+        self.assertEqual(Decimal(resp.data['resultado']), Decimal('74000.00'))
+        self.assertNotIn('moneda_destino', resp.data)
+
+    def test_coincide_con_el_cambio_real_cuando_no_hay_comision(self):
+        """La calculadora es el cambio de ``Transaccion`` sin la comisión."""
+        from apps.transacciones.models import MetodoPago, Transaccion
+        tx = Transaccion(
+            moneda=self.usd, moneda_destino=self.eur,
+            metodo_pago=MetodoPago(nombre='Efectivo', tipo='EFECTIVO'), tipo='CAMBIO',
+            cantidad=Decimal('100'), tasa_cambio=Decimal('7300'),
+            tasa_cambio_destino=Decimal('8050'), comision_porcentaje=Decimal('0'),
+        )
+        tx.calcular_tasas_y_comisiones()
+        api = self.client.post(self.url_api, self._datos())
+        self.assertEqual(tx.cantidad_destino, Decimal(api.data['resultado']))

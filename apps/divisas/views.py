@@ -166,43 +166,63 @@ class SimuladorConversionView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        moneda_codigo = serializer.validated_data['moneda_codigo']
-        tipo_operacion = serializer.validated_data['tipo_operacion']
-        cantidad = serializer.validated_data['cantidad']
+        datos = serializer.validated_data
+        simulacion, tasa_aplicada, tasa_obj, error = _simular(
+            datos['moneda_codigo'], datos['tipo_operacion'], datos['cantidad'],
+            datos.get('moneda_destino_codigo'),
+        )
+        if error:
+            return Response({"error": error}, status=status.HTTP_404_NOT_FOUND)
 
-        tasa_obj = TasaCambio.objects.activa_para(moneda_codigo)
+        respuesta = {
+            "moneda": tasa_obj.moneda.codigo,
+            "simbolo": tasa_obj.moneda.simbolo,
+            "tipo_operacion": datos['tipo_operacion'],
+            "cantidad": datos['cantidad'],
+            "tasa_aplicada": tasa_aplicada,
+            "resultado": simulacion.resultado,
+            "fecha_hora": simulacion.fecha_hora,
+        }
+        if datos['tipo_operacion'] == 'cambio':
+            # El resultado está en la divisa que se recibe, no en guaraníes.
+            respuesta["moneda_destino"] = datos['moneda_destino_codigo'].upper()
+        return Response(respuesta, status=status.HTTP_200_OK)
 
-        if not tasa_obj:
-            return Response(
-                {
-                    "error": f"No se encontró una tasa de cambio activa para la moneda '{moneda_codigo}'."
-                },
-                status=status.HTTP_404_NOT_FOUND,
+
+def _simular(moneda_codigo, tipo_operacion, cantidad, moneda_destino_codigo=None):
+    """Calcula y guarda una ``Simulacion``. La usan la pantalla pública y el
+    simulador por API, para que calculen siempre igual.
+
+    * ``compra``/``venta``: el resultado está en guaraníes, a la tasa que
+      corresponde al cliente (ver ``TasaCambio.tasa_para``).
+    * ``cambio``: el resultado está en la divisa de destino (ver
+      ``TasaCambio.convertir_entre_divisas``).
+
+    Devuelve ``(simulacion, tasa_aplicada, tasa_origen, error)``; si hay
+    ``error``, lo demás es ``None``.
+    """
+    tasa_obj = TasaCambio.objects.activa_para(moneda_codigo)
+    if not tasa_obj:
+        return None, None, None, (
+            f"No se encontró una tasa de cambio activa para la moneda '{moneda_codigo}'."
+        )
+
+    if tipo_operacion == 'cambio':
+        tasa_destino = TasaCambio.objects.activa_para(moneda_destino_codigo)
+        if not tasa_destino:
+            return None, None, None, (
+                f"No se encontró una tasa de cambio activa para la moneda '{moneda_destino_codigo}'."
             )
-
-        # Tasa que se le aplica al cliente (ver TasaCambio.tasa_para).
+        tasa_aplicada = tasa_obj.tasa_para('VENTA')
+        resultado = TasaCambio.convertir_entre_divisas(tasa_obj, tasa_destino, cantidad)
+    else:
         tasa_aplicada = tasa_obj.tasa_para(tipo_operacion)
+        resultado = cantidad * tasa_aplicada
 
-        # Utilizar el modelo Simulacion para guardar y calcular
-        simulacion = Simulacion(
-            tipo_operacion=tipo_operacion,
-            cantidad=cantidad,
-            resultado=cantidad * tasa_aplicada,
-        )
-        simulacion.save()
-
-        return Response(
-            {
-                "moneda": tasa_obj.moneda.codigo,
-                "simbolo": tasa_obj.moneda.simbolo,
-                "tipo_operacion": tipo_operacion,
-                "cantidad": cantidad,
-                "tasa_aplicada": tasa_aplicada,
-                "resultado": simulacion.resultado,
-                "fecha_hora": simulacion.fecha_hora,
-            },
-            status=status.HTTP_200_OK,
-        )
+    simulacion = Simulacion.objects.create(
+        tipo_operacion=tipo_operacion, cantidad=cantidad, resultado=resultado,
+    )
+    return simulacion, tasa_aplicada, tasa_obj, None
 
 
 class PantallaPublicaCambiosView(View):
@@ -229,27 +249,22 @@ class PantallaPublicaCambiosView(View):
         error = None
         moneda_codigo = request.POST.get('moneda_codigo', '')
         tipo_operacion = request.POST.get('tipo_operacion', 'compra')
+        moneda_destino = request.POST.get('moneda_destino_codigo', '')
 
         if not serializer.is_valid():
             error = ' '.join(
                 str(msg) for errores in serializer.errors.values() for msg in errores
             )
         else:
-            moneda_codigo = serializer.validated_data['moneda_codigo']
-            tipo_operacion = serializer.validated_data['tipo_operacion']
-            cantidad = serializer.validated_data['cantidad']
-
-            tasa_obj = TasaCambio.objects.activa_para(moneda_codigo)
-            if not tasa_obj:
-                error = f"No se encontró una tasa de cambio activa para la moneda '{moneda_codigo}'."
-            else:
-                tasa_aplicada = tasa_obj.tasa_para(tipo_operacion)
-                resultado = cantidad * tasa_aplicada
-                Simulacion.objects.create(
-                    tipo_operacion=tipo_operacion,
-                    cantidad=cantidad,
-                    resultado=resultado,
-                )
+            datos = serializer.validated_data
+            moneda_codigo = datos['moneda_codigo']
+            tipo_operacion = datos['tipo_operacion']
+            moneda_destino = datos.get('moneda_destino_codigo', '').upper()
+            simulacion, tasa_aplicada, _, error = _simular(
+                moneda_codigo, tipo_operacion, datos['cantidad'], moneda_destino,
+            )
+            if simulacion is not None:
+                resultado = simulacion.resultado
 
         context = {
             'tasas': tasas,
@@ -258,6 +273,7 @@ class PantallaPublicaCambiosView(View):
             'cantidad_ingresada': request.POST.get('cantidad'),
             'moneda_seleccionada': moneda_codigo,
             'tipo_operacion': tipo_operacion,
+            'moneda_destino': moneda_destino,
             'error': error,
         }
         return render(request, 'divisas/publica.html', context)
