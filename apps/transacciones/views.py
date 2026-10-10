@@ -4,6 +4,7 @@ import json
 import uuid
 from decimal import Decimal
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
@@ -577,6 +578,7 @@ def operacion_detalle_view(request, pk):
     return render(request, 'transacciones/operacion_detalle.html', {
         'usuario': request.user,
         'transaccion': transaccion,
+        'pasarela_activa': settings.PASARELA_SIMULADA_ACTIVA,
     })
 
 
@@ -609,18 +611,22 @@ def _iniciar_pago_externo(transaccion):
 @require_POST
 def operacion_pago_externo_view(request, pk):
     """Inicia el pago de una compra por la pasarela externa (E4-157): la
-    operación queda ``PENDIENTE_PAGO`` hasta que el webhook avise (E4-158)."""
+    operación queda ``PENDIENTE_PAGO`` hasta que el webhook avise (E4-158), y se
+    lleva al cliente a la pantalla de pago de la pasarela.
+
+    Si la pasarela simulada no está habilitada en este ambiente no se inicia
+    nada: la operación quedaría esperando un pago que nadie puede hacer.
+    """
     transaccion = _transaccion_del_cliente_activo(request, pk)
+    if not settings.PASARELA_SIMULADA_ACTIVA:
+        messages.error(request, 'La pasarela de pago no está habilitada en este ambiente.')
+        return redirect('operacion_detalle', pk=transaccion.pk)
     try:
         referencia = _iniciar_pago_externo(transaccion)
-        messages.info(
-            request,
-            f'Pago externo iniciado (referencia {referencia}). La operación se '
-            f'confirma sola cuando la pasarela avise que cobró.',
-        )
     except ValidationError as exc:
         messages.error(request, exc.messages[0])
-    return redirect('operacion_detalle', pk=transaccion.pk)
+        return redirect('operacion_detalle', pk=transaccion.pk)
+    return redirect('pasarela_pagar', referencia=referencia)
 
 
 @login_required
@@ -883,12 +889,12 @@ def historial_transacciones_view(request):
     return render(request, 'transacciones/historial_transacciones.html', context)
 
 
-class WebhookPagoExternoAPIView(APIView):
-    """``POST /api/transacciones/webhook/pago/``: aviso de la pasarela de pago
-    externa (E4-158).
+def procesar_aviso_de_pago(cuerpo, firma):
+    """Procesa un aviso de la pasarela de pago externa (E4-158) y devuelve
+    ``(datos, codigo_http)``.
 
-    No usa login ni sesión (la pasarela no tiene usuario): la autenticidad la
-    da la firma HMAC del cuerpo en el encabezado ``X-Signature``
+    ``cuerpo`` son los bytes tal cual llegaron y ``firma`` el valor del
+    encabezado ``X-Signature``: la autenticidad la da la firma HMAC
     (ver ``apps.transacciones.webhook``). Sin firma válida no se toca nada.
 
     Cuerpo: ``{"referencia": "PAS-...", "estado": "PAGADO" | "RECHAZADO"}``.
@@ -901,53 +907,61 @@ class WebhookPagoExternoAPIView(APIView):
     Es idempotente: la pasarela puede reintentar el aviso. Repetir uno ya
     procesado responde 200 sin cobrar de nuevo. La fila se bloquea mientras se
     procesa, para que dos avisos simultáneos no se pisen.
+
+    Lo usan el endpoint ``WebhookPagoExternoAPIView`` (avisos que llegan por
+    HTTP) y la pasarela simulada de ``apps.pasarela`` (que firma su aviso con
+    el mismo código y lo entrega sin salir del proceso).
+    """
+    if not webhook.firma_valida(cuerpo, firma):
+        return {'detail': 'Firma inválida.'}, status.HTTP_403_FORBIDDEN
+
+    try:
+        datos = json.loads(cuerpo)
+        referencia, evento = datos['referencia'], str(datos['estado']).upper()
+    except (ValueError, KeyError, TypeError):
+        return (
+            {'detail': 'Cuerpo inválido: se espera {"referencia": ..., "estado": ...}.'},
+            status.HTTP_400_BAD_REQUEST,
+        )
+    if evento not in ('PAGADO', 'RECHAZADO'):
+        return {'detail': 'estado debe ser PAGADO o RECHAZADO.'}, status.HTTP_400_BAD_REQUEST
+
+    with transaction.atomic():
+        tx = (
+            Transaccion.objects.select_for_update(of=('self',))  # solo bloquea esta fila
+            .select_related('moneda', 'moneda_destino', 'medio_pago__metodo_pago')
+            .filter(referencia_pago_externo=referencia).first()
+        )
+        if tx is None:
+            return {'detail': 'No existe una operación con esa referencia.'}, status.HTTP_404_NOT_FOUND
+        if tx.estado == 'EXITOSA' and evento == 'PAGADO':
+            return {'detail': 'Aviso ya procesado.', **_desglose(tx)}, status.HTTP_200_OK
+        try:
+            if evento == 'PAGADO':
+                tx.confirmar_pago_webhook()
+                tx.confirmar()  # EXITOSA, o se cancela si cambió la cotización
+            else:
+                tx.rechazar_pago_webhook()
+        except ValidationError as exc:
+            tx.refresh_from_db()
+            return {'detail': exc.messages[0], **_desglose(tx)}, status.HTTP_409_CONFLICT
+    return {'detail': 'Aviso procesado.', **_desglose(tx)}, status.HTTP_200_OK
+
+
+class WebhookPagoExternoAPIView(APIView):
+    """``POST /api/transacciones/webhook/pago/``: aviso de la pasarela de pago
+    externa (E4-158).
+
+    No usa login ni sesión (la pasarela no tiene usuario): la autenticidad la
+    da la firma HMAC del cuerpo en el encabezado ``X-Signature``. El detalle de
+    los avisos y de las respuestas está en ``procesar_aviso_de_pago``.
     """
 
     authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
-        cuerpo = request.body
-        if not webhook.firma_valida(cuerpo, request.headers.get(webhook.ENCABEZADO_FIRMA, '')):
-            return Response({'detail': 'Firma inválida.'}, status=status.HTTP_403_FORBIDDEN)
-
-        try:
-            datos = json.loads(cuerpo)
-            referencia, evento = datos['referencia'], str(datos['estado']).upper()
-        except (ValueError, KeyError, TypeError):
-            return Response(
-                {'detail': 'Cuerpo inválido: se espera {"referencia": ..., "estado": ...}.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if evento not in ('PAGADO', 'RECHAZADO'):
-            return Response(
-                {'detail': 'estado debe ser PAGADO o RECHAZADO.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        with transaction.atomic():
-            tx = (
-                Transaccion.objects.select_for_update(of=('self',))  # solo bloquea esta fila
-                .select_related('moneda', 'moneda_destino', 'medio_pago__metodo_pago')
-                .filter(referencia_pago_externo=referencia).first()
-            )
-            if tx is None:
-                return Response(
-                    {'detail': 'No existe una operación con esa referencia.'},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-            if tx.estado == 'EXITOSA' and evento == 'PAGADO':
-                return Response({'detail': 'Aviso ya procesado.', **_desglose(tx)})
-            try:
-                if evento == 'PAGADO':
-                    tx.confirmar_pago_webhook()
-                    tx.confirmar()  # EXITOSA, o se cancela si cambió la cotización
-                else:
-                    tx.rechazar_pago_webhook()
-            except ValidationError as exc:
-                tx.refresh_from_db()
-                return Response(
-                    {'detail': exc.messages[0], **_desglose(tx)},
-                    status=status.HTTP_409_CONFLICT,
-                )
-        return Response({'detail': 'Aviso procesado.', **_desglose(tx)})
+        datos, codigo = procesar_aviso_de_pago(
+            request.body, request.headers.get(webhook.ENCABEZADO_FIRMA, '')
+        )
+        return Response(datos, status=codigo)

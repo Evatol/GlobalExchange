@@ -73,6 +73,17 @@ services:
 
       SEED_DEMO_USERS: ${SEED_DEMO_USERS:-true}
 
+      # Pago externo (E4-157/E4-158). Secreto compartido con la pasarela: el webhook
+      # solo acepta avisos firmados con el. Sin secreto rechazaria todo, asi que lleva
+      # un valor por defecto, igual que SECRET_KEY: en un despliegue real se pasa por
+      # variable de entorno y no queda en el repositorio.
+      WEBHOOK_PAGO_SECRET: ${WEBHOOK_PAGO_SECRET:-secreto-webhook-demo-produccion-cambiar}
+      # Pasarela de pago SIMULADA (apps.pasarela). Este "produccion" es el de un
+      # proyecto academico sin cobros reales, asi que se enciende para poder mostrar
+      # el pago externo. Con un proveedor real (o plata de verdad) debe ir en "false":
+      # deja "pagar" sin pagar.
+      PASARELA_SIMULADA_ACTIVA: ${PASARELA_SIMULADA_ACTIVA:-true}
+
       # Sin TLS real en este ambiente (ver nota arriba del archivo).
       SECURE_SSL_REDIRECT: "False"
       SESSION_COOKIE_SECURE: "False"

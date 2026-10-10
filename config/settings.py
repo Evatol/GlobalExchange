@@ -65,6 +65,7 @@ INSTALLED_APPS = [
     'apps.notificaciones',
     'apps.reportes',
     'apps.banco',
+    'apps.pasarela',
 ]
 
 MIDDLEWARE = [
@@ -298,3 +299,9 @@ PRICE_CHANGE_THRESHOLD_PERCENT = float(os.getenv('PRICE_CHANGE_THRESHOLD_PERCENT
 # configurado el webhook rechaza todo; en desarrollo hay uno por defecto para
 # poder probarlo, en produccion (DEBUG=False) hay que definirlo por entorno.
 WEBHOOK_PAGO_SECRET = env('WEBHOOK_PAGO_SECRET', default='secreto-dev-webhook' if DEBUG else '')
+
+# Pasarela de pago simulada (apps.pasarela): una pantalla que hace de empresa de pagos
+# para probar el pago externo sin un proveedor real. Deja "pagar" sin pagar, asi que
+# nunca debe estar encendida en un ambiente que cobre de verdad. Por defecto solo en
+# desarrollo; el compose de produccion de este proyecto academico la enciende.
+PASARELA_SIMULADA_ACTIVA = env.bool('PASARELA_SIMULADA_ACTIVA', default=DEBUG)

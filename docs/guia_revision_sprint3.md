@@ -261,25 +261,35 @@ referencia; la operación real descuenta la comisión del cliente).
 
 ### 5.7 Pago por la pasarela externa y webhook (E4-157 / E4-158)
 
+Todo por pantallas, sin comandos:
+
 1. **Ventana normal:** Operar → Comprar, USD, **13**, Caja chica →
    **Continuar al pago**.
-2. En el resumen, **Pagar por la pasarela externa**: queda *"Esperando el pago
-   externo"* con una **referencia** `PAS-...` (copiala).
-3. En una terminal, la pasarela avisa que cobró:
+2. En el resumen, **Pagar con la pasarela**: se abre la pantalla de la
+   **pasarela de pago (simulada)** con el monto (**96.681 Gs**), el concepto y
+   una **referencia** `PAS-...`.
+3. **Pagar** → vuelve al resumen: *"Pago confirmado"*, operación **Exitosa**.
+4. **Rechazar** (con otra compra): vuelve con *"La pasarela rechazó el pago"* y
+   la operación queda **Fallida**.
+5. **Volver sin pagar**: el resumen queda *"Esperando el pago externo"*, con el
+   botón **Ir a la pasarela para pagar** para retomarlo.
+6. **Cotización que cambia** (con las dos ventanas, como en 5.2): iniciá el
+   pago y, antes de pagar, el analista edita la cotización → al **Pagar** la
+   operación se cancela y queda anotado que hay que devolver el pago.
 
-   ```
-   venv/bin/python manage.py simular_webhook_pago PAS-XXXXXXXX
-   ```
+🗣️ *"La pasarela simula a una empresa de pagos real: el sistema no confirma
+por lo que vuelve el navegador sino por el aviso de la pasarela (el webhook),
+que va firmado con HMAC y lo verifica el mismo código que verifica los avisos
+que llegan por HTTP. Si cambió la cotización entre que se inició el pago y el
+aviso, se cancela y queda anotado que hay que devolver el pago. Solo se paga
+así una compra, y no se debita además el banco. Para usar un proveedor real
+(Bancard, Stripe) se reemplaza esa pantalla por la del proveedor y se agrega
+la verificación de su firma; el resto del flujo no cambia."*
 
-   Responde **200** y, al recargar el resumen, la operación quedó **Exitosa**.
-4. **Seguridad:** el mismo comando con `--firma-invalida` responde **403** y no
-   toca nada. Repetir el aviso responde *"Aviso ya procesado"* sin cobrar de
-   nuevo. Con `--rechazar` la operación queda **Fallida**.
-
-🗣️ *"El webhook no tiene login porque la pasarela no tiene usuario: la
-autenticidad la da la firma HMAC del cuerpo. Si cambió la cotización entre que
-se inició el pago y el aviso, se cancela y queda anotado que hay que devolver
-el pago externo. Solo se paga así una compra: no se debita además el banco."*
+Seguridad (si la profesora pregunta): la pantalla solo existe si
+`PASARELA_SIMULADA_ACTIVA` está encendida (desarrollo, y el "producción" de este
+proyecto), cada cliente solo llega a sus propias operaciones, y el webhook
+rechaza todo aviso sin firma válida.
 
 ---
 

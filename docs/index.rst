@@ -14,6 +14,7 @@ Cómo regenerar esta documentación::
 
    usuarios
    banco
+   pasarela
    caja
    divisas
    facturacion
