@@ -32,6 +32,10 @@ ROLES_NEGOCIO = {
         "Cliente del sistema: gestiona unicamente sus propios medios de "
         "pago (RF17)."
     ),
+    "cajero": (
+        "Atiende en una sucursal presencial: solo accede al modulo de caja "
+        "(mostrador, balance, arqueo y cierre; RF105/RF106/RF109)."
+    ),
 }
 
 

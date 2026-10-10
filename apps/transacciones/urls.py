@@ -7,6 +7,7 @@ from .views import (
     MetodoPagoViewSet,
     OperarDivisaAPIView,
     TransaccionViewSet,
+    WebhookPagoExternoAPIView,
     gestion_medios_pago_view,
     gestion_metodos_pago_view,
     historial_transacciones_view,
@@ -17,6 +18,7 @@ from .views import (
     operacion_cancelar_view,
     operacion_confirmar_view,
     operacion_detalle_view,
+    operacion_pago_externo_view,
     operar_divisa_view,
 )
 
@@ -41,6 +43,9 @@ urlpatterns = [
     path('gestion/operar/<int:pk>/', operacion_detalle_view, name='operacion_detalle'),
     path('gestion/operar/<int:pk>/confirmar/', operacion_confirmar_view, name='operacion_confirmar'),
     path('gestion/operar/<int:pk>/cancelar/', operacion_cancelar_view, name='operacion_cancelar'),
+    # Pago externo (E4-157) y aviso de la pasarela por webhook (E4-158).
+    path('gestion/operar/<int:pk>/pago-externo/', operacion_pago_externo_view, name='operacion_pago_externo'),
+    path('webhook/pago/', WebhookPagoExternoAPIView.as_view(), name='webhook_pago_externo'),
 
     # API REST de operaciones y cálculos en tiempo real (E4-144)
     path('operar/', OperarDivisaAPIView.as_view(), name='operar_divisa_api'),

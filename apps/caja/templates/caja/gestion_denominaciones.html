@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GlobalExchange - Denominaciones de Billetes</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="{% url 'menu_principal' %}">GlobalExchange</a>
+            <div class="d-flex align-items-center text-white">
+                <span class="me-3">Bienvenido, <strong>{{ usuario.username }}</strong></span>
+                <a href="{% url 'menu_principal' %}" class="btn btn-outline-light btn-sm">Volver al Portal</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container my-5">
+        <div class="row">
+            <div class="col-md-12 text-center mb-4">
+                <h2>Denominaciones de Billetes</h2>
+                <p class="text-muted">Billetes admitidos por moneda. Sobre estas denominaciones se lleva el stock de cada caja.</p>
+            </div>
+        </div>
+
+        {% if error %}
+            <div class="alert alert-danger">{{ error }}</div>
+        {% endif %}
+
+        <div class="row g-4">
+            <div class="col-md-8">
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table align-middle mb-0">
+                                <thead>
+                                    <tr class="text-muted">
+                                        <th>Moneda</th>
+                                        <th>Denominación</th>
+                                        <th>Estado</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for b in billetes %}
+                                    <tr>
+                                        <td><strong>{{ b.moneda.codigo }}</strong></td>
+                                        <td>{{ b.denominacion|floatformat:"-2" }}</td>
+                                        <td>
+                                            {% if b.estado %}
+                                                <span class="badge bg-success">activa</span>
+                                            {% else %}
+                                                <span class="badge bg-secondary">inactiva</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-end">
+                                            <form method="post" action="{% url 'billete_toggle' b.id %}" class="d-inline m-0">
+                                                {% csrf_token %}
+                                                {% if b.estado %}
+                                                    <button type="submit" class="btn btn-sm btn-outline-danger">Desactivar</button>
+                                                {% else %}
+                                                    <button type="submit" class="btn btn-sm btn-outline-success">Activar</button>
+                                                {% endif %}
+                                            </form>
+                                        </td>
+                                    </tr>
+                                    {% empty %}
+                                    <tr>
+                                        <td colspan="4" class="text-center text-muted">No hay denominaciones cargadas.</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Nueva Denominación</h5>
+                        <form method="post">
+                            {% csrf_token %}
+                            <div class="mb-3">
+                                <label class="form-label">Moneda</label>
+                                <select name="moneda" class="form-select" required>
+                                    {% for m in monedas %}
+                                        <option value="{{ m.id }}">{{ m.codigo }} - {{ m.nombre }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Denominación</label>
+                                <input type="number" name="denominacion" class="form-control" min="0.01" step="0.01" placeholder="Ej. 100" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Agregar Denominación</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

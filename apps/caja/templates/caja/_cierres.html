@@ -1,0 +1,38 @@
+{# Cierres de caja con su balance por moneda (E4-100). Espera ``cierres``. #}
+{% for c in cierres %}
+<div class="border rounded p-3 mb-3">
+    <div class="d-flex justify-content-between flex-wrap">
+        <strong>Cierre #{{ c.id }} · {{ c.fecha_cierre|date:"d/m/Y H:i" }}</strong>
+        <span class="text-muted small">{{ c.operaciones }} operaci{{ c.operaciones|pluralize:"ón,ones" }} · cerró {{ c.cerrado_por.username }}</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm align-middle mt-2 mb-0">
+            <thead>
+                <tr class="text-muted">
+                    <th>Moneda</th><th class="text-end">Inicial</th><th class="text-end">Recibido</th>
+                    <th class="text-end">Entregado</th><th class="text-end">Final</th><th class="text-end">Contado</th><th class="text-end">Diferencia</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for d in c.detalles.all %}
+                <tr>
+                    <td><strong>{{ d.moneda.codigo }}</strong></td>
+                    <td class="text-end">{{ d.saldo_inicial|floatformat:"-2g" }}</td>
+                    <td class="text-end">{{ d.recibido|floatformat:"-2g" }}</td>
+                    <td class="text-end">{{ d.entregado|floatformat:"-2g" }}</td>
+                    <td class="text-end">{{ d.saldo_final|floatformat:"-2g" }}</td>
+                    <td class="text-end">{% if d.total_contado is None %}<span class="text-muted">sin contar</span>{% else %}{{ d.total_contado|floatformat:"-2g" }}{% endif %}</td>
+                    <td class="text-end">
+                        {% if d.diferencia is None %}—
+                        {% elif d.diferencia == 0 %}<span class="badge bg-success">sin diferencia</span>
+                        {% else %}<span class="badge bg-danger">{{ d.diferencia|floatformat:"-2g" }}</span>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% empty %}
+<p class="text-muted mb-0">Todavía no hay cierres.</p>
+{% endfor %}

@@ -1,8 +1,12 @@
 from django.contrib import admin
-from .models import Cuenta, Sucursal, Caja, Billete, MovimientoBillete
 
-admin.site.register(Cuenta)
-admin.site.register(Sucursal)
-admin.site.register(Caja)
-admin.site.register(Billete)
-admin.site.register(MovimientoBillete)
+from .models import (
+    Arqueo, AsignacionCajero, Billete, Caja, Cuenta, DetalleArqueo,
+    MovimientoBillete, StockBillete, Sucursal,
+)
+
+for modelo in (
+    Cuenta, Sucursal, Caja, Billete, StockBillete, MovimientoBillete,
+    AsignacionCajero, Arqueo, DetalleArqueo,
+):
+    admin.site.register(modelo)

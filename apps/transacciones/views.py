@@ -1,11 +1,14 @@
 import csv
 import io
+import json
+import uuid
 from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.db.models import Q
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
@@ -13,7 +16,7 @@ from django.views.decorators.http import require_POST
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -27,6 +30,7 @@ from apps.usuarios.permissions import (
     tiene_rol,
 )
 
+from . import webhook
 from .models import MedioPagoCliente, MetodoPago, Transaccion
 from .serializers import MedioPagoClienteSerializer, MetodoPagoSerializer, TransaccionSerializer
 
@@ -310,6 +314,13 @@ def _preparar_transaccion(cliente, tipo_operacion, moneda_codigo, cantidad, mone
     comisión calculada (E4-144). La comparten la vista previa
     (``CalcularTransaccionAPIView``) y la operación real
     (``_crear_transaccion_digital``), para que siempre den lo mismo.
+
+    En un ``CAMBIO`` la casa le compra al cliente la divisa de origen y le
+    vende la de destino, así que se usan las mismas tasas que en una venta y
+    una compra respectivamente (ver ``TasaCambio.tasa_para``).
+
+    Devuelve ``(transaccion, error)``: si ``error`` no es ``None``,
+    ``transaccion`` es ``None``.
     """
     if tipo_operacion not in TIPOS_OPERACION:
         return None, 'Tipo de operación inválido (debe ser COMPRA, VENTA o CAMBIO).'
@@ -384,7 +395,22 @@ class CalcularTransaccionAPIView(APIView):
 def _crear_transaccion_digital(request, tipo_operacion, moneda_codigo, cantidad, medio_pago_id,
                                moneda_destino_codigo=None):
     """Lógica compartida por ``OperarDivisaAPIView`` y ``operar_divisa_view``
-    para comprar (E4-19) o vender (E4-20) divisas, o cambiar una por otra.
+    para comprar (E4-19) o vender (E4-20) divisas, o cambiar una por otra, de
+    forma digital, con la comisión y tasa aplicada según el cliente (E4-144).
+
+    La transacción queda ``PENDIENTE`` de pago: se confirma después, con
+    ``Transaccion.confirmar()``, que la cancela si la cotización cambió en el
+    medio (E4-28) y cobra en el banco. El saldo del medio de pago no se mira
+    acá sino al confirmar, que es cuando se cobra.
+
+    Reglas del medio de pago: una tarjeta de crédito no sirve para vender
+    (el cliente recibe plata), y el cambio entre divisas es solo en efectivo
+    (las cuentas del banco son en guaraníes).
+
+    Devuelve ``(transaccion, error)``: si ``error`` no es ``None``,
+    ``transaccion`` es ``None``. No usa ``request.user`` como ``Usuario`` de
+    la transacción -- ese es el ``User`` de autenticación de Django, no el
+    ``Usuario`` de negocio que espera ``Transaccion.usuario``.
     """
     cliente_activo = sesion.get_cliente_activo(request)
     if cliente_activo is None:
@@ -430,7 +456,12 @@ def _crear_transaccion_digital(request, tipo_operacion, moneda_codigo, cantidad,
 
 
 def _transaccion_del_cliente_activo(request, pk):
-    """Transacción ``pk`` del cliente activo de la sesión, o ``Http404``."""
+    """Transacción ``pk`` del cliente activo de la sesión, o ``Http404``.
+
+    Confirmar, cancelar o ver el resumen de una operación es cosa del cliente
+    que la hizo: se busca siempre dentro del cliente activo, sin importar el
+    rol, para que nadie pague o cancele una operación ajena.
+    """
     cliente_activo = sesion.get_cliente_activo(request)
     transaccion = (
         Transaccion.objects.select_related(
@@ -488,6 +519,7 @@ def _desglose(transaccion):
         'medio_pago': transaccion.medio_pago.alias if transaccion.medio_pago else None,
         'estado': transaccion.estado,
         'observacion': transaccion.observacion,
+        'referencia_pago_externo': transaccion.referencia_pago_externo,
     }
 
 
@@ -514,7 +546,9 @@ def operar_divisa_view(request):
     context = {
         'usuario': request.user,
         'cliente_activo': cliente_activo,
-        'monedas': Moneda.objects.filter(estado=True).order_by('codigo'),
+        # Solo las que tienen cotización vigente: la moneda local (guaraní) está
+        # en el catálogo por la caja pero no se compra ni se vende.
+        'monedas': Moneda.objects.filter(estado=True, tasas__estado=True).distinct().order_by('codigo'),
         'tasas': TasaCambio.objects.vigentes(),
         'medios_pago': (
             MedioPagoCliente.objects.select_related('metodo_pago')
@@ -524,7 +558,7 @@ def operar_divisa_view(request):
         'datos_enviados': request.POST if request.method == 'POST' else {},
         'pendientes': (
             Transaccion.objects.select_related('moneda', 'moneda_destino')
-            .filter(cliente=cliente_activo, estado='PENDIENTE').order_by('-fecha_hora')
+            .filter(cliente=cliente_activo, estado__in=('PENDIENTE', 'PENDIENTE_PAGO')).order_by('-fecha_hora')
             if cliente_activo else Transaccion.objects.none()
         ),
         'error': error,
@@ -534,7 +568,11 @@ def operar_divisa_view(request):
 
 @login_required
 def operacion_detalle_view(request, pk):
-    """Resumen de una operación: tasa aplicada, subtotal, comisión y total."""
+    """Resumen de una operación: tasa aplicada, subtotal, comisión y total.
+
+    Si está ``PENDIENTE`` ofrece "Confirmar pago" y "Cancelar operación";
+    si no, muestra cómo terminó.
+    """
     transaccion = _transaccion_del_cliente_activo(request, pk)
     return render(request, 'transacciones/operacion_detalle.html', {
         'usuario': request.user,
@@ -545,13 +583,40 @@ def operacion_detalle_view(request, pk):
 @login_required
 @require_POST
 def operacion_confirmar_view(request, pk):
-    """Confirma el pago (E4-28)."""
+    """Confirma el pago (E4-28): ``EXITOSA``, o ``CANCELADA`` si la
+    cotización cambió desde que se inició la operación."""
     transaccion = _transaccion_del_cliente_activo(request, pk)
     try:
         transaccion.confirmar()
         messages.success(
             request,
             f'Pago confirmado. La operación #{transaccion.pk} se realizó con éxito.',
+        )
+    except ValidationError as exc:
+        messages.error(request, exc.messages[0])
+    return redirect('operacion_detalle', pk=transaccion.pk)
+
+
+def _iniciar_pago_externo(transaccion):
+    """Genera la referencia de la pasarela e inicia el pago externo (E4-157).
+    Lanza ``ValidationError`` si la operación no puede pagarse por ahí."""
+    referencia = f'PAS-{uuid.uuid4().hex[:20].upper()}'
+    transaccion.iniciar_pago_externo(referencia)
+    return referencia
+
+
+@login_required
+@require_POST
+def operacion_pago_externo_view(request, pk):
+    """Inicia el pago de una compra por la pasarela externa (E4-157): la
+    operación queda ``PENDIENTE_PAGO`` hasta que el webhook avise (E4-158)."""
+    transaccion = _transaccion_del_cliente_activo(request, pk)
+    try:
+        referencia = _iniciar_pago_externo(transaccion)
+        messages.info(
+            request,
+            f'Pago externo iniciado (referencia {referencia}). La operación se '
+            f'confirma sola cuando la pasarela avise que cobró.',
         )
     except ValidationError as exc:
         messages.error(request, exc.messages[0])
@@ -572,7 +637,17 @@ def operacion_cancelar_view(request, pk):
 
 
 class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
-    """Historial de transacciones, de solo consulta (RF111 / E4-104 y E4-36)."""
+    """Historial de transacciones, de solo consulta (RF111 / E4-104 y E4-36).
+        ``administrador``/``analista`` ven el historial de cualquier cliente.
+        El resto (``usuario_final``) solo ve las del cliente activo de su
+        propia sesión, igual criterio que ``MedioPagoClienteViewSet``.
+        Filtros disponibles en el listado y en la exportación:
+        ``?fecha_desde=``, ``?fecha_hasta=`` (YYYY-MM-DD), ``?tipo=``
+        (COMPRA/VENTA), ``?moneda=`` (id), ``?estado=``.
+
+        Exportación: ``GET .../exportar/?formato=csv|excel|pdf``, respetando
+        siempre los mismos filtros aplicados en el listado (E4-36).
+        """
     queryset = Transaccion.objects.select_related(
         'cliente', 'moneda', 'moneda_destino', 'metodo_pago', 'medio_pago'
     ).all()
@@ -583,6 +658,13 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
         return tiene_rol(self.request.user, (ADMINISTRADOR, ANALISTA))
 
     def _queryset_filtrado(self):
+        """Aplica el alcance por cliente activo y los filtros de la query string.
+
+               Centralizado acá para que el listado (``get_queryset``) y la
+               exportación (``exportar``) usen siempre exactamente los mismos
+               criterios, tal como pide el RF36 (el archivo debe coincidir con
+               los filtros aplicados en pantalla).
+               """
         queryset = self.queryset.order_by('-fecha_hora')
         if not self._puede_ver_todos():
             cliente_activo = sesion.get_cliente_activo(self.request)
@@ -611,6 +693,11 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=['post'])
     def confirmar(self, request, pk=None):
+        """``POST .../transacciones/<id>/confirmar/``: confirma el pago (E4-28).
+
+        Responde 200 si quedó ``EXITOSA`` y 409 si se canceló porque la
+        cotización cambió (o si ya no estaba pendiente).
+        """
         transaccion = _transaccion_del_cliente_activo(request, pk)
         try:
             transaccion.confirmar()
@@ -622,8 +709,29 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
             )
         return Response({'detail': 'Pago confirmado.', **_desglose(transaccion)})
 
+    @action(detail=True, methods=['post'], url_path='iniciar-pago-externo')
+    def iniciar_pago_externo(self, request, pk=None):
+        """``POST .../transacciones/<id>/iniciar-pago-externo/``: inicia el
+        pago de una compra por la pasarela externa (E4-157). Devuelve la
+        ``referencia_pago_externo`` con la que la pasarela va a avisar por el
+        webhook. 409 si la operación no puede pagarse por ahí."""
+        transaccion = _transaccion_del_cliente_activo(request, pk)
+        try:
+            _iniciar_pago_externo(transaccion)
+        except ValidationError as exc:
+            return Response(
+                {'detail': exc.messages[0], **_desglose(transaccion)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response(
+            {'detail': 'Pago externo iniciado.', **_desglose(transaccion)},
+            status=status.HTTP_201_CREATED,
+        )
+
     @action(detail=True, methods=['post'])
     def cancelar(self, request, pk=None):
+        """``POST .../transacciones/<id>/cancelar/``: el cliente cancela una
+        operación todavía no pagada (RF23)."""
         transaccion = _transaccion_del_cliente_activo(request, pk)
         try:
             transaccion.cancelar()
@@ -636,6 +744,12 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['get'])
     def exportar(self, request):
+        """``GET .../transacciones/exportar/?formato=csv|excel|pdf`` (E4-36).
+
+        Exporta exactamente lo que muestra el historial: usa
+        ``_queryset_filtrado()``, así que respeta el alcance por cliente y los
+        mismos filtros de fecha, tipo, moneda y estado.
+        """
         formato = request.query_params.get('formato', 'csv').lower()
         transacciones = self._queryset_filtrado()
 
@@ -706,7 +820,17 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
 
 @login_required
 def historial_transacciones_view(request):
-    """Pantalla propia de 'Historial de Transacciones' (RF111 / E4-104)."""
+    """Pantalla propia de "Historial de Transacciones" (RF111 / E4-104),
+    en vez de la API navegable de DRF. Mismo criterio de alcance que
+    ``TransaccionViewSet``: administrador/analista ven el historial de
+    cualquier cliente; el resto (``usuario_final``) solo ve las del
+    cliente activo de su propia sesión.
+
+    Los botones de descarga (E4-36) apuntan directo al endpoint
+    ``exportar`` de la API, reenviando los mismos filtros aplicados acá
+    como query params, para garantizar que el archivo coincida siempre
+    con lo que se ve en pantalla.
+    """
     ve_todos = tiene_rol(request.user, (ADMINISTRADOR, ANALISTA))
     cliente_activo = sesion.get_cliente_activo(request)
 
@@ -757,3 +881,73 @@ def historial_transacciones_view(request):
         'query_filtros': query_filtros,
     }
     return render(request, 'transacciones/historial_transacciones.html', context)
+
+
+class WebhookPagoExternoAPIView(APIView):
+    """``POST /api/transacciones/webhook/pago/``: aviso de la pasarela de pago
+    externa (E4-158).
+
+    No usa login ni sesión (la pasarela no tiene usuario): la autenticidad la
+    da la firma HMAC del cuerpo en el encabezado ``X-Signature``
+    (ver ``apps.transacciones.webhook``). Sin firma válida no se toca nada.
+
+    Cuerpo: ``{"referencia": "PAS-...", "estado": "PAGADO" | "RECHAZADO"}``.
+
+    * ``PAGADO``: la operación pasa a ``PAGADO`` y se termina de confirmar
+      (se vuelve a verificar la cotización). Si cambió, se cancela y el pago
+      externo queda anotado para devolverse.
+    * ``RECHAZADO``: la operación queda ``FALLIDA``.
+
+    Es idempotente: la pasarela puede reintentar el aviso. Repetir uno ya
+    procesado responde 200 sin cobrar de nuevo. La fila se bloquea mientras se
+    procesa, para que dos avisos simultáneos no se pisen.
+    """
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        cuerpo = request.body
+        if not webhook.firma_valida(cuerpo, request.headers.get(webhook.ENCABEZADO_FIRMA, '')):
+            return Response({'detail': 'Firma inválida.'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            datos = json.loads(cuerpo)
+            referencia, evento = datos['referencia'], str(datos['estado']).upper()
+        except (ValueError, KeyError, TypeError):
+            return Response(
+                {'detail': 'Cuerpo inválido: se espera {"referencia": ..., "estado": ...}.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if evento not in ('PAGADO', 'RECHAZADO'):
+            return Response(
+                {'detail': 'estado debe ser PAGADO o RECHAZADO.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            tx = (
+                Transaccion.objects.select_for_update(of=('self',))  # solo bloquea esta fila
+                .select_related('moneda', 'moneda_destino', 'medio_pago__metodo_pago')
+                .filter(referencia_pago_externo=referencia).first()
+            )
+            if tx is None:
+                return Response(
+                    {'detail': 'No existe una operación con esa referencia.'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            if tx.estado == 'EXITOSA' and evento == 'PAGADO':
+                return Response({'detail': 'Aviso ya procesado.', **_desglose(tx)})
+            try:
+                if evento == 'PAGADO':
+                    tx.confirmar_pago_webhook()
+                    tx.confirmar()  # EXITOSA, o se cancela si cambió la cotización
+                else:
+                    tx.rechazar_pago_webhook()
+            except ValidationError as exc:
+                tx.refresh_from_db()
+                return Response(
+                    {'detail': exc.messages[0], **_desglose(tx)},
+                    status=status.HTTP_409_CONFLICT,
+                )
+        return Response({'detail': 'Aviso procesado.', **_desglose(tx)})

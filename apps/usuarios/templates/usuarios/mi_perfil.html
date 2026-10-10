@@ -20,14 +20,16 @@
 
     <div class="container my-5">
         <div class="row justify-content-center">
-            <div class="col-md-6">
+            <div class="col-md-8">
                 <div class="text-center mb-4">
                     <h2>Mi Perfil</h2>
-                    <p class="text-muted">Tus datos personales.</p>
+                    <p class="text-muted">Tus datos personales y preferencias.</p>
                 </div>
 
+                <!-- Datos Personales -->
                 <div class="card shadow-sm border-0 mb-4">
                     <div class="card-body">
+                        <h4 class="card-title mb-3">Datos Personales</h4>
                         {% if exito_datos %}
                             <div class="alert alert-success py-2">Tus datos se actualizaron correctamente.</div>
                         {% endif %}
@@ -71,6 +73,37 @@
                     </div>
                 </div>
 
+                <!-- Monedas Favoritas (E4-24) -->
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-body">
+                        <h4 class="card-title mb-3">Monedas Favoritas</h4>
+                        <p class="text-muted small">Seleccioná las monedas que usás con frecuencia para acceder rápido y recibir notificaciones.</p>
+                        
+                        <form method="post" action="{% url 'mi_perfil' %}">
+                            {% csrf_token %}
+                            <input type="hidden" name="actualizar_favoritos" value="1">
+                            <div class="row">
+                                {% for moneda in monedas_disponibles %}
+                                    <div class="col-md-6 mb-2">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="monedas_favoritas" value="{{ moneda.id }}" 
+                                                   id="moneda_{{ moneda.id }}"
+                                                   {% if moneda in perfil.monedas_favoritas.all %}checked{% endif %}>
+                                            <label class="form-check-label" for="moneda_{{ moneda.id }}">
+                                                <strong>{{ moneda.codigo }}</strong> - {{ moneda.nombre }}
+                                            </label>
+                                        </div>
+                                    </div>
+                                {% empty %}
+                                    <p class="text-muted">No hay monedas activas disponibles.</p>
+                                {% endfor %}
+                            </div>
+                            <button type="submit" class="btn btn-success w-100 mt-3">Guardar Monedas Favoritas</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Cambiar Contraseña -->
                 <div class="card shadow-sm border-0">
                     <div class="card-body">
                         <h5 class="card-title mb-3">Cambiar Contraseña</h5>

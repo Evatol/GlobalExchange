@@ -5,6 +5,11 @@ asociación de ``cliente_demo`` a uno de ellos, y sus cuentas en el banco
 simulado con un medio de pago por cada tipo (efectivo, cuenta, billetera y
 tarjeta de crédito).
 
+Para el módulo de caja: la moneda local (guaraní), las denominaciones de
+billetes, una sucursal con ``cajero_demo`` asignado y su caja abierta con una
+carga inicial de billetes (solo la primera vez: si ya se abrió o cerró, no se
+toca).
+
 Complementa a ``seed_usuarios_demo``, que crea los usuarios en Keycloak:
 ese deja las credenciales listas, este deja con qué operar.
 
@@ -21,8 +26,12 @@ from decimal import Decimal
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from django.contrib.auth.models import Group, User
+
 from apps.banco import services as banco
 from apps.banco.models import CuentaBancaria
+from apps.caja import services as caja_services
+from apps.caja.models import AsignacionCajero, Billete, Caja, Sucursal
 from apps.divisas.models import Moneda, TasaCambio
 from apps.transacciones.models import MedioPagoCliente, MetodoPago
 from apps.usuarios.models import Cliente, Usuario
@@ -33,6 +42,22 @@ MONEDAS = [
     ('EUR', 'Euro', '€', Decimal('7900'), Decimal('8050')),
     ('BRL', 'Real brasileño', 'R$', Decimal('1350'), Decimal('1420')),
 ]
+
+# Moneda local: los importes de las operaciones están en guaraníes. Está en el
+# catálogo porque la caja la necesita (``settings.MONEDA_LOCAL_CODIGO``), pero
+# no tiene cotización: no se compra ni se vende.
+MONEDA_LOCAL = ('PYG', 'Guaraní', '₲')
+
+# Denominaciones de billetes por moneda, y cuántos de cada una tiene la caja demo.
+DENOMINACIONES = {
+    'PYG': [2000, 5000, 10000, 20000, 50000, 100000],
+    'USD': [1, 5, 10, 20, 50, 100],
+    'EUR': [5, 10, 20, 50, 100, 200, 500],
+    'BRL': [2, 5, 10, 20, 50, 100, 200],
+}
+BILLETES_POR_DENOMINACION = 10
+CAJERO_DEMO = 'cajero_demo'
+SUCURSAL_DEMO = ('Casa Central', 'Asunción')
 
 METODOS_PAGO = [
     ('Efectivo', MetodoPago.TIPO_EFECTIVO),
@@ -165,6 +190,8 @@ class Command(BaseCommand):
             detalle = 'sin saldo' if disponible is None else f'disponible {banco.formatear_guaranies(disponible)}'
             self.stdout.write(f'  {medio.alias}: {"creado" if creado else "ya existía"} ({detalle})')
 
+        self._cargar_caja_demo()
+
         self.stdout.write(self.style.SUCCESS(
             f'\nListo. {username} puede operar sobre "{principal.nombre}" '
             f'(comisión de {principal.get_preferencia_tipo_cambio_display()}, '
@@ -172,9 +199,54 @@ class Command(BaseCommand):
         ))
 
 
+    def _cargar_caja_demo(self):
+        """Moneda local, denominaciones, sucursal, cajero y caja abierta."""
+        self.stdout.write(self.style.MIGRATE_HEADING('Caja (sucursal, cajero y billetes):'))
+        codigo, nombre, simbolo = MONEDA_LOCAL
+        Moneda.objects.get_or_create(
+            codigo=codigo, defaults={'nombre': nombre, 'simbolo': simbolo, 'estado': True},
+        )
+        for moneda_codigo, valores in DENOMINACIONES.items():
+            moneda = Moneda.objects.filter(codigo=moneda_codigo).first()
+            if moneda is None:
+                continue
+            for valor in valores:
+                Billete.objects.get_or_create(moneda=moneda, denominacion=Decimal(valor))
+        self.stdout.write(f'  Denominaciones: {Billete.objects.count()}')
+
+        sucursal, _ = Sucursal.objects.get_or_create(
+            nombre=SUCURSAL_DEMO[0], defaults={'direccion': SUCURSAL_DEMO[1]},
+        )
+        # El login con el grupo del rol cajero, como lo deja la sincronización
+        # con Keycloak: sin él no se puede asignar a la sucursal (RF105).
+        login, _ = User.objects.get_or_create(
+            username=CAJERO_DEMO, defaults={'email': f'{CAJERO_DEMO}@example.com'},
+        )
+        login.groups.add(Group.objects.get_or_create(name='cajero')[0])
+        cajero, _ = Usuario.objects.get_or_create(
+            username=CAJERO_DEMO,
+            defaults={
+                'email': f'{CAJERO_DEMO}@example.com', 'nombres': 'Cajero', 'apellidos': 'Demo',
+            },
+        )
+        AsignacionCajero.objects.get_or_create(sucursal=sucursal, usuario=cajero)
+        caja, creada = Caja.objects.get_or_create(
+            sucursal=sucursal, cajero=cajero,
+            defaults={'saldo_inicial': Decimal('0'), 'saldo_actual': Decimal('0')},
+        )
+        if caja.fecha_apertura is None:
+            carga = {
+                b.id: BILLETES_POR_DENOMINACION for b in Billete.objects.filter(estado=True)
+            }
+            caja_services.abrir_caja(caja, cajero, carga)
+            detalle = f'abierta con {BILLETES_POR_DENOMINACION} billetes de cada denominación'
+        else:
+            detalle = f'ya estaba {caja.estado.lower()}'
+        self.stdout.write(f'  Caja #{caja.pk} de {CAJERO_DEMO} en {sucursal.nombre}: {detalle}')
+
+
 def _limite(cliente):
     limite = cliente.limite_por_operacion
     if limite is None:
         return 'sin límite por operación'
     return f'límite por operación {banco.formatear_guaranies(limite)}'
-

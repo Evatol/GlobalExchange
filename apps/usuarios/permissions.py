@@ -60,3 +60,53 @@ class ClientesPermission(BasePermission):
         if request.method in SAFE_METHODS:
             return tiene_rol(request.user, (ADMINISTRADOR, ANALISTA))
         return tiene_rol(request.user, (ADMINISTRADOR,))
+
+
+CAJERO = 'cajero'
+
+
+def es_cajero(user):
+    """True si el usuario de login tiene el rol ``cajero`` (grupo sincronizado
+    desde Keycloak). A diferencia de ``tiene_rol``, no da paso libre a los
+    superusuarios: un administrador no es un cajero."""
+    if not user or not user.is_authenticated:
+        return False
+    return user.groups.filter(name=CAJERO).exists()
+
+
+def usuario_tiene_rol_cajero(usuario):
+    """Igual que ``es_cajero`` pero a partir del modelo de negocio
+    ``Usuario``: busca su usuario de login por ``username``."""
+    from django.contrib.auth import get_user_model
+
+    login = get_user_model().objects.filter(username=usuario.username).first()
+    return es_cajero(login)
+
+
+class SoloAdministrador(BasePermission):
+    """Sucursales y asignación de cajeros (RF105): lectura y escritura solo
+    para el rol administrador, a diferencia de ``SoloAdministradorEscribe``
+    que deja leer a cualquiera."""
+
+    def has_permission(self, request, view):
+        return tiene_rol(request.user, (ADMINISTRADOR,))
+
+# ---------------------------------------------------------------------------
+# Dos permisos de SoloCajero y AdministradorOCajero (RF106)
+# ---------------------------------------------------------------------------
+
+class SoloCajero(BasePermission):
+    """Pantallas y API del cajero en el módulo de caja (RF106): solo el rol
+    cajero. No deja pasar al administrador: un administrador no es un cajero
+    (ver ``es_cajero``)."""
+
+    def has_permission(self, request, view):
+        return es_cajero(request.user)
+
+
+class AdministradorOCajero(BasePermission):
+    """Consulta compartida (por ejemplo, el historial de arqueos): el
+    administrador ve todo; el cajero, lo suyo (el filtrado lo hace la vista)."""
+
+    def has_permission(self, request, view):
+        return tiene_rol(request.user, (ADMINISTRADOR,)) or es_cajero(request.user)

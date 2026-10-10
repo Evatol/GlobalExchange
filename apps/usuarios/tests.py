@@ -536,10 +536,6 @@ class GestionRolesTests(TestCase):
         resp = self.client.post('/api/usuarios/roles/asignar/', {
             'username': 'analista_demo', 'rol': 'analista',
         })
-        # fetch_redirect_response=False: no seguir el redirect. La pantalla de
-        # destino (gestion_roles_view) llama a listar_usuarios_con_roles(),
-        # que no está mockeado acá (sí lo está en test_accesible_para_administrador)
-        # y en CI no hay Keycloak disponible para responderle.
         self.assertRedirects(resp, '/api/usuarios/roles/', fetch_redirect_response=False)
         mock_asignar.assert_called_once_with('analista_demo', 'analista')
 
@@ -875,6 +871,37 @@ class MiPerfilViewTests(TestCase):
         self.assertEqual(self.perfil.nombres, 'Nombre Original')
 
 
+class MonedasFavoritasE424Tests(TestCase):
+    """Test de la tarea E4-24: Marcar monedas favoritas."""
+
+    def setUp(self):
+        self.url = '/api/usuarios/mi-perfil/'
+        self.django_user = _usuario_con_rol('favoritos_user', rol='usuario_final')
+        self.perfil = Usuario.objects.create(
+            username='favoritos_user',
+            email='favoritos_user@example.com',
+            nombres='Fav',
+            apellidos='User',
+        )
+        from apps.divisas.models import Moneda
+        self.moneda_activa = Moneda.objects.create(codigo='USD', nombre='Dólar', estado=True)
+        self.moneda_inactiva = Moneda.objects.create(codigo='XXX', nombre='Inactiva', estado=False)
+
+    def test_agregar_y_persistir_monedas_favoritas(self):
+        self.client.force_login(self.django_user)
+        resp = self.client.post(self.url, {
+            'actualizar_favoritos': '1',
+            'monedas_favoritas': [self.moneda_activa.pk],
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.perfil.refresh_from_db()
+        self.assertIn(self.moneda_activa, self.perfil.monedas_favoritas.all())
+
+    def test_limit_choices_to_solo_permite_activas_en_modelo(self):
+        self.perfil.monedas_favoritas.add(self.moneda_activa)
+        self.assertIn(self.moneda_activa, self.perfil.monedas_favoritas.all())
+
+
 class CambiarPasswordViewTests(TestCase):
     """RF9: cambio de la contraseña propia desde Mi Perfil, sin salir de la
     aplicación. La llamada real a Keycloak se mockea: la lógica de
@@ -984,11 +1011,12 @@ class SeedDatosDemoTests(TestCase):
 
         call_command('seed_datos_demo', stdout=StringIO())
 
-        # monedas con su cotización activa
-        self.assertEqual(Moneda.objects.count(), 3)
+        # monedas con su cotización activa; el guaraní es la moneda local y no se cotiza
+        self.assertEqual(Moneda.objects.count(), 4)
         for codigo in ('USD', 'EUR', 'BRL'):
             moneda = Moneda.objects.get(codigo=codigo)
             self.assertTrue(TasaCambio.objects.filter(moneda=moneda, estado=True).exists())
+        self.assertFalse(TasaCambio.objects.filter(moneda__codigo='PYG').exists())
 
         # un método de cada tipo, incluida la tarjeta de crédito
         self.assertEqual(
@@ -1026,7 +1054,7 @@ class SeedDatosDemoTests(TestCase):
         call_command('seed_datos_demo', stdout=StringIO())
         call_command('seed_datos_demo', stdout=StringIO())
 
-        self.assertEqual(Moneda.objects.count(), 3)
+        self.assertEqual(Moneda.objects.count(), 4)
         self.assertEqual(Cliente.objects.count(), 3)
         self.assertEqual(Usuario.objects.filter(username='cliente_demo').count(), 1)
         self.assertEqual(MedioPagoCliente.objects.count(), 4)
@@ -1038,3 +1066,58 @@ class SeedDatosDemoTests(TestCase):
         call_command('seed_datos_demo', '--usuario', 'otro_demo', stdout=StringIO())
         usuario = Usuario.objects.get(username='otro_demo')
         self.assertIn(Cliente.objects.get(nombre='Comercial Uno'), usuario.clientes.all())
+
+    def test_deja_la_caja_del_cajero_demo_abierta_con_billetes(self):
+        from apps.caja.models import AsignacionCajero, Billete, Caja, StockBillete
+
+        call_command('seed_datos_demo', stdout=StringIO())
+
+        cajero = Usuario.objects.get(username='cajero_demo')
+        self.assertTrue(AsignacionCajero.objects.filter(usuario=cajero, estado=True).exists())
+        caja = Caja.objects.get(cajero=cajero)
+        self.assertEqual(caja.estado, 'ABIERTA')
+        self.assertIsNotNone(caja.fecha_apertura)
+        # un tipo de billete de cada denominación de cada moneda, con su stock
+        self.assertEqual(StockBillete.objects.filter(caja=caja).count(), Billete.objects.count())
+        self.assertTrue(StockBillete.objects.filter(caja=caja, cantidad=10).exists())
+
+    def test_la_caja_demo_funciona_para_operar_en_el_mostrador(self):
+        """Con solo el seed ya se puede atender un cliente: está el guaraní, las
+        denominaciones y el efectivo."""
+        from apps.caja import services as caja_services
+        from apps.caja.models import Caja
+
+        call_command('seed_datos_demo', stdout=StringIO())
+        caja = Caja.objects.get(cajero__username='cajero_demo')
+        transaccion = caja_services.registrar_operacion_presencial(
+            caja=caja, usuario=caja.cajero, cliente=Cliente.objects.get(nombre='Comercial Uno'),
+            tipo='COMPRA', moneda_codigo='USD', cantidad=Decimal('13'),
+        )
+        self.assertEqual(transaccion.estado, 'EXITOSA')
+
+    def test_repetir_el_seed_no_vuelve_a_cargar_billetes_ni_reabre_la_caja(self):
+        from apps.caja import services as caja_services
+        from apps.caja.models import Caja, MovimientoBillete
+
+        call_command('seed_datos_demo', stdout=StringIO())
+        movimientos = MovimientoBillete.objects.count()
+        call_command('seed_datos_demo', stdout=StringIO())
+        self.assertEqual(MovimientoBillete.objects.count(), movimientos)  # no recarga
+
+        caja = Caja.objects.get(cajero__username='cajero_demo')
+        caja_services.cerrar_caja(caja, caja.cajero)
+        call_command('seed_datos_demo', stdout=StringIO())
+        caja.refresh_from_db()
+        self.assertEqual(caja.estado, 'CERRADA')  # lo que pasó en la demo no se pisa
+
+    def test_operar_no_ofrece_el_guarani(self):
+        from django.contrib.auth.models import Group
+
+        call_command('seed_datos_demo', stdout=StringIO())
+        user = User.objects.create_user('cliente_demo')
+        user.groups.add(Group.objects.get_or_create(name='usuario_final')[0])
+        self.client.force_login(user)
+        resp = self.client.get('/api/transacciones/gestion/operar/')
+        self.assertEqual(
+            {m.codigo for m in resp.context['monedas']}, {'USD', 'EUR', 'BRL'}
+        )

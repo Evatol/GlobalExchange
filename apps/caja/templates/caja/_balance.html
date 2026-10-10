@@ -1,0 +1,33 @@
+{# Balance de la sesión de una caja, por moneda (E4-100). Espera ``balance`` (services.balance_caja). #}
+<div class="table-responsive">
+    <table class="table align-middle mb-0">
+        <thead>
+            <tr class="text-muted">
+                <th>Moneda</th>
+                <th class="text-end">Al abrir</th>
+                <th class="text-end">Carga inicial</th>
+                <th class="text-end text-success">Recibido</th>
+                <th class="text-end text-danger">Entregado</th>
+                <th class="text-end">Saldo actual</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for f in balance.monedas %}
+            <tr>
+                <td><strong>{{ f.moneda }}</strong></td>
+                <td class="text-end">{{ f.saldo_al_abrir|floatformat:"-2g" }}</td>
+                <td class="text-end">{{ f.carga_inicial|floatformat:"-2g" }}</td>
+                <td class="text-end text-success">+ {{ f.recibido|floatformat:"-2g" }}</td>
+                <td class="text-end text-danger">− {{ f.entregado|floatformat:"-2g" }}</td>
+                <td class="text-end fw-bold">{{ f.saldo_actual|floatformat:"-2g" }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="6" class="text-center text-muted">La caja todavía no tiene billetes.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<p class="text-muted small mt-2 mb-0">
+    {{ balance.operaciones }} operaci{{ balance.operaciones|pluralize:"ón,ones" }} en esta sesión.
+    Todo sale de los movimientos de billetes registrados: al abrir + carga inicial + recibido − entregado = saldo actual.
+</p>

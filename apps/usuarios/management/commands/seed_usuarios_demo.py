@@ -31,13 +31,14 @@ USUARIOS_DEMO = {
     "admin_demo": ("Admin", "Demo", "administrador"),
     "analista_demo": ("Analista", "Demo", "analista"),
     "cliente_demo": ("Cliente", "Demo", "usuario_final"),
+    "cajero_demo": ("Cajero", "Demo", "cajero"),
     "angel": ("Angel", "Prueba", None),
 }
 
 
 class Command(BaseCommand):
     help = (
-        "Crea admin_demo/analista_demo/cliente_demo (uno por rol de "
+        "Crea admin_demo/analista_demo/cliente_demo/cajero_demo (uno por rol de "
         "negocio) y angel (sin rol) con contraseña fija, para pruebas en "
         "equipo. Idempotente."
     )
@@ -108,5 +109,5 @@ class Command(BaseCommand):
         if not options["dry_run"]:
             self.stdout.write(self.style.SUCCESS(
                 f"\nListo. Todos usan la contraseña '{password}' "
-                "(admin_demo / analista_demo / cliente_demo / angel)."
+                "(admin_demo / analista_demo / cliente_demo / cajero_demo / angel)."
             ))

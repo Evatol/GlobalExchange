@@ -204,6 +204,13 @@ Los tests de esta lógica:
 venv/bin/python manage.py test apps.transacciones.tests.ConfirmacionDePagoTests apps.transacciones.tests.TransaccionCancelacionPorCambioDeTasaTests -v 2
 ```
 
+### 5.3 Historial de transacciones (solo consulta)
+
+**Historial**: fecha, tipo, moneda, cantidad, tasa, total y estado. Filtrá
+por estado **Cancelada** y exportá a **PDF**: el archivo respeta el filtro
+aplicado. `cliente_demo` ve solo las operaciones de su cliente activo;
+`admin_demo` ve todas.
+
 ### 5.4 Medios de pago con saldo (observación de la profe)
 
 Cada medio de pago, salvo el efectivo, es una cuenta del **banco simulado**
@@ -252,12 +259,27 @@ Sin iniciar sesión, en `http://localhost:8000/`: **Cambio de una divisa por
 otra**, USD → EUR, **100** → **90,68 EUR** (sin comisión, es solo
 referencia; la operación real descuenta la comisión del cliente).
 
-### 5.3 Historial de transacciones (solo consulta)
+### 5.7 Pago por la pasarela externa y webhook (E4-157 / E4-158)
 
-**Historial**: fecha, tipo, moneda, cantidad, tasa, total y estado. Filtrá
-por estado **Cancelada** y exportá a **PDF**: el archivo respeta el filtro
-aplicado. `cliente_demo` ve solo las operaciones de su cliente activo;
-`admin_demo` ve todas.
+1. **Ventana normal:** Operar → Comprar, USD, **13**, Caja chica →
+   **Continuar al pago**.
+2. En el resumen, **Pagar por la pasarela externa**: queda *"Esperando el pago
+   externo"* con una **referencia** `PAS-...` (copiala).
+3. En una terminal, la pasarela avisa que cobró:
+
+   ```
+   venv/bin/python manage.py simular_webhook_pago PAS-XXXXXXXX
+   ```
+
+   Responde **200** y, al recargar el resumen, la operación quedó **Exitosa**.
+4. **Seguridad:** el mismo comando con `--firma-invalida` responde **403** y no
+   toca nada. Repetir el aviso responde *"Aviso ya procesado"* sin cobrar de
+   nuevo. Con `--rechazar` la operación queda **Fallida**.
+
+🗣️ *"El webhook no tiene login porque la pasarela no tiene usuario: la
+autenticidad la da la firma HMAC del cuerpo. Si cambió la cotización entre que
+se inició el pago y el aviso, se cancela y queda anotado que hay que devolver
+el pago externo. Solo se paga así una compra: no se debita además el banco."*
 
 ---
 
@@ -389,10 +411,11 @@ integrante lo pone en su `.env`, que git ignora.
 6. Medios de pago con saldo: compra con la cuenta, tarjeta rechazada y
    Fallida en el historial (5.4)
 7. Cambio de USD a EUR y calculadora pública (5.5 y 5.6)
-8. `./scripts/pruebas.sh` y `./scripts/documentacion.sh`
-9. Producción y `./scripts/verificar_produccion.sh` (9)
+8. Pago por la pasarela y webhook, con firma válida e inválida (5.7)
+9. `./scripts/pruebas.sh` y `./scripts/documentacion.sh`
+10. Producción y `./scripts/verificar_produccion.sh` (9)
 
-Si los nueve pasos te salen sin leer la guía, estás listo.
+Si los diez pasos te salen sin leer la guía, estás listo.
 
 Ojo con el orden: la tarjeta rechazada (5.4) y el cambio (5.5) dejan
 operaciones en el historial y mueven saldos. Con `--limpio` se vuelve a los
