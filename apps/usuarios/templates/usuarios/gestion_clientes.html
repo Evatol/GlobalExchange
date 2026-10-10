@@ -52,7 +52,12 @@
                                         <td><strong>{{ c.nombre }}</strong>{% if c.razon_social %}<br><small class="text-muted">{{ c.razon_social }}</small>{% endif %}</td>
                                         <td>{{ c.documento }}</td>
                                         <td>{{ c.get_tipo_display }}</td>
-                                        <td>{{ c.get_categoria_display }}</td>
+                                        <td>
+                                            {{ c.get_categoria_display }}<br>
+                                            <small class="text-muted">
+                                                {% if c.limite_por_operacion %}hasta {{ c.limite_por_operacion|floatformat:"0g" }} Gs{% else %}sin límite{% endif %}
+                                            </small>
+                                        </td>
                                         <td>
                                             {% if c.estado %}
                                                 <span class="badge bg-success">activo</span>
@@ -154,6 +159,9 @@
                                     <option value="{{ valor }}">{{ etiqueta }}</option>
                                     {% endfor %}
                                 </select>
+                                <div class="form-text">
+                                    Límite por operación: Minorista 100.000 Gs · Mayorista 1.000.000 Gs · VIP sin límite.
+                                </div>
                             </div>
                             <div class="mb-3">
                                 <label class="form-label">Preferencia de tipo de cambio</label>
@@ -162,14 +170,6 @@
                                     <option value="{{ valor }}">{{ etiqueta }}</option>
                                     {% endfor %}
                                 </select>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Límite de compra</label>
-                                <input type="number" step="0.01" name="limite_compra" class="form-control" value="0.00">
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Límite de venta</label>
-                                <input type="number" step="0.01" name="limite_venta" class="form-control" value="0.00">
                             </div>
                             <div class="mb-3">
                                 <label class="form-label">Frecuencia de transacciones</label>

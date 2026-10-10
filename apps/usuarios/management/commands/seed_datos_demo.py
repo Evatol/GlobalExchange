@@ -1,7 +1,9 @@
 """Carga los datos de negocio necesarios para probar el sistema de punta a
-punta: monedas con su cotización, métodos de pago, clientes de distinta
-categoría (para ver la comisión diferenciada y el tope de límite) y la
-asociación de ``cliente_demo`` a uno de ellos.
+punta: monedas con su cotización, métodos de pago, clientes de cada
+categoría (para ver la comisión diferenciada y el límite por operación), la
+asociación de ``cliente_demo`` a uno de ellos, y sus cuentas en el banco
+simulado con un medio de pago por cada tipo (efectivo, cuenta, billetera y
+tarjeta de crédito).
 
 Complementa a ``seed_usuarios_demo``, que crea los usuarios en Keycloak:
 ese deja las credenciales listas, este deja con qué operar.
@@ -19,6 +21,8 @@ from decimal import Decimal
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from apps.banco import services as banco
+from apps.banco.models import CuentaBancaria
 from apps.divisas.models import Moneda, TasaCambio
 from apps.transacciones.models import MedioPagoCliente, MetodoPago
 from apps.usuarios.models import Cliente, Usuario
@@ -31,20 +35,36 @@ MONEDAS = [
 ]
 
 METODOS_PAGO = [
-    ('Efectivo', 'CASH'),
-    ('Transferencia bancaria', 'BANCO'),
-    ('Billetera electrónica', 'WALLET'),
+    ('Efectivo', MetodoPago.TIPO_EFECTIVO),
+    ('Transferencia bancaria', MetodoPago.TIPO_TRANSFERENCIA),
+    ('Billetera electrónica', MetodoPago.TIPO_BILLETERA),
+    ('Tarjeta de crédito', MetodoPago.TIPO_TARJETA_CREDITO),
 ]
 
 CLIENTES = [
-    # (nombre, documento, categoria, preferencia, limite_compra, limite_venta)
+    # (nombre, documento, categoria, preferencia de tipo de cambio)
+    ('Comercial Uno', '80012345-6', Cliente.CATEGORIA_MAYORISTA, Cliente.PREFERENCIA_MAYORISTA),
+    ('Comercial Dos', '80099999-1', Cliente.CATEGORIA_MINORISTA, Cliente.PREFERENCIA_ESTANDAR),
+    ('Importadora Tres', '80077777-3', Cliente.CATEGORIA_VIP, Cliente.PREFERENCIA_PREFERENCIAL),
+]
+
+# Cuentas del banco del primer cliente y el medio de pago con el que las usa:
+# (alias, método, número, entidad, tipo de cuenta, saldo, línea de crédito).
+# La tarjeta tiene menos línea que el límite de un mayorista (1.000.000 Gs),
+# para poder mostrar un pago rechazado por saldo insuficiente.
+MEDIOS_DEL_CLIENTE = [
+    ('Caja chica', 'Efectivo', 'EF-001', None, None, None, None),
     (
-        'Comercial Uno', '80012345-6', Cliente.CATEGORIA_CORPORATIVO,
-        Cliente.PREFERENCIA_MAYORISTA, Decimal('100000.00'), Decimal('0.00'),
+        'Cuenta Itaú', 'Transferencia bancaria', 'CA-1001', 'Banco Itaú',
+        CuentaBancaria.TIPO_CUENTA, Decimal('5000000.00'), Decimal('0.00'),
     ),
     (
-        'Comercial Dos', '80099999-1', Cliente.CATEGORIA_MINORISTA,
-        Cliente.PREFERENCIA_ESTANDAR, Decimal('0.00'), Decimal('0.00'),
+        'Tigo Money', 'Billetera electrónica', '0981-123456', 'Tigo Money',
+        CuentaBancaria.TIPO_BILLETERA, Decimal('150000.00'), Decimal('0.00'),
+    ),
+    (
+        'Visa Itaú', 'Tarjeta de crédito', '4111-0000-0000-1111', 'Banco Itaú',
+        CuentaBancaria.TIPO_TARJETA_CREDITO, Decimal('0.00'), Decimal('500000.00'),
     ),
 ]
 
@@ -85,28 +105,28 @@ class Command(BaseCommand):
         self.stdout.write(self.style.MIGRATE_HEADING('Métodos de pago:'))
         metodos = {}
         for nombre, tipo in METODOS_PAGO:
-            metodo, creado = MetodoPago.objects.get_or_create(
-                nombre=nombre, defaults={'tipo': tipo, 'estado': True},
+            # update_or_create: corrige el tipo de los que se crearon cuando
+            # el tipo era texto libre.
+            metodo, creado = MetodoPago.objects.update_or_create(
+                nombre=nombre, defaults={'tipo': tipo},
             )
             metodos[nombre] = metodo
             self.stdout.write(f'  {nombre}: {"creado" if creado else "ya existía"}')
 
         self.stdout.write(self.style.MIGRATE_HEADING('Clientes:'))
         clientes = []
-        for nombre, doc, categoria, preferencia, lim_compra, lim_venta in CLIENTES:
+        for nombre, doc, categoria, preferencia in CLIENTES:
             cliente, creado = Cliente.objects.get_or_create(
                 documento=doc,
                 defaults={
                     'nombre': nombre, 'tipo': 'JURIDICA', 'razon_social': f'{nombre} S.A.',
                     'categoria': categoria, 'preferencia_tipo_cambio': preferencia,
-                    'limite_compra': lim_compra, 'limite_venta': lim_venta,
                 },
             )
             clientes.append(cliente)
             self.stdout.write(
                 f'  {cliente.nombre}: {"creado" if creado else "ya existía"} '
-                f'({cliente.get_preferencia_tipo_cambio_display()}, '
-                f'límite de compra {cliente.limite_compra})'
+                f'({cliente.get_categoria_display()}, {_limite(cliente)})'
             )
 
         # El Usuario de negocio normalmente lo crea el backend OIDC en el primer
@@ -129,15 +149,32 @@ class Command(BaseCommand):
             f'  {username} ({"creado" if creado else "ya existía"}) -> {principal.nombre}'
         )
 
-        medio, creado = MedioPagoCliente.objects.get_or_create(
-            cliente=principal, metodo_pago=metodos['Efectivo'], identificador='EF-001',
-            defaults={'alias': 'Caja chica', 'titular': principal.nombre, 'estado': True},
-        )
-        self.stdout.write(self.style.MIGRATE_HEADING('Medio de pago del cliente:'))
-        self.stdout.write(f'  {medio.alias}: {"creado" if creado else "ya existía"}')
+        self.stdout.write(self.style.MIGRATE_HEADING('Banco y medios de pago del cliente:'))
+        for alias, metodo, numero, entidad, tipo_cuenta, saldo, linea in MEDIOS_DEL_CLIENTE:
+            if tipo_cuenta is not None and banco.buscar_cuenta(numero) is None:
+                banco.abrir_cuenta(
+                    numero=numero, tipo=tipo_cuenta, entidad=entidad,
+                    titular_documento=principal.documento, titular_nombre=principal.nombre,
+                    saldo=saldo, linea_credito=linea,
+                )
+            medio, creado = MedioPagoCliente.objects.get_or_create(
+                cliente=principal, metodo_pago=metodos[metodo], identificador=numero,
+                defaults={'alias': alias, 'titular': principal.nombre, 'estado': True},
+            )
+            disponible = medio.disponible
+            detalle = 'sin saldo' if disponible is None else f'disponible {banco.formatear_guaranies(disponible)}'
+            self.stdout.write(f'  {medio.alias}: {"creado" if creado else "ya existía"} ({detalle})')
 
         self.stdout.write(self.style.SUCCESS(
             f'\nListo. {username} puede operar sobre "{principal.nombre}" '
             f'(comisión de {principal.get_preferencia_tipo_cambio_display()}, '
-            f'límite de compra {principal.limite_compra}).'
+            f'{_limite(principal)}).'
         ))
+
+
+def _limite(cliente):
+    limite = cliente.limite_por_operacion
+    if limite is None:
+        return 'sin límite por operación'
+    return f'límite por operación {banco.formatear_guaranies(limite)}'
+

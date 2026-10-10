@@ -59,28 +59,13 @@ class ClienteSerializer(serializers.ModelSerializer):
             'tipo',
             'categoria',
             'estado',
-            'limite_compra',
-            'limite_venta',
+            'limite_por_operacion',
             'frecuencia_transacciones',
             'preferencia_tipo_cambio',
             'fecha_creacion',
             'usuarios',
         ]
-        read_only_fields = ['id', 'fecha_creacion']
-
-    def validate_limite_compra(self, value):
-        if value is not None and value < 0:
-            raise serializers.ValidationError(
-                'El límite de compra no puede ser negativo.'
-            )
-        return value
-
-    def validate_limite_venta(self, value):
-        if value is not None and value < 0:
-            raise serializers.ValidationError(
-                'El límite de venta no puede ser negativo.'
-            )
-        return value
+        read_only_fields = ['id', 'fecha_creacion', 'limite_por_operacion']
 
     def validate(self, attrs):
         tipo = attrs.get('tipo', getattr(self.instance, 'tipo', None))

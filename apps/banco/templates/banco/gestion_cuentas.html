@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GlobalExchange - Banco</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="{% url 'menu_principal' %}">GlobalExchange</a>
+            <div class="d-flex align-items-center text-white">
+                <span class="me-3">Bienvenido, <strong>{{ usuario.username }}</strong></span>
+                <a href="{% url 'menu_principal' %}" class="btn btn-outline-light btn-sm">Volver al Portal</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container my-5">
+        <div class="row">
+            <div class="col-md-12 text-center mb-4">
+                <h2>Banco (simulado)</h2>
+                <p class="text-muted">
+                    Cuentas, billeteras y tarjetas de los clientes, en guaraníes. Cada compra
+                    confirmada descuenta del disponible y cada venta lo acredita.
+                </p>
+            </div>
+        </div>
+
+        {% for m in messages %}
+            <div class="alert {% if m.tags == 'error' %}alert-danger{% elif m.tags == 'success' %}alert-success{% else %}alert-info{% endif %} py-2">{{ m }}</div>
+        {% endfor %}
+
+        <div class="row g-4">
+            <div class="{% if puede_escribir %}col-md-8{% else %}col-md-12{% endif %}">
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table align-middle mb-0">
+                                <thead>
+                                    <tr class="text-muted">
+                                        <th>Número</th>
+                                        <th>Tipo</th>
+                                        <th>Titular</th>
+                                        <th class="text-end">Disponible</th>
+                                        <th>Estado</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for c in cuentas %}
+                                    <tr>
+                                        <td><strong>{{ c.numero }}</strong><br><small class="text-muted">{{ c.entidad }}</small></td>
+                                        <td>{{ c.get_tipo_display }}</td>
+                                        <td>{{ c.titular_nombre }}<br><small class="text-muted">{{ c.titular_documento }}</small></td>
+                                        <td class="text-end">
+                                            {{ c.saldo|floatformat:"2g" }} Gs
+                                            {% if c.es_tarjeta %}
+                                                <br><small class="text-muted">línea {{ c.linea_credito|floatformat:"0g" }} · usado {{ c.credito_usado|floatformat:"0g" }}</small>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if c.estado %}
+                                                <span class="badge bg-success">activa</span>
+                                            {% else %}
+                                                <span class="badge bg-secondary">inactiva</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-end text-nowrap">
+                                            <a href="{% url 'cuenta_banco_detalle' c.id %}" class="btn btn-sm btn-outline-primary">Movimientos</a>
+                                            {% if puede_escribir %}
+                                            <form method="post" action="{% url 'cuenta_banco_toggle' c.id %}" class="d-inline m-0">
+                                                {% csrf_token %}
+                                                {% if c.estado %}
+                                                    <button type="submit" class="btn btn-sm btn-outline-danger">Desactivar</button>
+                                                {% else %}
+                                                    <button type="submit" class="btn btn-sm btn-outline-success">Activar</button>
+                                                {% endif %}
+                                            </form>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% if puede_escribir and c.estado %}
+                                    <tr class="border-top-0">
+                                        <td colspan="6" class="pt-0">
+                                            <form method="post" action="{% url 'cuenta_banco_cargar' c.id %}" class="d-flex justify-content-end gap-2 m-0">
+                                                {% csrf_token %}
+                                                <input type="number" step="0.01" min="0.01" name="monto" class="form-control form-control-sm" style="max-width: 160px" placeholder="Monto Gs" required>
+                                                <button type="submit" class="btn btn-sm btn-outline-secondary">
+                                                    {% if c.es_tarjeta %}Registrar pago de tarjeta{% else %}Cargar saldo{% endif %}
+                                                </button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                    {% endif %}
+                                    {% empty %}
+                                    <tr>
+                                        <td colspan="6" class="text-center text-muted">No hay cuentas en el banco.</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if puede_escribir %}
+            <div class="col-md-4">
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Abrir cuenta</h5>
+
+                        {% if error %}
+                            <div class="alert alert-danger py-2">{{ error }}</div>
+                        {% endif %}
+
+                        <form method="post">
+                            {% csrf_token %}
+                            <div class="mb-3">
+                                <label class="form-label">Titular</label>
+                                <select name="cliente" class="form-select" required>
+                                    <option value="">Seleccione cliente...</option>
+                                    {% for cl in clientes %}
+                                    <option value="{{ cl.id }}">{{ cl.nombre }} ({{ cl.documento }})</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Tipo</label>
+                                <select name="tipo" id="tipoCuenta" class="form-select" required>
+                                    {% for valor, etiqueta in tipo_choices %}
+                                    <option value="{{ valor }}">{{ etiqueta }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Número</label>
+                                <input type="text" name="numero" class="form-control" placeholder="Nº de cuenta, tarjeta o billetera" required>
+                                <div class="form-text">Es el identificador que el cliente carga en "Mis Medios de Pago".</div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Entidad</label>
+                                <input type="text" name="entidad" class="form-control" placeholder='Ej. "Banco Itaú", "Tigo Money"' required>
+                            </div>
+                            <div class="mb-3" id="campoSaldo">
+                                <label class="form-label">Saldo inicial (Gs)</label>
+                                <input type="number" step="0.01" min="0" name="saldo" class="form-control" value="0">
+                            </div>
+                            <div class="mb-3 d-none" id="campoLinea">
+                                <label class="form-label">Línea de crédito (Gs)</label>
+                                <input type="number" step="0.01" min="0" name="linea_credito" class="form-control" value="0">
+                                <div class="form-text">La tarjeta arranca con toda la línea disponible.</div>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Abrir cuenta</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        // Una tarjeta no tiene saldo inicial sino línea de crédito, y al revés.
+        (function () {
+            var tipo = document.getElementById('tipoCuenta');
+            if (!tipo) return;
+            var saldo = document.getElementById('campoSaldo');
+            var linea = document.getElementById('campoLinea');
+            function actualizar() {
+                var esTarjeta = tipo.value === 'TARJETA_CREDITO';
+                saldo.classList.toggle('d-none', esTarjeta);
+                linea.classList.toggle('d-none', !esTarjeta);
+                saldo.querySelector('input').value = esTarjeta ? '0' : saldo.querySelector('input').value;
+                linea.querySelector('input').value = esTarjeta ? linea.querySelector('input').value : '0';
+            }
+            tipo.addEventListener('change', actualizar);
+            actualizar();
+        })();
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

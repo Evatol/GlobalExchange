@@ -148,7 +148,7 @@ def gestion_clientes_view(request):
     """Pantalla propia del CRUD de Clientes (E4-125), con la asociación de
     usuarios (RF42) en la misma pantalla. Reutiliza ``ClienteSerializer``
     para no duplicar validaciones (razón social obligatoria para jurídica,
-    límites no negativos, etc.).
+    frecuencia no negativa, etc.).
 
     Consulta: administrador o analista. Crear/editar/activar/desactivar y
     asociar/desasociar usuarios: solo administrador.
@@ -186,9 +186,10 @@ def gestion_clientes_view(request):
 @login_required
 def cliente_editar_view(request, pk):
     """Edita los datos de un cliente existente (E4-125): nombre, documento,
-    tipo, razón social, categoría, límites, frecuencia y preferencia de
-    cambio. Reutiliza ``ClienteSerializer`` (misma validación que el alta:
-    razón social obligatoria si es jurídica, límites no negativos). No toca
+    tipo, razón social, categoría (que fija el límite por operación),
+    frecuencia y preferencia de cambio. Reutiliza ``ClienteSerializer``
+    (misma validación que el alta: razón social obligatoria si es
+    jurídica). No toca
     los usuarios asociados (eso se maneja aparte, en la pantalla de
     listado). Solo administrador."""
     if not tiene_rol(request.user, (ADMINISTRADOR,)):
