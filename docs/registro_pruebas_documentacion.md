@@ -107,8 +107,7 @@ que cada historia se integró a `develop`.
 | 2026-10-10 | `718d58a` | `apps/pasarela` (nueva) | Pasarela de pago simulada con pantalla de pago, sin comandos (E4-157/E4-158) | +16 | 452 | Angel |
 | 2026-10-10 | `6f395ad` | `apps/notificaciones` | Editar la cotización vigente también avisa (E4-32/E4-33) | +8 | 460 | Angel |
 
-**Estado actual de Sprint 4: 460 tests (+168 desde el cierre de Sprint 3).**
-El cierre del sprint (tag `v1.5.0`) se completa al ponerlo.
+**Cierre de Sprint 4 (tag `v1.5.0`): 460 tests (+168 desde el cierre de Sprint 3).**
 
 Verificación: `./scripts/pruebas.sh` → `Ran 460 tests ... OK`. Cada cifra sale de contar los
 `def test_` de cada commit contra su commit padre (`git show <hash>`); coincide con las
