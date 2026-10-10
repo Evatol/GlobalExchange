@@ -62,7 +62,7 @@
                         <form method="POST">
                             {% csrf_token %}
                             <div class="mb-3">
-                                <label class="form-label">Moneda a operar</label>
+                                <label class="form-label" id="etiquetaMoneda">Moneda a operar</label>
                                 <select name="moneda_codigo" class="form-select" required>
                                     <option value="">Seleccione moneda...</option>
                                     {% for tasa in tasas %}
@@ -75,9 +75,22 @@
 
                             <div class="mb-3">
                                 <label class="form-label">Tipo de Operación</label>
-                                <select name="tipo_operacion" class="form-select">
+                                <select name="tipo_operacion" id="tipoOperacion" class="form-select">
                                     <option value="compra" {% if tipo_operacion == 'compra' %}selected{% endif %}>Compra</option>
                                     <option value="venta" {% if tipo_operacion == 'venta' %}selected{% endif %}>Venta</option>
+                                    <option value="cambio" {% if tipo_operacion == 'cambio' %}selected{% endif %}>Cambio de una divisa por otra</option>
+                                </select>
+                            </div>
+
+                            <div class="mb-3 d-none" id="campoMonedaDestino">
+                                <label class="form-label">Moneda que recibís</label>
+                                <select name="moneda_destino_codigo" class="form-select">
+                                    <option value="">Seleccione moneda...</option>
+                                    {% for tasa in tasas %}
+                                        <option value="{{ tasa.moneda.codigo }}" {% if moneda_destino == tasa.moneda.codigo %}selected{% endif %}>
+                                            {{ tasa.moneda.codigo }} - {{ tasa.moneda.nombre }}
+                                        </option>
+                                    {% endfor %}
                                 </select>
                             </div>
 
@@ -92,8 +105,13 @@
                         {% if resultado %}
                             <div class="mt-4 p-3 bg-light rounded border text-center">
                                 <h6 class="text-success mb-1">Resultado de la Simulación</h6>
-                                <p class="fs-4 mb-0"><strong>{{ resultado|floatformat:2 }} PYG</strong></p>
-                                <small class="text-muted">Tasa aplicada: {{ tasa_aplicada|floatformat:2 }} PYG</small>
+                                {% if tipo_operacion == 'cambio' %}
+                                    <p class="fs-4 mb-0"><strong>{{ resultado|floatformat:2 }} {{ moneda_destino }}</strong></p>
+                                    <small class="text-muted">Pasando por guaraníes, sin comisión.</small>
+                                {% else %}
+                                    <p class="fs-4 mb-0"><strong>{{ resultado|floatformat:2 }} PYG</strong></p>
+                                    <small class="text-muted">Tasa aplicada: {{ tasa_aplicada|floatformat:2 }} PYG</small>
+                                {% endif %}
                             </div>
                         {% endif %}
                     </div>
@@ -101,6 +119,24 @@
             </div>
         </div>
     </div>
+
+    <script>
+        // En un cambio hay que elegir también la divisa que se recibe.
+        (function () {
+            var tipo = document.getElementById('tipoOperacion');
+            if (!tipo) return;
+            var destino = document.getElementById('campoMonedaDestino');
+            var etiqueta = document.getElementById('etiquetaMoneda');
+            function actualizar() {
+                var esCambio = tipo.value === 'cambio';
+                destino.classList.toggle('d-none', !esCambio);
+                destino.querySelector('select').required = esCambio;
+                etiqueta.textContent = esCambio ? 'Moneda que entregás' : 'Moneda a operar';
+            }
+            tipo.addEventListener('change', actualizar);
+            actualizar();
+        })();
+    </script>
 
     <!-- Bootstrap 5 JS Bundle -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>

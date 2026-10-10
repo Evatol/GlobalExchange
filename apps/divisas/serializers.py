@@ -52,10 +52,25 @@ class TasaCambioSerializer(serializers.ModelSerializer):
 
 class SimulacionRequestSerializer(serializers.Serializer):
     moneda_codigo = serializers.CharField(max_length=10)
-    tipo_operacion = serializers.ChoiceField(choices=['compra', 'venta'])
+    tipo_operacion = serializers.ChoiceField(choices=['compra', 'venta', 'cambio'])
     cantidad = serializers.DecimalField(
         max_digits=15, decimal_places=2, min_value=Decimal('0.01')
     )
+    # Solo en un cambio: la divisa que se recibe.
+    moneda_destino_codigo = serializers.CharField(
+        max_length=10, required=False, allow_blank=True
+    )
+
+    def validate(self, attrs):
+        if attrs['tipo_operacion'] == 'cambio':
+            destino = attrs.get('moneda_destino_codigo', '')
+            if not destino:
+                raise serializers.ValidationError('Elegí la moneda que querés recibir.')
+            if destino.upper() == attrs['moneda_codigo'].upper():
+                raise serializers.ValidationError(
+                    'La moneda que entregás y la que recibís tienen que ser distintas.'
+                )
+        return attrs
 
     def validate_cantidad(self, value):
         if value <= 0:

@@ -9,8 +9,16 @@ desde ahí, con la autorización de la cátedra. Primero se muestra el tag;
 después se pasa a `develop`.
 
 Los números de esta guía son los que salen con los datos de demostración:
-USD a 7.300 (compra) / 7.400 (venta), y `cliente_demo` operando sobre
-"Comercial Uno" (mayorista, 0,5% de comisión, límite de compra 100.000).
+USD a 7.300 (compra) / 7.400 (venta), EUR a 7.900 / 8.050, y `cliente_demo`
+operando sobre "Comercial Uno" (categoría Mayorista: límite de 1.000.000 Gs por
+operación; comisión del 0,5%). Tiene cuatro medios de pago: **Caja chica**
+(efectivo), **Cuenta Itaú** (5.000.000 Gs), **Tigo Money** (150.000 Gs) y
+**Visa Itaú** (línea de crédito de 500.000 Gs). El saldo de esas cuentas lo ve
+solo el administrador, en el menú **Banco**: el cliente nunca lo ve.
+
+**Observaciones de la revisión anterior (ya resueltas):** el cambio entre
+monedas (5.5) y los medios de pago con saldo (5.4). Si la profesora lo
+pregunta, se muestran directo.
 
 ---
 
@@ -80,9 +88,9 @@ Todos los usuarios usan la contraseña `Demo1234!`.
 
 | Usuario | Rol | Ve |
 |---|---|---|
-| `admin_demo` | administrador | todo, incluidos Roles y Métodos de Pago |
-| `analista_demo` | analista | CRUD de Clientes, Monedas y Cotizaciones |
-| `cliente_demo` | usuario final | Divisas, Mis Medios de Pago, Comprar/Vender, Historial |
+| `admin_demo` | administrador | todo, incluidos Roles, Métodos de Pago y Banco |
+| `analista_demo` | analista | CRUD de Clientes, Monedas, Cotizaciones y Banco (solo consulta) |
+| `cliente_demo` | usuario final | Divisas, Mis Medios de Pago, Operar Divisas, Historial |
 | `angel` | **sin rol** | el menú básico; sirve para la demo de asignación de roles (sección 3) |
 
 ## 3. Asignación de roles (con `angel`)
@@ -105,7 +113,7 @@ el próximo login; por eso hay que volver a entrar para ver el cambio."*
 ./scripts/pruebas.sh
 ```
 
-Termina con **`Ran 220 tests ... OK`**. Para ver solo las del sprint:
+Termina con **`Ran 292 tests ... OK`**. Para ver solo las del sprint:
 
 ```
 venv/bin/python manage.py test apps.transacciones -v 2
@@ -128,9 +136,12 @@ docstring del método.
 Entrá por la pantalla pública: `http://localhost:8000/` → **Ingresar al
 Portal** → `cliente_demo`.
 
+En **Operar Divisas** se ve a la derecha el **Cambio del Día**, con lo que
+paga el cliente al comprar y lo que recibe al vender.
+
 ### 5.1 Compra y venta, con comisión y tasa aplicada
 
-**Comprar/Vender Divisas** → Comprar, USD, **13**, Caja chica →
+**Operar Divisas** → Comprar, USD, **13**, Caja chica →
 **Continuar al pago**.
 
 ```
@@ -154,14 +165,17 @@ paga 0,5%."*
 🗣️ *"Compró a 96.681 y vendió a 94.425,50: la diferencia queda para la
 casa, como en una casa de cambio real."*
 
-**Límite del cliente:** Comprar **14** USD → *"El monto de la operación
-(104118.00) supera el límite de compra configurado para el cliente
-(100000.00)."* No se crea ninguna operación.
+**Límite de la categoría:** Comprar **140** USD → *"El monto de la operación
+(1.041.180,00 Gs) supera el límite por operación de la categoría Mayorista
+(1.000.000,00 Gs)."* No se crea ninguna operación. El límite lo fija la
+categoría del cliente: Minorista 100.000 Gs, Mayorista 1.000.000 Gs, VIP sin
+límite (se ve en CRUD Clientes).
 
 **Opcional, la diferencia entre categorías:** como `admin_demo`, en CRUD
-Clientes, asociá `cliente_demo` a "Comercial Dos" (estándar, 1,5%). Como
-cliente, elegí Comercial Dos en el selector de arriba, cargá un medio de
-pago y comprá 13 USD: **97.643,00** (comisión 1.443,00, el triple).
+Clientes, asociá `cliente_demo` a "Comercial Dos" (Minorista, comisión 1,5%).
+Como cliente, elegí Comercial Dos en el selector de arriba, cargá un medio de
+pago en efectivo y comprá 13 USD: **97.643,00** (comisión 1.443,00, el triple).
+Con 14 USD ya supera su límite de 100.000 Gs.
 
 ### 5.2 Cancelación por cambio de cotización antes del pago (E4-28)
 
@@ -190,6 +204,54 @@ Los tests de esta lógica:
 venv/bin/python manage.py test apps.transacciones.tests.ConfirmacionDePagoTests apps.transacciones.tests.TransaccionCancelacionPorCambioDeTasaTests -v 2
 ```
 
+### 5.4 Medios de pago con saldo (observación de la profe)
+
+Cada medio de pago, salvo el efectivo, es una cuenta del **banco simulado**
+y su saldo baja con cada compra. Mostralo en este orden:
+
+1. **Ventana privada:** `admin_demo` → **Banco**: Cuenta Itaú **5.000.000**,
+   Tigo Money **150.000**, Visa Itaú **500.000** (línea de crédito).
+2. **Ventana normal:** Operar → Comprar, USD, **13**, **Cuenta Itaú** →
+   **Confirmar pago**. En **Banco** la cuenta bajó **96.681** y en
+   **Movimientos** aparece el débito con su operación.
+3. **Pago rechazado:** Comprar USD **100** con **Visa Itaú** (cuesta
+   743.700 y la línea es de 500.000) → **Confirmar pago** → *"Pago
+   rechazado. Visa Itaú: Saldo insuficiente para pagar 743.700,00 Gs. La
+   operación quedó registrada como fallida."* En **Historial**, filtrá por
+   **Fallida**: aparece con el motivo. La tarjeta no se descontó.
+4. **Tarjeta solo para comprar:** elegí **Vender**: Visa Itaú queda
+   deshabilitada con un aviso. Por la API también se rechaza.
+5. **Mis Medios de Pago:** al crear uno que no es efectivo, el número tiene
+   que ser una cuenta del banco, del tipo correcto y a nombre del cliente.
+
+🗣️ *"El saldo no lo ve el cliente, como en un banco real: la casa de cambio
+solo recibe si el pago pasó o no. El banco es una app propia que es lo único
+que mueve saldos; si falta saldo, la operación queda Fallida, no Cancelada."*
+
+### 5.5 Cambio entre divisas (observación de la profe)
+
+Operar → **Cambiar una divisa por otra** → entrega **USD 100**, recibe
+**EUR**, medio **Caja chica** → **Continuar al pago**:
+
+```
+Entregás      100,00 USD
+Recibís        90,22 EUR
+```
+
+(100 × 7.300 = 730.000, menos 0,5% = 726.350, dividido 8.050 = 90,22.) →
+**Confirmar pago**. En **Historial** aparece como *USD → EUR*.
+
+🗣️ *"El cambio pasa por el guaraní: la casa le compra los dólares y le vende
+los euros. Es solo en efectivo porque las cuentas del banco son en guaraníes.
+Si cambia la cotización de cualquiera de las dos monedas antes de pagar, se
+cancela."*
+
+### 5.6 La calculadora pública
+
+Sin iniciar sesión, en `http://localhost:8000/`: **Cambio de una divisa por
+otra**, USD → EUR, **100** → **90,68 EUR** (sin comisión, es solo
+referencia; la operación real descuenta la comisión del cliente).
+
 ### 5.3 Historial de transacciones (solo consulta)
 
 **Historial**: fecha, tipo, moneda, cantidad, tasa, total y estado. Filtrá
@@ -212,10 +274,12 @@ planificado.
 ## 8. QA
 
 - CI en cada PR: pruebas unitarias (PUN) y documentación con `-W` (PDO).
-- 220 tests, 86% de cobertura.
+- 292 tests.
 - Errores detectados y corregidos durante el sprint: un PR que se había
   mergeado sin funcionar, las tasas invertidas, una transacción cancelada que
-  podía volver a confirmarse, montos con 8 decimales.
+  podía volver a confirmarse, montos con 8 decimales, el saldo del banco que
+  se mostraba al cliente, una tarjeta ajena que se podía asociar mandando el
+  id de otro cliente.
 - La API está cerrada por defecto: solo las tasas, el simulador y los
   catálogos se leen sin login.
 
@@ -266,6 +330,24 @@ Porque después de la entrega corregimos dos errores, y la cátedra autorizó
 presentar con las mejoras. El tag del viernes no se tocó: está para comparar,
 y `git log --oneline v1.4.0..develop` muestra exactamente qué cambió.
 
+**"¿Por qué el cambio entre divisas es solo en efectivo?"**
+Porque las cuentas, billeteras y tarjetas del banco son en guaraníes. Para
+hacerlo digital habría que darle moneda a cada cuenta.
+
+**"¿Por qué un banco simulado propio?"**
+Para que cada medio de pago tenga saldo sin depender de un banco real. Es una
+app aparte (`apps/banco`) y es lo único que mueve saldos, así que se puede
+reemplazar por un banco externo cambiando solo ese módulo. Débito y estado de
+la operación se guardan juntos: o pasan los dos o ninguno.
+
+**"¿Por qué una venta con tarjeta de crédito no se permite?"**
+En una venta el cliente recibe plata, y eso no se acredita en una tarjeta de
+crédito: se acredita en una cuenta, una billetera o en efectivo.
+
+**"¿Por qué el límite depende de la categoría?"**
+Minorista 100.000 Gs, Mayorista 1.000.000 Gs y VIP sin límite, por operación.
+Ya no se carga a mano por cliente: lo fija la categoría.
+
 **"¿Por qué la tasa de compra se aplica a la venta?"**
 La pizarra muestra las tasas desde el punto de vista de la casa: a cuánto
 compra y a cuánto vende. Cuando el cliente compra, la casa vende, y al
@@ -304,7 +386,14 @@ integrante lo pone en su `.env`, que git ignora.
 3. Asignarle un rol a `angel` (3) y compra de 13 USD con confirmación de pago (5.1)
 4. Cancelación por cambio de cotización, con las dos ventanas (5.2)
 5. Historial con filtro y exportación (5.3)
-6. `./scripts/pruebas.sh` y `./scripts/documentacion.sh`
-7. Producción y `./scripts/verificar_produccion.sh` (9)
+6. Medios de pago con saldo: compra con la cuenta, tarjeta rechazada y
+   Fallida en el historial (5.4)
+7. Cambio de USD a EUR y calculadora pública (5.5 y 5.6)
+8. `./scripts/pruebas.sh` y `./scripts/documentacion.sh`
+9. Producción y `./scripts/verificar_produccion.sh` (9)
 
-Si los siete pasos te salen sin leer la guía, estás listo.
+Si los nueve pasos te salen sin leer la guía, estás listo.
+
+Ojo con el orden: la tarjeta rechazada (5.4) y el cambio (5.5) dejan
+operaciones en el historial y mueven saldos. Con `--limpio` se vuelve a los
+números de esta guía.
