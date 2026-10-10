@@ -34,11 +34,11 @@ class MetodoPagoCRUDTests(APITestCase):
     def setUp(self):
         self.client.force_authenticate(user=_usuario_con_rol('admin_metodo', rol='administrador'))
         self.url = '/api/transacciones/metodos-pago/'
-        self.metodo = MetodoPago.objects.create(nombre='Transferencia', tipo='BANCO')
+        self.metodo = MetodoPago.objects.create(nombre='Transferencia', tipo='TRANSFERENCIA')
 
     def test_crear_y_listar(self):
         resp = self.client.post(
-            self.url, {'nombre': 'Billetera', 'tipo': 'WALLET'}, format='json'
+            self.url, {'nombre': 'Billetera', 'tipo': 'BILLETERA'}, format='json'
         )
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
         self.assertEqual(self.client.get(self.url).data['count'], 2)
@@ -50,9 +50,17 @@ class MetodoPagoCRUDTests(APITestCase):
         self.assertFalse(self.metodo.estado)
         self.assertTrue(MetodoPago.objects.filter(pk=self.metodo.pk).exists())
 
+    def test_tipo_fuera_del_catalogo_se_rechaza(self):
+        """El tipo decide si se cobra por el banco: ya no es texto libre."""
+        resp = self.client.post(
+            self.url, {'nombre': 'Cheque', 'tipo': 'CHEQUE'}, format='json'
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('tipo', resp.data)
+
     def test_filtrar_por_tipo(self):
-        MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
-        resp = self.client.get(self.url, {'tipo': 'CASH'})
+        MetodoPago.objects.create(nombre='Efectivo', tipo='EFECTIVO')
+        resp = self.client.get(self.url, {'tipo': 'EFECTIVO'})
         self.assertEqual(resp.data['count'], 1)
 
 
@@ -64,7 +72,7 @@ class MedioPagoClienteCRUDTests(APITestCase):
         self.url = '/api/transacciones/medios-pago-cliente/'
         self.cliente = _cliente()
         self.otro_cliente = _cliente(nombre='Otro', documento='999')
-        self.metodo = MetodoPago.objects.create(nombre='Transferencia', tipo='BANCO')
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='EFECTIVO')
         self.medio = MedioPagoCliente.objects.create(
             cliente=self.cliente,
             metodo_pago=self.metodo,
@@ -86,7 +94,7 @@ class MedioPagoClienteCRUDTests(APITestCase):
         resp = self.client.post(self.url, self._payload(), format='json')
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
         self.assertEqual(self.cliente.medios_pago.count(), 2)
-        self.assertEqual(resp.data['metodo_pago_nombre'], 'Transferencia')
+        self.assertEqual(resp.data['metodo_pago_nombre'], 'Efectivo')
 
     def test_no_permite_duplicado_mismo_cliente(self):
         resp = self.client.post(
@@ -138,7 +146,7 @@ class PermisosMetodoPagoTests(APITestCase):
 
     def setUp(self):
         self.url = '/api/transacciones/metodos-pago/'
-        self.payload = {'nombre': 'Cheque', 'tipo': 'CHEQUE'}
+        self.payload = {'nombre': 'Tarjeta de crédito', 'tipo': 'TARJETA_CREDITO'}
 
     def test_lectura_libre(self):
         self.assertEqual(self.client.get(self.url).status_code, status.HTTP_200_OK)
@@ -162,7 +170,7 @@ class PermisosMedioPagoClienteTests(APITestCase):
         from apps.usuarios.sesion import SESSION_KEY
         self.SESSION_KEY = SESSION_KEY
 
-        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='EFECTIVO')
         self.cliente_propio = _cliente(nombre='Cliente Propio', documento='P1')
         self.cliente_ajeno = _cliente(nombre='Cliente Ajeno', documento='A1')
 
@@ -233,7 +241,7 @@ class GestionMetodosPagoViewTests(TestCase):
     """Pantalla propia del catálogo de métodos de pago (en vez de la API navegable)."""
 
     def setUp(self):
-        self.metodo = MetodoPago.objects.create(nombre='Transferencia', tipo='BANCO')
+        self.metodo = MetodoPago.objects.create(nombre='Transferencia', tipo='TRANSFERENCIA')
         self.url = '/api/transacciones/gestion/metodos-pago/'
 
     def test_prohibido_para_analista(self):
@@ -246,7 +254,7 @@ class GestionMetodosPagoViewTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'Transferencia')
 
-        resp = self.client.post(self.url, {'nombre': 'Efectivo', 'tipo': 'CASH', 'estado': 'on'})
+        resp = self.client.post(self.url, {'nombre': 'Efectivo', 'tipo': 'EFECTIVO', 'estado': 'on'})
         self.assertRedirects(resp, self.url)
         self.assertTrue(MetodoPago.objects.filter(nombre='Efectivo').exists())
 
@@ -261,7 +269,7 @@ class GestionMediosPagoViewTests(TestCase):
     """Pantalla propia de "Mis Medios de Pago" (en vez de la API navegable)."""
 
     def setUp(self):
-        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='EFECTIVO')
         self.cliente_propio = _cliente(nombre='Cliente Propio', documento='P2')
         self.cliente_ajeno = _cliente(nombre='Cliente Ajeno', documento='A2')
 
@@ -324,7 +332,7 @@ class MetodoPagoEditarViewTests(TestCase):
     """Edición de un método de pago existente."""
 
     def setUp(self):
-        self.metodo = MetodoPago.objects.create(nombre='Transferencia', tipo='BANCO')
+        self.metodo = MetodoPago.objects.create(nombre='Transferencia', tipo='TRANSFERENCIA')
         self.url = f'/api/transacciones/gestion/metodos-pago/{self.metodo.id}/editar/'
 
     def test_prohibido_para_analista(self):
@@ -337,7 +345,7 @@ class MetodoPagoEditarViewTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'Transferencia')
 
-        resp = self.client.post(self.url, {'nombre': 'Transferencia Bancaria', 'tipo': 'BANCO', 'estado': 'on'})
+        resp = self.client.post(self.url, {'nombre': 'Transferencia Bancaria', 'tipo': 'TRANSFERENCIA', 'estado': 'on'})
         self.assertRedirects(resp, '/api/transacciones/gestion/metodos-pago/')
         self.metodo.refresh_from_db()
         self.assertEqual(self.metodo.nombre, 'Transferencia Bancaria')
@@ -348,7 +356,7 @@ class MedioPagoEditarViewTests(TestCase):
     cliente activo (usuario_final no puede editar el de otro cliente)."""
 
     def setUp(self):
-        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='EFECTIVO')
         self.cliente_propio = _cliente(nombre='Cliente Propio', documento='P3')
         self.cliente_ajeno = _cliente(nombre='Cliente Ajeno', documento='A3')
 
@@ -402,7 +410,7 @@ class TransaccionCalculoComisionTests(TestCase):
     de tipo de cambio del cliente (RF41)."""
 
     def setUp(self):
-        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='EFECTIVO')
         self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
 
     def _transaccion(self, tipo, cliente=None, cantidad=Decimal('10'), tasa=Decimal('7300')):
@@ -471,7 +479,7 @@ class OperarDivisaViewTests(TestCase):
     comisión y tasa aplicada según el cliente (E4-144)."""
 
     def setUp(self):
-        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='EFECTIVO')
         self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
         TasaCambio.objects.create(
             moneda=self.moneda, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
@@ -538,6 +546,32 @@ class OperarDivisaViewTests(TestCase):
         self.assertContains(resp, 'mayor a 0')
         self.assertFalse(Transaccion.objects.exists())
 
+    def test_muestra_el_cambio_del_dia(self):
+        # una cotización anterior, ya reemplazada: no se tiene que mostrar
+        TasaCambio.objects.filter(moneda=self.moneda).update(fecha_hora='2020-01-01T00:00:00Z')
+        TasaCambio.objects.create(
+            moneda=self.moneda, tasa_compra=Decimal('7310'), tasa_venta=Decimal('7410'),
+            origen='BCP', estado=True,
+        )
+        self.client.force_login(self.user_final)
+        resp = self.client.get(self.url)
+        self.assertContains(resp, 'Cambio del Día')
+        self.assertEqual(list(resp.context['tasas'].values_list('tasa_venta', flat=True)), [Decimal('7410')])
+        self.assertContains(resp, floatformat(Decimal('7410'), 2))
+        self.assertNotContains(resp, floatformat(Decimal('7400'), 2))
+
+    def test_el_cambio_del_dia_se_lee_desde_el_cliente(self):
+        """El cliente compra a la tasa de venta de la casa (7.400) y vende a la
+        de compra (7.300): las columnas lo dicen así y en ese orden."""
+        self.client.force_login(self.user_final)
+        html = self.client.get(self.url).content.decode()
+        self.assertIn('COMPRÁS A', html)
+        self.assertIn('VENDÉS A', html)
+        self.assertNotIn('<th>COMPRA</th>', html)
+        self.assertLess(
+            html.index(floatformat(Decimal('7400'), 2)), html.index(floatformat(Decimal('7300'), 2))
+        )
+
     def test_sin_cliente_activo_no_puede_operar(self):
         sin_cliente = _usuario_con_rol('sin_cliente_operar', rol='usuario_final')
         Usuario.objects.create(username='sin_cliente_operar', email='sc@example.com', nombres='S', apellidos='C')
@@ -552,7 +586,7 @@ class OperarDivisaAPITests(APITestCase):
     (``OperarDivisaAPIView`` / ``CalcularTransaccionAPIView``)."""
 
     def setUp(self):
-        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='EFECTIVO')
         self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
         TasaCambio.objects.create(
             moneda=self.moneda, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
@@ -613,7 +647,7 @@ class TransaccionCancelacionPorCambioDeTasaTests(TestCase):
             moneda=self.moneda, tasa_compra=Decimal('7300.00'), tasa_venta=Decimal('7400.00'),
             origen='Banco Central', estado=True,
         )
-        self.metodo_pago = MetodoPago.objects.create(nombre='Efectivo', tipo='Fisico', estado=True)
+        self.metodo_pago = MetodoPago.objects.create(nombre='Efectivo', tipo='EFECTIVO', estado=True)
 
     def _transaccion_pendiente(self):
         return Transaccion.objects.create(
@@ -652,7 +686,7 @@ class HistorialTransaccionesTests(TestCase):
     de las pantallas de gestión."""
 
     def setUp(self):
-        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='EFECTIVO')
         self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$', estado=True)
         TasaCambio.objects.create(
             moneda=self.moneda, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
@@ -731,18 +765,19 @@ class HistorialTransaccionesTests(TestCase):
         self.assertEqual(resp.status_code, 400)
 
 
-class LimitesPorClienteTests(TestCase):
-    """E4-143 (RF41): el monto de la operación no puede superar el límite de
-    compra/venta configurado para el cliente. Límite en 0 = sin límite."""
+class LimitesPorCategoriaTests(TestCase):
+    """E4-143 (RF41): el monto de cada operación no puede superar el límite
+    de la categoría del cliente: Minorista 100.000 Gs, Mayorista
+    1.000.000 Gs, VIP sin límite. Aplica a compras y ventas por igual."""
 
     def setUp(self):
-        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='EFECTIVO')
         self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
         TasaCambio.objects.create(
             moneda=self.moneda, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
             origen='BCP', estado=True,
         )
-        # 10 USD a 7300 = 73.000 + 1,5% de comisión = 74.095 al comprar
+        # Minorista por defecto, con comisión estándar (1,5%).
         self.cliente = _cliente(nombre='Cliente Con Limite', documento='LIM1')
         self.user_final = _usuario_con_rol('final_limites', rol='usuario_final')
         self.usuario_negocio = Usuario.objects.create(
@@ -753,6 +788,7 @@ class LimitesPorClienteTests(TestCase):
             cliente=self.cliente, metodo_pago=self.metodo, alias='Mio', identificador='1',
         )
         self.url = '/api/transacciones/gestion/operar/'
+        self.client.force_login(self.user_final)
 
     def _operar(self, tipo='COMPRA', cantidad='10'):
         # follow=True: si pasa la validación, redirige al resumen pendiente.
@@ -761,45 +797,50 @@ class LimitesPorClienteTests(TestCase):
             'medio_pago_id': self.medio.id,
         }, follow=True)
 
-    def test_limite_en_cero_significa_sin_limite(self):
-        # valor por defecto de todo cliente nuevo: no debe bloquear nada
-        self.assertEqual(self.cliente.limite_compra, Decimal('0.00'))
-        self.client.force_login(self.user_final)
-        resp = self._operar()
-        self.assertContains(resp, 'Pendiente de pago')
-        self.assertTrue(Transaccion.objects.filter(estado='PENDIENTE').exists())
+    def _categoria(self, categoria):
+        self.cliente.actualizar_categoria(categoria)
 
-    def test_compra_dentro_del_limite_se_permite(self):
-        self.cliente.establecer_limite_compra(Decimal('100000.00'))
-        self.client.force_login(self.user_final)
-        resp = self._operar()
+    def test_minorista_dentro_del_limite(self):
+        # 10 x 7400 = 74.000 + 1,5% = 75.110 <= 100.000
+        resp = self._operar(cantidad='10')
         self.assertContains(resp, 'Pendiente de pago')
 
-    def test_compra_que_supera_el_limite_se_rechaza(self):
-        self.cliente.establecer_limite_compra(Decimal('50000.00'))  # < 74.095
-        self.client.force_login(self.user_final)
-        resp = self._operar()
-        self.assertContains(resp, 'supera el límite de compra')
+    def test_minorista_que_supera_100_mil_se_rechaza(self):
+        # 14 x 7400 = 103.600 + 1,5% = 105.154 > 100.000
+        resp = self._operar(cantidad='14')
+        self.assertContains(resp, 'supera el límite por operación de la categoría Minorista')
         self.assertFalse(Transaccion.objects.exists())  # no queda registrada
 
-    def test_venta_que_supera_el_limite_se_rechaza(self):
-        self.cliente.establecer_limite_venta(Decimal('10000.00'))
-        self.client.force_login(self.user_final)
-        resp = self._operar(tipo='VENTA')
-        self.assertContains(resp, 'supera el límite de venta')
+    def test_el_limite_tambien_aplica_a_la_venta(self):
+        # 14 x 7300 = 102.200 - 1,5% = 100.667 > 100.000
+        resp = self._operar(tipo='VENTA', cantidad='14')
+        self.assertContains(resp, 'supera el límite por operación')
         self.assertFalse(Transaccion.objects.exists())
 
-    def test_el_limite_de_compra_no_afecta_a_la_venta(self):
-        self.cliente.establecer_limite_compra(Decimal('1.00'))  # bloquearía comprar
-        self.client.force_login(self.user_final)
-        resp = self._operar(tipo='VENTA')  # pero vender no tiene tope
+    def test_mayorista_puede_hasta_un_millon(self):
+        self._categoria(Cliente.CATEGORIA_MAYORISTA)
+        # 14 USD (105.154) ya no supera el límite...
+        self.assertContains(self._operar(cantidad='14'), 'Pendiente de pago')
+        # ...pero 134 x 7400 = 991.600 + 1,5% = 1.006.474 sí.
+        resp = self._operar(cantidad='134')
+        self.assertContains(resp, 'supera el límite por operación de la categoría Mayorista')
+        self.assertEqual(Transaccion.objects.count(), 1)
+
+    def test_vip_no_tiene_limite(self):
+        self._categoria(Cliente.CATEGORIA_VIP)
+        # 1000 x 7400 = 7.400.000 + 1,5% = 7.511.000
+        resp = self._operar(cantidad='1000')
         self.assertContains(resp, 'Pendiente de pago')
+        self.assertEqual(Transaccion.objects.get().monto_total, Decimal('7511000.00'))
+
+    def test_la_pantalla_muestra_la_categoria_y_su_limite(self):
+        resp = self.client.get(self.url)
+        self.assertContains(resp, 'Categoría Minorista')
+        self.assertContains(resp, f'{floatformat(Decimal("100000"), "0g")} Gs')
 
     def test_tambien_aplica_en_el_endpoint_api(self):
-        self.cliente.establecer_limite_compra(Decimal('50000.00'))
-        self.client.force_login(self.user_final)
         resp = self.client.post('/api/transacciones/operar/', {
-            'tipo': 'COMPRA', 'moneda_codigo': 'USD', 'cantidad': '10',
+            'tipo': 'COMPRA', 'moneda_codigo': 'USD', 'cantidad': '14',
             'medio_pago_id': self.medio.id,
         })
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -813,7 +854,7 @@ class ConfirmacionDePagoTests(TestCase):
     pantalla. También la cancelación a pedido del cliente (RF23)."""
 
     def setUp(self):
-        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='CASH')
+        self.metodo = MetodoPago.objects.create(nombre='Efectivo', tipo='EFECTIVO')
         self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
         self.tasa = TasaCambio.objects.create(
             moneda=self.moneda, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
@@ -844,17 +885,31 @@ class ConfirmacionDePagoTests(TestCase):
     def _url(self, tx, accion=''):
         return f'/api/transacciones/gestion/operar/{tx.pk}/{accion}'
 
-    def test_el_resumen_muestra_tasa_subtotal_comision_y_total(self):
+    def test_el_resumen_es_simple_cuanto_compra_cuanto_paga_y_con_que(self):
         tx = self._iniciar()
         resp = self.client.get(self._url(tx))
         # 13 x 7400 (tasa de venta) = 96.200 + 0,5% (mayorista) = 481 -> 96.681.
         # Los montos se comparan con el mismo filtro que usa el template, para
         # no depender del separador de miles del idioma configurado.
-        def gs(valor):
-            return floatformat(Decimal(valor), '2g')
-        for texto in ('Pendiente de pago', gs('7400'), gs('96200'), '0,50%', gs('481'),
-                      gs('96681'), 'Confirmar pago', 'Cancelar operación'):
+        for texto in ('Pendiente de pago', 'Comprás', floatformat(Decimal('13'), '2g'),
+                      'Pagás', f'{floatformat(Decimal("96681"), "2g")} Gs', 'Mio',
+                      f'1 USD = {floatformat(Decimal("7400"), "0g")} Gs',
+                      'comisión 0,50% incluida', 'Confirmar pago', 'Cancelar operación'):
             self.assertContains(resp, texto)
+        # sin el desglose paso a paso
+        self.assertNotContains(resp, 'Subtotal')
+        self.assertNotContains(resp, floatformat(Decimal('96200'), '2g'))
+
+    def test_el_resumen_se_muestra_una_sola_vez(self):
+        """Un error al editar el template dejaba pegada una segunda copia
+        (vieja) del resumen debajo de la primera."""
+        tx = self._iniciar()
+        self.client.post(self._url(tx, 'confirmar/'))
+        resp = self.client.get(self._url(tx))
+        html = resp.content.decode()
+        self.assertEqual(html.count(f'<h2>Operación #{tx.pk}</h2>'), 1)
+        self.assertEqual(html.count('class="card shadow-sm border-0"'), 1)
+        self.assertEqual(html.count('Nueva operación'), 1)
 
     def test_confirmar_sin_cambio_de_cotizacion_queda_exitosa(self):
         tx = self._iniciar()
@@ -950,3 +1005,373 @@ class ConfirmacionDePagoTests(TestCase):
         resp = self.client.post(f'/api/transacciones/transacciones/{tx3.pk}/cancelar/')
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()['estado'], 'CANCELADA')
+
+
+def _abrir_cuenta(numero, tipo, documento, saldo=Decimal('0'), linea=Decimal('0')):
+    from apps.banco import services as banco
+    return banco.abrir_cuenta(
+        numero=numero, tipo=tipo, entidad='Banco Itaú', titular_documento=documento,
+        titular_nombre='Titular', saldo=saldo, linea_credito=linea,
+    )
+
+
+class MedioPagoConBancoTests(APITestCase):
+    """Salvo el efectivo, un medio de pago tiene que ser una cuenta del banco
+    del tipo correcto y a nombre del cliente."""
+
+    def setUp(self):
+        from apps.banco.models import CuentaBancaria
+        from apps.usuarios.sesion import SESSION_KEY
+        self.SESSION_KEY = SESSION_KEY
+        self.url = '/api/transacciones/medios-pago-cliente/'
+        self.cliente = _cliente(nombre='Cliente Propio', documento='DOC-1')
+        self.victima = _cliente(nombre='Otro Cliente', documento='DOC-2')
+        self.tarjeta = MetodoPago.objects.create(nombre='Tarjeta de crédito', tipo='TARJETA_CREDITO')
+        self.transferencia = MetodoPago.objects.create(nombre='Transferencia', tipo='TRANSFERENCIA')
+        _abrir_cuenta('TC-PROPIA', CuentaBancaria.TIPO_TARJETA_CREDITO, 'DOC-1', linea=Decimal('100000'))
+        _abrir_cuenta('TC-VICTIMA', CuentaBancaria.TIPO_TARJETA_CREDITO, 'DOC-2', linea=Decimal('100000'))
+
+        self.user_final = _usuario_con_rol('final_mpb', rol='usuario_final')
+        usuario = Usuario.objects.create(
+            username='final_mpb', email='mpb@example.com', nombres='F', apellidos='B',
+        )
+        usuario.clientes.add(self.cliente)
+        self.client.force_authenticate(user=self.user_final)
+
+    def _crear(self, **datos):
+        payload = dict(metodo_pago=self.tarjeta.pk, alias='Visa', identificador='TC-PROPIA')
+        payload.update(datos)
+        return self.client.post(self.url, payload)
+
+    def test_asocia_una_tarjeta_propia(self):
+        resp = self._crear()
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        medio = MedioPagoCliente.objects.get(alias='Visa')
+        self.assertEqual(medio.disponible, Decimal('100000.00'))
+
+    def test_rechaza_una_cuenta_que_no_existe_en_el_banco(self):
+        resp = self._crear(identificador='NO-EXISTE')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('identificador', resp.data)
+
+    def test_rechaza_si_el_tipo_no_coincide(self):
+        resp = self._crear(metodo_pago=self.transferencia.pk)  # TC-PROPIA es una tarjeta
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_no_puede_asociar_la_tarjeta_de_otro_cliente(self):
+        resp = self._crear(identificador='TC-VICTIMA')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(MedioPagoCliente.objects.exists())
+
+    def test_tampoco_mandando_el_id_del_otro_cliente(self):
+        """El cliente se fuerza al activo *antes* de verificar la cuenta:
+        si no, mandando el id de la víctima se pasaba la verificación."""
+        resp = self._crear(cliente=self.victima.pk, identificador='TC-VICTIMA')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(MedioPagoCliente.objects.exists())
+
+    def test_no_puede_pasar_su_medio_a_otro_cliente(self):
+        medio = MedioPagoCliente.objects.create(
+            cliente=self.cliente, metodo_pago=self.tarjeta, alias='Visa', identificador='TC-PROPIA',
+        )
+        resp = self.client.patch(f'{self.url}{medio.pk}/', {
+            'cliente': self.victima.pk, 'identificador': 'TC-VICTIMA',
+        })
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        medio.refresh_from_db()
+        self.assertEqual((medio.cliente, medio.identificador), (self.cliente, 'TC-PROPIA'))
+
+    def test_el_efectivo_no_necesita_cuenta(self):
+        efectivo = MetodoPago.objects.create(nombre='Efectivo', tipo='EFECTIVO')
+        resp = self._crear(metodo_pago=efectivo.pk, alias='Caja', identificador='EF-1')
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        self.assertIsNone(MedioPagoCliente.objects.get(alias='Caja').disponible)
+
+    def test_la_pantalla_no_muestra_el_saldo_del_banco(self):
+        self._crear()
+        self.client.force_login(self.user_final)
+        resp = self.client.get('/api/transacciones/gestion/medios-pago-cliente/')
+        self.assertContains(resp, 'Visa')
+        self.assertNotContains(resp, floatformat(Decimal('100000'), '0g'))
+        self.assertNotContains(resp, 'Disponible')
+
+
+class PagoConBancoTests(TestCase):
+    """Al confirmar, el total se cobra (compra) o se paga (venta) en la
+    cuenta del banco del medio de pago. Sin saldo suficiente la operación
+    se rechaza y queda FALLIDA. La tarjeta de crédito no sirve para vender."""
+
+    def setUp(self):
+        from apps.banco.models import CuentaBancaria
+        self.CuentaBancaria = CuentaBancaria
+        self.moneda = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        self.tasa = TasaCambio.objects.create(
+            moneda=self.moneda, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
+            origen='BCP', estado=True,
+        )
+        # Mayorista (límite 1.000.000) con comisión estándar (1,5%).
+        self.cliente = _cliente(
+            nombre='Cliente Banco', documento='BAN-1', categoria=Cliente.CATEGORIA_MAYORISTA,
+        )
+        self.user_final = _usuario_con_rol('final_banco_tx', rol='usuario_final')
+        usuario = Usuario.objects.create(
+            username='final_banco_tx', email='fbt@example.com', nombres='F', apellidos='T',
+        )
+        usuario.clientes.add(self.cliente)
+
+        _abrir_cuenta('CA-1', CuentaBancaria.TIPO_CUENTA, 'BAN-1', saldo=Decimal('1000000'))
+        _abrir_cuenta('TC-1', CuentaBancaria.TIPO_TARJETA_CREDITO, 'BAN-1', linea=Decimal('50000'))
+        _abrir_cuenta('BI-1', CuentaBancaria.TIPO_BILLETERA, 'BAN-1')
+
+        def medio(nombre, tipo, alias, identificador):
+            metodo = MetodoPago.objects.create(nombre=nombre, tipo=tipo)
+            return MedioPagoCliente.objects.create(
+                cliente=self.cliente, metodo_pago=metodo, alias=alias, identificador=identificador,
+            )
+        self.cuenta = medio('Transferencia', 'TRANSFERENCIA', 'Cuenta Itaú', 'CA-1')
+        self.tarjeta = medio('Tarjeta de crédito', 'TARJETA_CREDITO', 'Visa Itaú', 'TC-1')
+        self.billetera = medio('Billetera', 'BILLETERA', 'Tigo Money', 'BI-1')
+        self.efectivo = medio('Efectivo', 'EFECTIVO', 'Caja chica', 'EF-1')
+        self.client.force_login(self.user_final)
+
+    def _iniciar(self, medio, tipo='COMPRA', cantidad='10'):
+        return self.client.post('/api/transacciones/gestion/operar/', {
+            'tipo': tipo, 'moneda_codigo': 'USD', 'cantidad': cantidad,
+            'medio_pago_id': medio.id,
+        }, follow=True)
+
+    def _confirmar(self, tx):
+        return self.client.post(f'/api/transacciones/gestion/operar/{tx.pk}/confirmar/', follow=True)
+
+    def _saldo(self, numero):
+        return self.CuentaBancaria.objects.get(numero=numero).saldo
+
+    def test_la_compra_se_debita_de_la_cuenta(self):
+        self._iniciar(self.cuenta)
+        tx = Transaccion.objects.get()
+        self.assertEqual(tx.medio_pago, self.cuenta)
+        self.assertEqual(self._saldo('CA-1'), Decimal('1000000.00'))  # todavía no cobra
+
+        resp = self._confirmar(tx)
+        tx.refresh_from_db()
+        self.assertEqual(tx.estado, 'EXITOSA')
+        self.assertContains(resp, 'Pago confirmado')
+        # 10 x 7400 = 74.000 + 1,5% = 75.110
+        self.assertEqual(self._saldo('CA-1'), Decimal('924890.00'))
+        movimiento = self.CuentaBancaria.objects.get(numero='CA-1').movimientos.first()
+        self.assertEqual(movimiento.referencia, f'GE-OP-{tx.pk}')
+
+    def test_sin_saldo_suficiente_la_operacion_queda_fallida(self):
+        self._iniciar(self.tarjeta)  # 75.110 contra una línea de 50.000
+        tx = Transaccion.objects.get()
+        resp = self._confirmar(tx)
+        tx.refresh_from_db()
+        self.assertEqual(tx.estado, 'FALLIDA')
+        self.assertContains(resp, 'Pago rechazado')
+        self.assertContains(resp, 'Saldo insuficiente')
+        self.assertIn('Visa Itaú', tx.observacion)
+        # el rechazo no revela cuánto tiene la tarjeta
+        self.assertNotContains(resp, floatformat(Decimal('50000'), '2g'))
+        self.assertNotIn(floatformat(Decimal('50000'), '2g'), tx.observacion)
+        self.assertEqual(self._saldo('TC-1'), Decimal('50000.00'))  # no se tocó
+        self.assertNotContains(resp, 'Confirmar pago')  # ya no se puede reintentar
+
+    def test_la_fallida_aparece_en_el_historial(self):
+        self._iniciar(self.tarjeta)
+        self._confirmar(Transaccion.objects.get())
+        resp = self.client.get('/api/transacciones/gestion/historial/', {'estado': 'FALLIDA'})
+        self.assertEqual(len(resp.context['transacciones']), 1)
+        self.assertContains(resp, 'Fallida')
+        self.assertContains(resp, 'Saldo insuficiente')
+
+    def test_la_tarjeta_va_bajando_su_disponible(self):
+        # 5 x 7400 = 37.000 + 1,5% = 37.555
+        self._iniciar(self.tarjeta, cantidad='5')
+        self._confirmar(Transaccion.objects.get())
+        self.assertEqual(self._saldo('TC-1'), Decimal('12445.00'))
+        # la segunda ya no entra
+        self._iniciar(self.tarjeta, cantidad='5')
+        self._confirmar(Transaccion.objects.latest('id'))
+        self.assertEqual(Transaccion.objects.latest('id').estado, 'FALLIDA')
+        self.assertEqual(self._saldo('TC-1'), Decimal('12445.00'))
+
+    def test_la_venta_se_acredita_en_la_billetera(self):
+        self._iniciar(self.billetera, tipo='VENTA')
+        self._confirmar(Transaccion.objects.get())
+        # 10 x 7300 = 73.000 - 1,5% = 71.905
+        self.assertEqual(self._saldo('BI-1'), Decimal('71905.00'))
+
+    def test_no_se_puede_vender_con_tarjeta_de_credito(self):
+        resp = self._iniciar(self.tarjeta, tipo='VENTA')
+        self.assertContains(resp, 'Las tarjetas de crédito no se pueden usar para vender divisas')
+        self.assertFalse(Transaccion.objects.exists())
+
+    def test_tampoco_por_la_api(self):
+        resp = self.client.post('/api/transacciones/operar/', {
+            'tipo': 'VENTA', 'moneda_codigo': 'USD', 'cantidad': '10',
+            'medio_pago_id': self.tarjeta.id,
+        })
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('tarjetas de crédito', resp.data['error'])
+
+    def test_la_pantalla_marca_las_tarjetas_para_bloquearlas_en_la_venta(self):
+        resp = self.client.get('/api/transacciones/gestion/operar/')
+        self.assertContains(resp, 'data-tipo="TARJETA_CREDITO"')
+        self.assertContains(resp, 'no se pueden usar para vender divisas')
+
+    def test_operar_no_muestra_el_saldo_de_los_medios(self):
+        resp = self.client.get('/api/transacciones/gestion/operar/')
+        self.assertContains(resp, 'Cuenta Itaú (Transferencia)')
+        # 50.000 es la línea de la tarjeta (el 1.000.000 de la cuenta coincide
+        # con el límite de la categoría Mayorista, que sí se muestra).
+        self.assertNotContains(resp, floatformat(Decimal('50000'), '0g'))
+        self.assertNotContains(resp, 'disponible')
+
+    def test_el_efectivo_no_pasa_por_el_banco(self):
+        self._iniciar(self.efectivo)
+        self._confirmar(Transaccion.objects.get())
+        self.assertEqual(Transaccion.objects.get().estado, 'EXITOSA')
+
+    def test_si_cambio_la_cotizacion_se_cancela_sin_cobrar(self):
+        self._iniciar(self.cuenta)
+        self.tasa.tasa_venta = Decimal('7450')
+        self.tasa.save()
+        self._confirmar(Transaccion.objects.get())
+        self.assertEqual(Transaccion.objects.get().estado, 'CANCELADA')
+        self.assertEqual(self._saldo('CA-1'), Decimal('1000000.00'))
+
+    def test_confirmar_dos_veces_no_cobra_dos_veces(self):
+        self._iniciar(self.cuenta)
+        tx = Transaccion.objects.get()
+        tx.confirmar()
+        with self.assertRaises(ValidationError):
+            Transaccion.objects.get(pk=tx.pk).confirmar()
+        self.assertEqual(self._saldo('CA-1'), Decimal('924890.00'))
+
+    def test_cuenta_desactivada_en_el_banco_queda_fallida(self):
+        self._iniciar(self.cuenta)
+        self.CuentaBancaria.objects.get(numero='CA-1').desactivar()
+        self._confirmar(Transaccion.objects.get())
+        tx = Transaccion.objects.get()
+        self.assertEqual(tx.estado, 'FALLIDA')
+        self.assertIn('inactiva', tx.observacion)
+
+    def test_api_confirmar_sin_saldo_responde_409_fallida(self):
+        self._iniciar(self.tarjeta)
+        tx = Transaccion.objects.get()
+        resp = self.client.post(f'/api/transacciones/transacciones/{tx.pk}/confirmar/')
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.json()['estado'], 'FALLIDA')
+        self.assertIn('Saldo insuficiente', resp.json()['observacion'])
+
+
+class CambioEntreDivisasTests(TestCase):
+    """Cambio de una divisa por otra, pasando por el guaraní: la casa le
+    compra la de origen (tasa de compra) y le vende la de destino (tasa de
+    venta). Solo en efectivo: las cuentas del banco son en guaraníes."""
+
+    def setUp(self):
+        from apps.banco.models import CuentaBancaria
+        self.usd = Moneda.objects.create(codigo='USD', nombre='Dólar', simbolo='$')
+        self.eur = Moneda.objects.create(codigo='EUR', nombre='Euro', simbolo='€')
+        TasaCambio.objects.create(
+            moneda=self.usd, tasa_compra=Decimal('7300'), tasa_venta=Decimal('7400'),
+            origen='BCP', estado=True,
+        )
+        self.tasa_eur = TasaCambio.objects.create(
+            moneda=self.eur, tasa_compra=Decimal('7900'), tasa_venta=Decimal('8050'),
+            origen='BCP', estado=True,
+        )
+        self.cliente = _cliente(
+            nombre='Cliente Cambio', documento='CAM-1', categoria=Cliente.CATEGORIA_MAYORISTA,
+        )
+        self.user_final = _usuario_con_rol('final_cambio', rol='usuario_final')
+        usuario = Usuario.objects.create(
+            username='final_cambio', email='fc@example.com', nombres='F', apellidos='C',
+        )
+        usuario.clientes.add(self.cliente)
+        self.efectivo = MedioPagoCliente.objects.create(
+            cliente=self.cliente, metodo_pago=MetodoPago.objects.create(nombre='Efectivo', tipo='EFECTIVO'),
+            alias='Caja chica', identificador='EF-1',
+        )
+        _abrir_cuenta('CA-1', CuentaBancaria.TIPO_CUENTA, 'CAM-1', saldo=Decimal('1000000'))
+        self.cuenta = MedioPagoCliente.objects.create(
+            cliente=self.cliente,
+            metodo_pago=MetodoPago.objects.create(nombre='Transferencia', tipo='TRANSFERENCIA'),
+            alias='Cuenta Itaú', identificador='CA-1',
+        )
+        self.client.force_login(self.user_final)
+
+    def _cambiar(self, cantidad='100', origen='USD', destino='EUR', medio=None):
+        return self.client.post('/api/transacciones/gestion/operar/', {
+            'tipo': 'CAMBIO', 'moneda_codigo': origen, 'moneda_destino_codigo': destino,
+            'cantidad': cantidad, 'medio_pago_id': (medio or self.efectivo).id,
+        }, follow=True)
+
+    def test_calcula_cuanto_recibe_pasando_por_el_guarani(self):
+        resp = self._cambiar()
+        tx = Transaccion.objects.get()
+        self.assertEqual(tx.tipo, 'CAMBIO')
+        self.assertEqual((tx.moneda, tx.moneda_destino), (self.usd, self.eur))
+        self.assertEqual(tx.tasa_cambio, Decimal('7300'))           # la casa compra USD
+        self.assertEqual(tx.tasa_cambio_destino, Decimal('8050'))   # y vende EUR
+        # 100 x 7300 = 730.000 - 1,5% (10.950) = 719.050 / 8050 = 89,3229 -> 89,32
+        self.assertEqual(tx.monto_total, Decimal('719050.00'))
+        self.assertEqual(tx.cantidad_destino, Decimal('89.32'))
+        self.assertContains(resp, 'Entregás')
+        self.assertContains(resp, f'{floatformat(Decimal("100"), "2g")} USD')
+        self.assertContains(resp, 'Recibís')
+        self.assertContains(resp, f'{floatformat(Decimal("89.32"), "2g")} EUR')
+
+    def test_se_confirma_como_cualquier_operacion(self):
+        self._cambiar()
+        tx = Transaccion.objects.get()
+        tx.confirmar()
+        tx.refresh_from_db()
+        self.assertEqual(tx.estado, 'EXITOSA')
+
+    def test_si_cambia_la_cotizacion_de_destino_se_cancela(self):
+        self._cambiar()
+        self.tasa_eur.tasa_venta = Decimal('8100')
+        self.tasa_eur.save()
+        tx = Transaccion.objects.get()
+        with self.assertRaises(ValidationError) as ctx:
+            tx.confirmar()
+        self.assertIn('EUR: se inició a 8050.00 y la vigente es 8100.00', ctx.exception.messages[0])
+        tx.refresh_from_db()
+        self.assertEqual(tx.estado, 'CANCELADA')
+
+    def test_solo_en_efectivo(self):
+        resp = self._cambiar(medio=self.cuenta)
+        self.assertContains(resp, 'solo se puede hacer en efectivo')
+        self.assertFalse(Transaccion.objects.exists())
+
+    def test_las_monedas_tienen_que_ser_distintas(self):
+        resp = self._cambiar(destino='USD')
+        self.assertContains(resp, 'tienen que ser distintas')
+        self.assertFalse(Transaccion.objects.exists())
+
+    def test_exige_la_moneda_de_destino(self):
+        resp = self._cambiar(destino='')
+        self.assertContains(resp, 'Elegí la moneda que querés recibir')
+
+    def test_aplica_el_limite_de_la_categoria(self):
+        self.cliente.actualizar_categoria(Cliente.CATEGORIA_MINORISTA)
+        # 14 x 7300 = 102.200 - 1,5% = 100.667 > 100.000
+        resp = self._cambiar(cantidad='14')
+        self.assertContains(resp, 'supera el límite por operación')
+
+    def test_vista_previa_por_api(self):
+        resp = self.client.post('/api/transacciones/calcular/', {
+            'tipo': 'CAMBIO', 'moneda_codigo': 'USD', 'moneda_destino_codigo': 'EUR',
+            'cantidad': '100',
+        })
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertEqual(resp.data['cantidad_destino'], Decimal('89.32'))
+        self.assertFalse(Transaccion.objects.exists())
+
+    def test_el_historial_lo_encuentra_por_la_moneda_de_destino(self):
+        self._cambiar()
+        resp = self.client.get('/api/transacciones/gestion/historial/', {'moneda': self.eur.pk})
+        self.assertEqual(len(resp.context['transacciones']), 1)
+        self.assertContains(resp, 'USD → EUR')

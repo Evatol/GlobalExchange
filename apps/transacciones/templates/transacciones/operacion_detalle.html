@@ -20,7 +20,7 @@
 
     <div class="container my-5">
         <div class="row justify-content-center">
-            <div class="col-md-6">
+            <div class="col-md-6 col-lg-5">
                 <div class="text-center mb-4">
                     <h2>Operación #{{ transaccion.id }}</h2>
                     <p class="text-muted mb-1">{{ transaccion.cliente.nombre }}</p>
@@ -37,50 +37,51 @@
 
                 {% for m in messages %}
                     <div class="alert {% if m.tags == 'error' %}alert-danger{% elif m.tags == 'success' %}alert-success{% else %}alert-info{% endif %} py-2">{{ m }}</div>
+                {% empty %}
+                    {% if transaccion.observacion %}
+                        <div class="alert alert-secondary py-2 small">{{ transaccion.observacion }}</div>
+                    {% endif %}
                 {% endfor %}
 
                 <div class="card shadow-sm border-0">
-                    <div class="card-body">
-                        <h6 class="card-title mb-3">
-                            {{ transaccion.get_tipo_display }} de {{ transaccion.cantidad }} {{ transaccion.moneda.codigo }}
-                        </h6>
-                        <table class="table table-sm mb-0">
-                            <tbody>
-                                <tr>
-                                    <td class="text-muted">Tasa aplicada</td>
-                                    <td class="text-end">{{ transaccion.tasa_cambio|floatformat:"2g" }} PYG</td>
-                                </tr>
-                                <tr>
-                                    <td class="text-muted">Subtotal ({{ transaccion.cantidad }} × {{ transaccion.tasa_cambio|floatformat:"2g" }})</td>
-                                    <td class="text-end">{{ transaccion.subtotal|floatformat:"2g" }} PYG</td>
-                                </tr>
-                                <tr>
-                                    <td class="text-muted">
-                                        Comisión ({{ transaccion.comision_porcentaje|floatformat:"2" }}%,
-                                        {% if transaccion.tipo == 'COMPRA' %}se suma{% else %}se descuenta{% endif %})
-                                    </td>
-                                    <td class="text-end">
-                                        {% if transaccion.tipo == 'COMPRA' %}+{% else %}−{% endif %}
-                                        {{ transaccion.monto_comision|floatformat:"2g" }} PYG
-                                    </td>
-                                </tr>
-                                <tr class="fw-bold">
-                                    <td>{% if transaccion.tipo == 'COMPRA' %}Total a pagar{% else %}Total a recibir{% endif %}</td>
-                                    <td class="text-end">{{ transaccion.monto_total|floatformat:"2g" }} PYG</td>
-                                </tr>
-                                <tr>
-                                    <td class="text-muted">Medio de pago</td>
-                                    <td class="text-end">{{ transaccion.metodo_pago.nombre }}</td>
-                                </tr>
-                            </tbody>
-                        </table>
+                    <div class="card-body p-4">
+                        <div class="d-flex justify-content-between mb-2">
+                            <span class="text-muted">
+                                {% if transaccion.tipo == 'COMPRA' %}Comprás{% elif transaccion.tipo == 'VENTA' %}Vendés{% else %}Entregás{% endif %}
+                            </span>
+                            <span>{{ transaccion.cantidad|floatformat:"2g" }} {{ transaccion.moneda.codigo }}</span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-baseline mb-2">
+                            <span class="text-muted">
+                                {% if transaccion.tipo == 'COMPRA' %}Pagás{% else %}Recibís{% endif %}
+                            </span>
+                            <span class="fs-4 fw-bold">
+                                {% if transaccion.tipo == 'CAMBIO' %}
+                                    {{ transaccion.cantidad_destino|floatformat:"2g" }} {{ transaccion.moneda_destino.codigo }}
+                                {% else %}
+                                    {{ transaccion.monto_total|floatformat:"2g" }} Gs
+                                {% endif %}
+                            </span>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <span class="text-muted">Medio de pago</span>
+                            <span>{% if transaccion.medio_pago %}{{ transaccion.medio_pago.alias }}{% else %}{{ transaccion.metodo_pago.nombre }}{% endif %}</span>
+                        </div>
+                        <p class="text-muted small text-center border-top pt-3 mt-3 mb-0">
+                            {% if transaccion.tipo == 'CAMBIO' %}
+                                1 {{ transaccion.moneda.codigo }} = {{ transaccion.tasa_cambio|floatformat:"0g" }} Gs ·
+                                1 {{ transaccion.moneda_destino.codigo }} = {{ transaccion.tasa_cambio_destino|floatformat:"0g" }} Gs ·
+                            {% else %}
+                                1 {{ transaccion.moneda.codigo }} = {{ transaccion.tasa_cambio|floatformat:"0g" }} Gs ·
+                            {% endif %}
+                            comisión {{ transaccion.comision_porcentaje|floatformat:"2" }}% incluida
+                        </p>
                     </div>
                 </div>
 
                 {% if transaccion.estado == 'PENDIENTE' %}
                     <p class="text-muted small text-center mt-3">
-                        Al confirmar se vuelve a verificar la cotización de {{ transaccion.moneda.codigo }}:
-                        si cambió desde que iniciaste la operación, se cancela automáticamente.
+                        Si la cotización cambia antes de confirmar, la operación se cancela.
                     </p>
                     <div class="d-flex gap-2">
                         <form method="post" action="{% url 'operacion_cancelar' transaccion.id %}" class="flex-fill m-0">

@@ -6,6 +6,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError
+from django.db.models import Q
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
@@ -18,6 +19,7 @@ from rest_framework.views import APIView
 
 from apps.divisas.models import Moneda, TasaCambio
 from apps.usuarios import sesion
+from apps.usuarios.models import Cliente
 from apps.usuarios.permissions import (
     ADMINISTRADOR,
     ANALISTA,
@@ -116,14 +118,38 @@ class MedioPagoClienteViewSet(_BorradoLogicoMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(**{campo: valor})
         return queryset
 
-    def perform_create(self, serializer):
+    def _datos_con_cliente(self, cliente_id):
+        datos = self.request.data.copy()
+        datos['cliente'] = cliente_id
+        return datos
+
+    def create(self, request, *args, **kwargs):
+        """El cliente de un ``usuario_final`` se fuerza al activo *antes* de
+        validar: la validación comprueba que la cuenta del banco sea de ese
+        cliente, y si se forzara después alguien podría asociar la tarjeta
+        de otro cliente mandando el id de ese otro cliente."""
         if self._puede_ver_todos():
-            serializer.save()
-            return
-        cliente_activo = sesion.get_cliente_activo(self.request)
+            return super().create(request, *args, **kwargs)
+        cliente_activo = sesion.get_cliente_activo(request)
         if cliente_activo is None:
             raise PermissionDenied('No tenés un cliente activo asociado.')
-        serializer.save(cliente=cliente_activo)
+        serializer = self.get_serializer(data=self._datos_con_cliente(cliente_activo.pk))
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        """Un ``usuario_final`` no puede pasar un medio a otro cliente."""
+        if self._puede_ver_todos():
+            return super().update(request, *args, **kwargs)
+        medio = self.get_object()
+        serializer = self.get_serializer(
+            medio, data=self._datos_con_cliente(medio.cliente_id),
+            partial=kwargs.get('partial', False),
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
 
 
 @login_required
@@ -145,6 +171,7 @@ def gestion_metodos_pago_view(request):
     context = {
         'usuario': request.user,
         'metodos': MetodoPago.objects.all().order_by('nombre'),
+        'tipo_choices': MetodoPago.TIPO_CHOICES,
         'error': error,
     }
     return render(request, 'transacciones/gestion_metodos_pago.html', context)
@@ -169,7 +196,12 @@ def metodo_pago_editar_view(request, pk):
             str(msg) for errores in serializer.errors.values() for msg in errores
         )
 
-    context = {'usuario': request.user, 'metodo': metodo, 'error': error}
+    context = {
+        'usuario': request.user,
+        'metodo': metodo,
+        'tipo_choices': MetodoPago.TIPO_CHOICES,
+        'error': error,
+    }
     return render(request, 'transacciones/metodo_pago_editar.html', context)
 
 
@@ -213,7 +245,7 @@ def gestion_medios_pago_view(request):
         'usuario': request.user,
         'medios': medios,
         'metodos': MetodoPago.objects.filter(estado=True).order_by('nombre'),
-        'clientes': sesion.clientes_disponibles(request) if not ve_todos else None,
+        'clientes': Cliente.objects.filter(estado=True).order_by('nombre') if ve_todos else None,
         've_todos': ve_todos,
         'cliente_activo': cliente_activo,
         'error': error,
@@ -272,6 +304,60 @@ def medio_pago_toggle_view(request, pk):
 
 
 
+TIPOS_OPERACION = ('COMPRA', 'VENTA', 'CAMBIO')
+
+
+def _preparar_transaccion(cliente, tipo_operacion, moneda_codigo, cantidad, moneda_destino_codigo=None):
+    """Arma (sin guardar) una transacción con las tasas vigentes y su
+    comisión calculada (E4-144). La comparten la vista previa
+    (``CalcularTransaccionAPIView``) y la operación real
+    (``_crear_transaccion_digital``), para que siempre den lo mismo.
+
+    En un ``CAMBIO`` la casa le compra al cliente la divisa de origen y le
+    vende la de destino, así que se usan las mismas tasas que en una venta y
+    una compra respectivamente (ver ``TasaCambio.tasa_para``).
+
+    Devuelve ``(transaccion, error)``: si ``error`` no es ``None``,
+    ``transaccion`` es ``None``.
+    """
+    if tipo_operacion not in TIPOS_OPERACION:
+        return None, 'Tipo de operación inválido (debe ser COMPRA, VENTA o CAMBIO).'
+
+    try:
+        cantidad = Decimal(str(cantidad))
+        if cantidad <= 0:
+            return None, 'La cantidad debe ser mayor a 0.'
+    except Exception:
+        return None, 'Cantidad no válida.'
+
+    tasa_obj = TasaCambio.objects.activa_para(moneda_codigo)
+    if not tasa_obj:
+        return None, f'No hay cotización activa para {moneda_codigo}.'
+
+    transaccion = Transaccion(
+        cliente=cliente,
+        moneda=tasa_obj.moneda,
+        tipo=tipo_operacion,
+        cantidad=cantidad,
+    )
+    if tipo_operacion == 'CAMBIO':
+        if not moneda_destino_codigo:
+            return None, 'Elegí la moneda que querés recibir.'
+        if str(moneda_destino_codigo).upper() == str(moneda_codigo).upper():
+            return None, 'La moneda que entregás y la que recibís tienen que ser distintas.'
+        tasa_destino = TasaCambio.objects.activa_para(moneda_destino_codigo)
+        if not tasa_destino:
+            return None, f'No hay cotización activa para {moneda_destino_codigo}.'
+        transaccion.tasa_cambio = tasa_obj.tasa_para('VENTA')
+        transaccion.moneda_destino = tasa_destino.moneda
+        transaccion.tasa_cambio_destino = tasa_destino.tasa_para('COMPRA')
+    else:
+        transaccion.tasa_cambio = tasa_obj.tasa_para(tipo_operacion)
+
+    transaccion.calcular_tasas_y_comisiones()
+    return transaccion, None
+
+
 class CalcularTransaccionAPIView(APIView):
     """
     Endpoint para E4-144: Lógica de cálculo de tasas y comisiones en la transacción.
@@ -279,71 +365,52 @@ class CalcularTransaccionAPIView(APIView):
     persistir nada. Usa el cliente activo de la sesión para aplicar la misma
     comisión que va a cobrar la operación real (según su categoría); sin
     cliente activo, la estándar.
+
+    Body: ``tipo`` (COMPRA/VENTA/CAMBIO), ``moneda_codigo``, ``cantidad`` y,
+    en un cambio, ``moneda_destino_codigo``.
     """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        moneda_codigo = request.data.get('moneda_codigo')
-        cantidad_str = request.data.get('cantidad', '0')
-        tipo_operacion = request.data.get('tipo', 'COMPRA').upper()
-        if tipo_operacion not in ('COMPRA', 'VENTA'):
-            return Response(
-                {'error': 'Tipo de operación inválido (debe ser COMPRA o VENTA).'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        try:
-            cantidad = Decimal(str(cantidad_str))
-            if cantidad <= 0:
-                return Response(
-                    {'error': 'La cantidad debe ser mayor a 0.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        except Exception:
-            return Response(
-                {'error': 'Cantidad no válida.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        tasa_obj = TasaCambio.objects.activa_para(moneda_codigo)
-        if not tasa_obj:
-            return Response(
-                {'error': f'No existe una cotización activa para {moneda_codigo}.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        tasa_aplicada = tasa_obj.tasa_para(tipo_operacion)
-
-        # Con el cliente activo, para que la comisión coincida con la que
-        # después cobra la operación real (antes daba siempre la estándar).
-        tx_temporal = Transaccion(
-            cliente=sesion.get_cliente_activo(request),
-            tipo=tipo_operacion,
-            cantidad=cantidad,
-            tasa_cambio=tasa_aplicada
+        transaccion, error = _preparar_transaccion(
+            sesion.get_cliente_activo(request),
+            tipo_operacion=request.data.get('tipo', 'COMPRA').upper(),
+            moneda_codigo=request.data.get('moneda_codigo'),
+            cantidad=request.data.get('cantidad', '0'),
+            moneda_destino_codigo=request.data.get('moneda_destino_codigo'),
         )
-        desglose = tx_temporal.calcular_tasas_y_comisiones()
+        if error:
+            return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({
-            'moneda': moneda_codigo,
-            'tipo_operacion': tipo_operacion,
-            'cantidad': cantidad,
-            'tasa_aplicada': tasa_aplicada,
-            'subtotal': desglose['subtotal'],
-            'comision_porcentaje': tx_temporal.comision_porcentaje,
-            'monto_comision': desglose['comision'],
-            'monto_total': desglose['monto_total'],
+            'moneda': transaccion.moneda.codigo,
+            'tipo_operacion': transaccion.tipo,
+            'cantidad': transaccion.cantidad,
+            'tasa_aplicada': transaccion.tasa_cambio,
+            'subtotal': transaccion.subtotal,
+            'comision_porcentaje': transaccion.comision_porcentaje,
+            'monto_comision': transaccion.monto_comision,
+            'monto_total': transaccion.monto_total,
+            'moneda_destino': transaccion.moneda_destino.codigo if transaccion.moneda_destino else None,
+            'tasa_destino': transaccion.tasa_cambio_destino,
+            'cantidad_destino': transaccion.cantidad_destino,
         }, status=status.HTTP_200_OK)
 
 
-def _crear_transaccion_digital(request, tipo_operacion, moneda_codigo, cantidad, medio_pago_id):
+def _crear_transaccion_digital(request, tipo_operacion, moneda_codigo, cantidad, medio_pago_id,
+                               moneda_destino_codigo=None):
     """Lógica compartida por ``OperarDivisaAPIView`` y ``operar_divisa_view``
-    para comprar (E4-19) o vender (E4-20) divisas de forma digital, con la
-    comisión y tasa aplicada según el cliente (E4-144).
+    para comprar (E4-19) o vender (E4-20) divisas, o cambiar una por otra, de
+    forma digital, con la comisión y tasa aplicada según el cliente (E4-144).
 
     La transacción queda ``PENDIENTE`` de pago: se confirma después, con
     ``Transaccion.confirmar()``, que la cancela si la cotización cambió en el
-    medio (E4-28).
+    medio (E4-28) y cobra en el banco. El saldo del medio de pago no se mira
+    acá sino al confirmar, que es cuando se cobra.
+
+    Reglas del medio de pago: una tarjeta de crédito no sirve para vender
+    (el cliente recibe plata), y el cambio entre divisas es solo en efectivo
+    (las cuentas del banco son en guaraníes).
 
     Devuelve ``(transaccion, error)``: si ``error`` no es ``None``,
     ``transaccion`` es ``None``. No usa ``request.user`` como ``Usuario`` de
@@ -358,42 +425,36 @@ def _crear_transaccion_digital(request, tipo_operacion, moneda_codigo, cantidad,
     if usuario_negocio is None:
         return None, 'No se encontró tu perfil de usuario.'
 
-    if tipo_operacion not in ('COMPRA', 'VENTA'):
-        return None, 'Tipo de operación inválido (debe ser COMPRA o VENTA).'
+    transaccion, error = _preparar_transaccion(
+        cliente_activo, tipo_operacion, moneda_codigo, cantidad, moneda_destino_codigo,
+    )
+    if error:
+        return None, error
 
-    try:
-        cantidad = Decimal(str(cantidad))
-        if cantidad <= 0:
-            return None, 'La cantidad debe ser mayor a 0.'
-    except Exception:
-        return None, 'Cantidad no válida.'
-
-    tasa_obj = TasaCambio.objects.activa_para(moneda_codigo)
-    if not tasa_obj:
-        return None, f'No hay cotización activa para {moneda_codigo}.'
-
-    medio_pago = MedioPagoCliente.objects.filter(
+    medio_pago = MedioPagoCliente.objects.select_related('metodo_pago').filter(
         id=medio_pago_id, cliente=cliente_activo, estado=True
     ).first()
     if not medio_pago:
         return None, 'El medio de pago seleccionado no es válido o está inactivo.'
+    if tipo_operacion == 'VENTA' and not medio_pago.metodo_pago.permite_venta:
+        return None, (
+            'Las tarjetas de crédito no se pueden usar para vender divisas: elegí '
+            'efectivo, una cuenta o una billetera para recibir el dinero.'
+        )
+    if tipo_operacion == 'CAMBIO' and medio_pago.metodo_pago.usa_banco:
+        return None, (
+            'El cambio entre divisas solo se puede hacer en efectivo: las cuentas '
+            'del banco son en guaraníes.'
+        )
 
-    tasa_aplicada = tasa_obj.tasa_para(tipo_operacion)
+    transaccion.usuario = usuario_negocio
+    transaccion.medio_pago = medio_pago
+    transaccion.metodo_pago = medio_pago.metodo_pago
+    transaccion.modalidad = 'DIGITAL'
 
-    transaccion = Transaccion(
-        usuario=usuario_negocio,
-        cliente=cliente_activo,
-        moneda=tasa_obj.moneda,
-        metodo_pago=medio_pago.metodo_pago,
-        tipo=tipo_operacion,
-        cantidad=cantidad,
-        tasa_cambio=tasa_aplicada,
-        modalidad='DIGITAL',
-    )
-    transaccion.calcular_tasas_y_comisiones()
-
-    # E4-143: el monto no puede superar el límite del cliente. Se valida antes
-    # de confirmar, para no dejar la transacción registrada si se pasa.
+    # E4-143: el monto no puede superar el límite de la categoría del
+    # cliente. Se valida antes de confirmar, para no dejar la transacción
+    # registrada si se pasa.
     error_limite = transaccion.validar_limite_cliente()
     if error_limite:
         return None, error_limite
@@ -411,7 +472,9 @@ def _transaccion_del_cliente_activo(request, pk):
     """
     cliente_activo = sesion.get_cliente_activo(request)
     transaccion = (
-        Transaccion.objects.select_related('moneda', 'metodo_pago', 'cliente')
+        Transaccion.objects.select_related(
+            'moneda', 'moneda_destino', 'metodo_pago', 'medio_pago', 'cliente'
+        )
         .filter(pk=pk, cliente=cliente_activo)
         .first()
         if cliente_activo is not None else None
@@ -423,10 +486,12 @@ def _transaccion_del_cliente_activo(request, pk):
 
 class OperarDivisaAPIView(APIView):
     """
-    Endpoint para E4-19 (comprar) y E4-20 (vender) divisas de forma digital.
-    Ejecuta el cálculo de E4-144 y registra la transacción ``PENDIENTE`` de
-    pago; se confirma con ``POST .../transacciones/<id>/confirmar/``.
-    ``tipo`` en el body: ``COMPRA`` (default) o ``VENTA``.
+    Endpoint para E4-19 (comprar) y E4-20 (vender) divisas de forma digital,
+    o cambiar una por otra. Ejecuta el cálculo de E4-144 y registra la
+    transacción ``PENDIENTE`` de pago; se confirma con
+    ``POST .../transacciones/<id>/confirmar/``.
+    ``tipo`` en el body: ``COMPRA`` (default), ``VENTA`` o ``CAMBIO`` (este
+    último con ``moneda_destino_codigo``).
     """
     permission_classes = [IsAuthenticated]
 
@@ -437,6 +502,7 @@ class OperarDivisaAPIView(APIView):
             moneda_codigo=request.data.get('moneda_codigo'),
             cantidad=request.data.get('cantidad', '0'),
             medio_pago_id=request.data.get('medio_pago_id'),
+            moneda_destino_codigo=request.data.get('moneda_destino_codigo'),
         )
         if error:
             return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
@@ -459,7 +525,12 @@ def _desglose(transaccion):
         'comision_porcentaje': transaccion.comision_porcentaje,
         'monto_comision': transaccion.monto_comision,
         'monto_total': transaccion.monto_total,
+        'moneda_destino': transaccion.moneda_destino.codigo if transaccion.moneda_destino else None,
+        'tasa_destino': transaccion.tasa_cambio_destino,
+        'cantidad_destino': transaccion.cantidad_destino,
+        'medio_pago': transaccion.medio_pago.alias if transaccion.medio_pago else None,
         'estado': transaccion.estado,
+        'observacion': transaccion.observacion,
     }
 
 
@@ -467,7 +538,8 @@ def _desglose(transaccion):
 def operar_divisa_view(request):
     """
     Vista HTML para iniciar una compra (E4-19) o venta (E4-20) de divisas,
-    con la comisión y tasa aplicada según el cliente (E4-144).
+    o un cambio entre divisas, con la comisión y tasa aplicada según el
+    cliente (E4-144).
 
     Al enviar el formulario la operación queda ``PENDIENTE`` y se redirige a
     su resumen (``operacion_detalle_view``), donde se confirma el pago o se
@@ -484,6 +556,7 @@ def operar_divisa_view(request):
             moneda_codigo=request.POST.get('moneda_codigo'),
             cantidad=request.POST.get('cantidad'),
             medio_pago_id=request.POST.get('medio_pago_id'),
+            moneda_destino_codigo=request.POST.get('moneda_destino_codigo'),
         )
         if error is None:
             return redirect('operacion_detalle', pk=transaccion.pk)
@@ -492,12 +565,15 @@ def operar_divisa_view(request):
         'usuario': request.user,
         'cliente_activo': cliente_activo,
         'monedas': Moneda.objects.filter(estado=True).order_by('codigo'),
+        'tasas': TasaCambio.objects.vigentes(),
         'medios_pago': (
-            MedioPagoCliente.objects.filter(cliente=cliente_activo, estado=True)
+            MedioPagoCliente.objects.select_related('metodo_pago')
+            .filter(cliente=cliente_activo, estado=True)
             if cliente_activo else MedioPagoCliente.objects.none()
         ),
+        'datos_enviados': request.POST if request.method == 'POST' else {},
         'pendientes': (
-            Transaccion.objects.select_related('moneda')
+            Transaccion.objects.select_related('moneda', 'moneda_destino')
             .filter(cliente=cliente_activo, estado='PENDIENTE').order_by('-fecha_hora')
             if cliente_activo else Transaccion.objects.none()
         ),
@@ -562,7 +638,9 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
         Exportación: ``GET .../exportar/?formato=csv|excel|pdf``, respetando
         siempre los mismos filtros aplicados en el listado (E4-36).
         """
-    queryset = Transaccion.objects.select_related('cliente', 'moneda', 'metodo_pago').all()
+    queryset = Transaccion.objects.select_related(
+        'cliente', 'moneda', 'moneda_destino', 'metodo_pago', 'medio_pago'
+    ).all()
     serializer_class = TransaccionSerializer
     permission_classes = [IsAuthenticated]
 
@@ -593,7 +671,10 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
         if params.get('tipo'):
             queryset = queryset.filter(tipo=params['tipo'])
         if params.get('moneda'):
-            queryset = queryset.filter(moneda_id=params['moneda'])
+            # En un cambio entre divisas cuenta tanto la de origen como la de destino.
+            queryset = queryset.filter(
+                Q(moneda_id=params['moneda']) | Q(moneda_destino_id=params['moneda'])
+            )
         if params.get('estado'):
             queryset = queryset.filter(estado=params['estado'])
         return queryset
@@ -644,12 +725,19 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
         formato = request.query_params.get('formato', 'csv').lower()
         transacciones = self._queryset_filtrado()
 
-        columnas = ['ID', 'Fecha', 'Tipo', 'Cliente', 'Moneda', 'Cantidad', 'Tasa', 'Monto total', 'Estado']
+        columnas = [
+            'ID', 'Fecha', 'Tipo', 'Cliente', 'Moneda', 'Cantidad', 'Tasa', 'Monto total (Gs)',
+            'Moneda destino', 'Cantidad destino', 'Medio de pago', 'Estado', 'Observación',
+        ]
         filas = [
             [
                 t.id, t.fecha_hora.strftime('%Y-%m-%d %H:%M'), t.get_tipo_display(),
                 t.cliente.nombre, t.moneda.codigo, t.cantidad, t.tasa_cambio,
-                t.monto_total, t.get_estado_display(),
+                t.monto_total,
+                t.moneda_destino.codigo if t.moneda_destino else '',
+                t.cantidad_destino if t.cantidad_destino is not None else '',
+                t.medio_pago.alias if t.medio_pago else t.metodo_pago.nombre,
+                t.get_estado_display(), t.observacion,
             ]
             for t in transacciones
         ]
@@ -719,7 +807,7 @@ def historial_transacciones_view(request):
     cliente_activo = sesion.get_cliente_activo(request)
 
     transacciones = Transaccion.objects.select_related(
-        'cliente', 'moneda', 'metodo_pago'
+        'cliente', 'moneda', 'moneda_destino', 'metodo_pago', 'medio_pago'
     ).order_by('-fecha_hora')
     if not ve_todos:
         transacciones = (
@@ -741,7 +829,9 @@ def historial_transacciones_view(request):
     if tipo:
         transacciones = transacciones.filter(tipo=tipo)
     if moneda_id:
-        transacciones = transacciones.filter(moneda_id=moneda_id)
+        transacciones = transacciones.filter(
+            Q(moneda_id=moneda_id) | Q(moneda_destino_id=moneda_id)
+        )
     if estado:
         transacciones = transacciones.filter(estado=estado)
 

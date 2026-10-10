@@ -44,7 +44,7 @@
                                     {% for m in metodos %}
                                     <tr>
                                         <td><strong>{{ m.nombre }}</strong></td>
-                                        <td>{{ m.tipo }}</td>
+                                        <td>{{ m.get_tipo_display }}</td>
                                         <td>
                                             {% if m.estado %}
                                                 <span class="badge bg-success">activo</span>
@@ -93,7 +93,12 @@
                             </div>
                             <div class="mb-3">
                                 <label class="form-label">Tipo</label>
-                                <input type="text" name="tipo" class="form-control" placeholder="Ej. TARJETA" required>
+                                <select name="tipo" class="form-select" required>
+                                    {% for valor, etiqueta in tipo_choices %}
+                                    <option value="{{ valor }}">{{ etiqueta }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-text">Todos menos el efectivo se cobran de una cuenta del banco.</div>
                             </div>
                             <div class="form-check mb-3">
                                 <input type="checkbox" name="estado" class="form-check-input" id="estadoMetodo" checked>
