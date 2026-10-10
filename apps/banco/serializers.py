@@ -55,6 +55,8 @@ class CuentaBancariaSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
+        """Abre la cuenta por ``services.abrir_cuenta``, que registra el saldo
+        inicial como primer movimiento."""
         validated_data.pop('estado', None)
         return services.abrir_cuenta(**validated_data)
 
