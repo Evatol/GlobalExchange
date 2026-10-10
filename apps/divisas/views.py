@@ -1,3 +1,4 @@
+from decimal import Decimal
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.shortcuts import redirect, render
@@ -21,6 +22,7 @@ from .serializers import (
     SimulacionRequestSerializer,
     TasaCambioSerializer,
 )
+from .services import procesar_cambio_cotizacion
 
 
 def _exige_administrador_o_analista(user):
@@ -114,11 +116,18 @@ class CotizacionViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
+        # Obtener la cotización activa anterior antes de guardar la nueva
+        moneda = serializer.validated_data.get('moneda')
+        cotizacion_anterior = TasaCambio.objects.filter(moneda=moneda, estado=True).first()
+        
         cotizacion = serializer.save()
         if cotizacion.estado:
             TasaCambio.objects.filter(
                 moneda=cotizacion.moneda, estado=True
             ).exclude(pk=cotizacion.pk).update(estado=False)
+            
+            # Evaluar y disparar notificaciones si supera el umbral (E4-32)
+            procesar_cambio_cotizacion(cotizacion, cotizacion_anterior)
 
     def destroy(self, request, *args, **kwargs):
         """Borrado lógico: desactiva la cotización en vez de eliminarla."""
@@ -133,12 +142,15 @@ class CotizacionViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def activar(self, request, pk=None):
         """Reactiva una cotización y desactiva las demás activas de esa moneda."""
+        cotizacion_anterior = TasaCambio.objects.filter(moneda=self.get_object().moneda, estado=True).first()
         cotizacion = self.get_object()
         cotizacion.estado = True
         cotizacion.save()
         TasaCambio.objects.filter(
             moneda=cotizacion.moneda, estado=True
         ).exclude(pk=cotizacion.pk).update(estado=False)
+        
+        procesar_cambio_cotizacion(cotizacion, cotizacion_anterior)
         return Response({'detail': f'Cotización de {cotizacion.moneda.codigo} activada.'})
 
 
@@ -149,7 +161,6 @@ class TasasPublicasView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        # Obtiene la lista de tasas activas
         tasas = TasaCambio.objects.filter(estado=True).select_related('moneda')
         serializer = TasaCambioSerializer(tasas, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -227,14 +238,7 @@ def _simular(moneda_codigo, tipo_operacion, cantidad, moneda_destino_codigo=None
 
 class PantallaPublicaCambiosView(View):
     """Pantalla pública en HTML (RF13, RF20, RF24): cotizaciones del día y
-    calculadora de conversión, visible sin haber iniciado sesión.
-
-    No repite la lógica de consulta/cálculo: reutiliza el mismo serializer
-    de validación que usa el simulador por API (``SimulacionRequestSerializer``)
-    y el mismo manager de ``TasaCambio`` (``objects.activa_para``), para que
-    ambas puertas de entrada (esta vista HTML y ``/api/divisas/simular/``)
-    calculen siempre igual.
-    """
+    calculadora de conversión, visible sin haber iniciado sesión."""
 
     def get(self, request):
         tasas = TasaCambio.objects.filter(estado=True).select_related('moneda')
@@ -281,9 +285,6 @@ class PantallaPublicaCambiosView(View):
 
 @login_required
 def gestion_monedas_view(request):
-    """Pantalla propia para el CRUD de Monedas (E4-137), en vez de la API
-    navegable de DRF. Reutiliza ``MonedaSerializer`` para no duplicar las
-    validaciones (código único, etc.). Solo administrador/analista."""
     _exige_administrador_o_analista(request.user)
 
     error = None
@@ -306,9 +307,6 @@ def gestion_monedas_view(request):
 
 @login_required
 def moneda_editar_view(request, pk):
-    """Edita el código, nombre y símbolo de una moneda existente. Reutiliza
-    ``MonedaSerializer`` (misma validación que el alta: código único).
-    Solo administrador/analista."""
     _exige_administrador_o_analista(request.user)
     moneda = Moneda.objects.filter(pk=pk).first()
     if moneda is None:
@@ -330,7 +328,6 @@ def moneda_editar_view(request, pk):
 
 @login_required
 def moneda_toggle_view(request, pk):
-    """Activa/desactiva una moneda desde la pantalla de gestión (borrado lógico)."""
     _exige_administrador_o_analista(request.user)
     moneda = Moneda.objects.filter(pk=pk).first()
     if moneda is not None:
@@ -340,22 +337,23 @@ def moneda_toggle_view(request, pk):
 
 @login_required
 def gestion_cotizaciones_view(request):
-    """Pantalla propia para el CRUD de Cotizaciones (E4-26), sobre
-    ``TasaCambio``. Reutiliza ``TasaCambioSerializer`` (misma validación
-    que la API: la venta no puede ser menor a la compra) y, al crear una
-    activa, desactiva automáticamente la anterior de esa misma moneda
-    (igual que ``CotizacionViewSet``). Solo administrador/analista."""
     _exige_administrador_o_analista(request.user)
 
     error = None
     if request.method == 'POST':
         serializer = TasaCambioSerializer(data=request.POST)
         if serializer.is_valid():
+            moneda = serializer.validated_data.get('moneda')
+            cotizacion_anterior = TasaCambio.objects.filter(moneda=moneda, estado=True).first()
+            
             cotizacion = serializer.save()
             if cotizacion.estado:
                 TasaCambio.objects.filter(
                     moneda=cotizacion.moneda, estado=True
                 ).exclude(pk=cotizacion.pk).update(estado=False)
+                
+                procesar_cambio_cotizacion(cotizacion, cotizacion_anterior)
+                
             return redirect('gestion_cotizaciones')
         error = ' '.join(
             str(msg) for errores in serializer.errors.values() for msg in errores
@@ -372,24 +370,25 @@ def gestion_cotizaciones_view(request):
 
 @login_required
 def cotizacion_editar_view(request, pk):
-    """Edita una cotización existente (moneda, tasas, origen, estado).
-    Reutiliza ``TasaCambioSerializer`` (misma validación: la venta no puede
-    ser menor a la compra) y, si queda activa, desactiva las demás activas
-    de esa misma moneda (igual que al crear). Solo administrador/analista."""
     _exige_administrador_o_analista(request.user)
-    cotizacion = TasaCambio.objects.select_related('moneda').filter(pk=pk).first()
-    if cotizacion is None:
+    cotizacion_obj = TasaCambio.objects.select_related('moneda').filter(pk=pk).first()
+    if cotizacion_obj is None:
         return redirect('gestion_cotizaciones')
 
     error = None
     if request.method == 'POST':
-        serializer = TasaCambioSerializer(instance=cotizacion, data=request.POST, partial=True)
+        cotizacion_anterior = TasaCambio.objects.filter(moneda=cotizacion_obj.moneda, estado=True).exclude(pk=cotizacion_obj.pk).first()
+        
+        serializer = TasaCambioSerializer(instance=cotizacion_obj, data=request.POST, partial=True)
         if serializer.is_valid():
             cotizacion = serializer.save()
             if cotizacion.estado:
                 TasaCambio.objects.filter(
                     moneda=cotizacion.moneda, estado=True
                 ).exclude(pk=cotizacion.pk).update(estado=False)
+                
+                procesar_cambio_cotizacion(cotizacion, cotizacion_anterior)
+                
             return redirect('gestion_cotizaciones')
         error = ' '.join(
             str(msg) for errores in serializer.errors.values() for msg in errores
@@ -397,7 +396,7 @@ def cotizacion_editar_view(request, pk):
 
     context = {
         'usuario': request.user,
-        'cotizacion': cotizacion,
+        'cotizacion': cotizacion_obj,
         'monedas': Moneda.objects.filter(estado=True).order_by('codigo'),
         'error': error,
     }
@@ -406,16 +405,17 @@ def cotizacion_editar_view(request, pk):
 
 @login_required
 def cotizacion_toggle_view(request, pk):
-    """Activa/desactiva una cotización desde la pantalla de gestión. Al
-    reactivar, desactiva las demás activas de esa misma moneda (una sola
-    cotización vigente por moneda, igual que la API)."""
     _exige_administrador_o_analista(request.user)
     cotizacion = TasaCambio.objects.filter(pk=pk).first()
     if cotizacion is not None:
+        cotizacion_anterior = TasaCambio.objects.filter(moneda=cotizacion.moneda, estado=True).exclude(pk=cotizacion.pk).first()
         cotizacion.estado = not cotizacion.estado
         cotizacion.save()
         if cotizacion.estado:
             TasaCambio.objects.filter(
                 moneda=cotizacion.moneda, estado=True
             ).exclude(pk=cotizacion.pk).update(estado=False)
+            
+            procesar_cambio_cotizacion(cotizacion, cotizacion_anterior)
+            
     return redirect('gestion_cotizaciones')

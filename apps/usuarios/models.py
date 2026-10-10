@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import models
+from apps.divisas.models import Moneda
 
 
 class Permiso(models.Model):
@@ -151,6 +152,12 @@ class Usuario(models.Model):
         Rol,
         blank=True,
         related_name='usuarios'
+    )
+    monedas_favoritas = models.ManyToManyField(
+        Moneda,
+        blank=True,
+        related_name='usuarios_favoritos',
+        limit_choices_to={'estado': True}
     )
 
     def actualizar_datos(self, nombres, apellidos, telefono, direccion):

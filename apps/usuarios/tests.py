@@ -536,10 +536,6 @@ class GestionRolesTests(TestCase):
         resp = self.client.post('/api/usuarios/roles/asignar/', {
             'username': 'analista_demo', 'rol': 'analista',
         })
-        # fetch_redirect_response=False: no seguir el redirect. La pantalla de
-        # destino (gestion_roles_view) llama a listar_usuarios_con_roles(),
-        # que no está mockeado acá (sí lo está en test_accesible_para_administrador)
-        # y en CI no hay Keycloak disponible para responderle.
         self.assertRedirects(resp, '/api/usuarios/roles/', fetch_redirect_response=False)
         mock_asignar.assert_called_once_with('analista_demo', 'analista')
 
@@ -873,6 +869,37 @@ class MiPerfilViewTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.perfil.refresh_from_db()
         self.assertEqual(self.perfil.nombres, 'Nombre Original')
+
+
+class MonedasFavoritasE424Tests(TestCase):
+    """Test de la tarea E4-24: Marcar monedas favoritas."""
+
+    def setUp(self):
+        self.url = '/api/usuarios/mi-perfil/'
+        self.django_user = _usuario_con_rol('favoritos_user', rol='usuario_final')
+        self.perfil = Usuario.objects.create(
+            username='favoritos_user',
+            email='favoritos_user@example.com',
+            nombres='Fav',
+            apellidos='User',
+        )
+        from apps.divisas.models import Moneda
+        self.moneda_activa = Moneda.objects.create(codigo='USD', nombre='Dólar', estado=True)
+        self.moneda_inactiva = Moneda.objects.create(codigo='XXX', nombre='Inactiva', estado=False)
+
+    def test_agregar_y_persistir_monedas_favoritas(self):
+        self.client.force_login(self.django_user)
+        resp = self.client.post(self.url, {
+            'actualizar_favoritos': '1',
+            'monedas_favoritas': [self.moneda_activa.pk],
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.perfil.refresh_from_db()
+        self.assertIn(self.moneda_activa, self.perfil.monedas_favoritas.all())
+
+    def test_limit_choices_to_solo_permite_activas_en_modelo(self):
+        self.perfil.monedas_favoritas.add(self.moneda_activa)
+        self.assertIn(self.moneda_activa, self.perfil.monedas_favoritas.all())
 
 
 class CambiarPasswordViewTests(TestCase):
