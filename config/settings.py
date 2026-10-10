@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 from pathlib import Path
 
 import environ
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -287,3 +288,5 @@ if not DEBUG:
 
     # Detrás de un proxy inverso (Nginx, etc.) que termina TLS.
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+PRICE_CHANGE_THRESHOLD_PERCENT = float(os.getenv('PRICE_CHANGE_THRESHOLD_PERCENT', '1.0')) # se creo el umbral
