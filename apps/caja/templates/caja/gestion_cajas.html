@@ -60,7 +60,8 @@
                                                 <span class="badge bg-secondary">cerrada</span>
                                             {% endif %}
                                         </td>
-                                        <td class="text-end">
+                                        <td class="text-end text-nowrap">
+                                            <a href="{% url 'caja_balance' c.id %}" class="btn btn-sm btn-outline-secondary">Balance</a>
                                             {% if c.estado != 'ABIERTA' %}
                                                 <a href="{% url 'caja_abrir' c.id %}" class="btn btn-sm btn-outline-primary">Abrir</a>
                                             {% endif %}

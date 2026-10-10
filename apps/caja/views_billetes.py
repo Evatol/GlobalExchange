@@ -21,13 +21,16 @@ from apps.usuarios.permissions import (
 )
 
 from . import services
-from .models import Arqueo, Billete, Caja
+from .models import Arqueo, Billete, Caja, CierreCaja, MovimientoBillete
 from .serializers_billetes import (
     AbrirCajaSerializer,
     ArqueoEntradaSerializer,
     ArqueoSerializer,
     BilleteSerializer,
     CajaSerializer,
+    CerrarCajaSerializer,
+    CierreCajaSerializer,
+    MovimientoBilleteSerializer,
     OperacionPresencialSerializer,
     OperacionPreviewSerializer,
 )
@@ -132,6 +135,9 @@ class CajaViewSet(
 
     * ``POST .../cajas/<id>/abrir/``  -> ``{"carga_inicial": {"<billete_id>": n}}``
     * ``GET  .../cajas/<id>/inventario/`` -> inventario de esa caja por moneda.
+    * ``GET  .../cajas/<id>/balance/`` -> balance de la sesión (E4-100).
+    * ``POST .../cajas/<id>/cerrar/`` -> cierra la caja; ``{"contados": {...}}``
+      opcional (ver ``CerrarCajaSerializer``).
     """
 
     queryset = Caja.objects.select_related('sucursal', 'cajero').order_by('sucursal__nombre', 'id')
@@ -165,6 +171,23 @@ class CajaViewSet(
         caja = self.get_object()
         return Response({'caja': caja.pk, 'monedas': services.inventario_por_moneda(caja)})
 
+    @action(detail=True, methods=['get'])
+    def balance(self, request, pk=None):
+        return Response(services.balance_caja(self.get_object()))
+
+    @action(detail=True, methods=['post'])
+    def cerrar(self, request, pk=None):
+        caja = self.get_object()
+        entrada = CerrarCajaSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            cierre = services.cerrar_caja(
+                caja, _usuario_actual(request), entrada.validated_data['contados']
+            )
+        except DjangoValidationError as exc:
+            return Response(_errores(exc), status=status.HTTP_400_BAD_REQUEST)
+        return Response(CierreCajaSerializer(cierre).data, status=status.HTTP_201_CREATED)
+
 
 # ---------------------------------------------------------------------------
 # Cajero: inventario propio y operación presencial
@@ -184,6 +207,39 @@ class MiInventarioAPIView(APIView):
         return Response({'caja': caja.pk, 'monedas': services.inventario_por_moneda(caja)})
 
 
+class MiBalanceAPIView(APIView):
+    """Balance de la sesión de la caja abierta del cajero (E4-100): por
+    moneda, con cuánto abrió, qué recibió y entregó, y el saldo actual."""
+
+    permission_classes = [SoloCajero]
+
+    def get(self, request):
+        try:
+            caja = services.caja_abierta_de(_usuario_actual(request))
+        except DjangoValidationError as exc:
+            return Response(_errores(exc), status=status.HTTP_400_BAD_REQUEST)
+        return Response(services.balance_caja(caja))
+
+
+class MiCierreAPIView(APIView):
+    """``POST``: el cajero cierra su caja (E4-100). Body opcional:
+    ``{"contados": {"<moneda_id>": {"<billete_id>": cantidad}}}``; las monedas
+    que se incluyen se cuentan y dejan un arqueo con su diferencia."""
+
+    permission_classes = [SoloCajero]
+
+    def post(self, request):
+        entrada = CerrarCajaSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        usuario = _usuario_actual(request)
+        try:
+            caja = services.caja_abierta_de(usuario)
+            cierre = services.cerrar_caja(caja, usuario, entrada.validated_data['contados'])
+        except DjangoValidationError as exc:
+            return Response(_errores(exc), status=status.HTTP_400_BAD_REQUEST)
+        return Response(CierreCajaSerializer(cierre).data, status=status.HTTP_201_CREATED)
+
+
 class PrevisualizarOperacionAPIView(APIView):
     """Calcula una operación presencial sin guardarla: montos, comisión y el
     neto de billetes que la caja debe recibir (positivo) o entregar (negativo)
@@ -191,6 +247,9 @@ class PrevisualizarOperacionAPIView(APIView):
 
     Body: ``documento``, ``tipo`` (COMPRA/VENTA/CAMBIO), ``moneda_codigo``,
     ``cantidad`` y, en un cambio, ``moneda_destino_codigo``.
+
+    Si el cajero tiene una caja abierta, también devuelve ``billetes``: los que
+    el sistema registraría solo para esa operación (E4-101).
     """
 
     permission_classes = [SoloCajero]
@@ -210,19 +269,23 @@ class PrevisualizarOperacionAPIView(APIView):
             )
         except DjangoValidationError as exc:
             return Response(_errores(exc), status=status.HTTP_400_BAD_REQUEST)
+        caja = Caja.objects.filter(cajero=_usuario_actual(request), estado='ABIERTA').first()
         return Response({
             'cliente': cliente.nombre,
             **_desglose(transaccion),
             'neto_esperado': esperado,
+            'billetes': services.sugerir_billetes(caja, transaccion) if caja else None,
         })
 
 
 class OperarPresencialAPIView(APIView):
     """Registra y confirma una operación presencial en efectivo (RF106).
 
-    Body: los de la previsualización más ``recibidos`` y ``entregados``
-    (``{"<billete_id>": cantidad}``). Todo o nada: si algo no cierra, no queda
-    nada guardado.
+    Body: los de la previsualización y, opcionalmente, ``recibidos`` y
+    ``entregados`` (``{"<billete_id>": cantidad}``). Sin ellos, el sistema arma
+    solo el desglose en billetes y registra los movimientos (E4-101); con
+    ellos, respeta lo que cargó el cajero. Todo o nada: si algo no cierra, no
+    queda nada guardado.
     """
 
     permission_classes = [SoloCajero]
@@ -242,8 +305,8 @@ class OperarPresencialAPIView(APIView):
                 tipo=d['tipo'],
                 moneda_codigo=d['moneda_codigo'],
                 cantidad=d['cantidad'],
-                recibidos=d['recibidos'],
-                entregados=d['entregados'],
+                recibidos=d.get('recibidos'),
+                entregados=d.get('entregados'),
                 moneda_destino_codigo=d.get('moneda_destino_codigo') or None,
             )
         except DjangoValidationError as exc:
@@ -312,3 +375,73 @@ class ArqueoViewSet(
         except DjangoValidationError as exc:
             return Response(_errores(exc), status=status.HTTP_400_BAD_REQUEST)
         return Response(ArqueoSerializer(arqueo).data, status=status.HTTP_201_CREATED)
+
+# ---------------------------------------------------------------------------
+# Movimientos de billetes y cierres: consulta
+# ---------------------------------------------------------------------------
+
+class _SoloLecturaDeSuCajaMixin:
+    """El administrador ve todo; el cajero, solo lo de sus cajas."""
+
+    permission_classes = [AdministradorOCajero]
+
+    def _acotar_al_cajero(self, queryset):
+        if tiene_rol(self.request.user, (ADMINISTRADOR,)):
+            return queryset
+        usuario = sesion.usuario_negocio(self.request)
+        return queryset.filter(caja__cajero=usuario) if usuario else queryset.none()
+
+
+class MovimientoBilleteViewSet(
+    _SoloLecturaDeSuCajaMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin,
+    viewsets.GenericViewSet,
+):
+    """Movimientos de billetes registrados automáticamente al confirmar una
+    operación presencial, y la carga inicial de la apertura (E4-101). Solo
+    lectura: los movimientos los crea ``services.registrar_movimientos_billetes``.
+
+    Filtros: ``?caja=``, ``?tipo=`` (ENTRADA/SALIDA), ``?transaccion=``,
+    ``?moneda=`` (id), ``?fecha_desde=`` y ``?fecha_hasta=`` (YYYY-MM-DD).
+    """
+
+    queryset = MovimientoBillete.objects.select_related(
+        'caja', 'billete__moneda', 'usuario', 'transaccion'
+    ).order_by('-fecha_hora', '-id')
+    serializer_class = MovimientoBilleteSerializer
+
+    def get_queryset(self):
+        queryset = self._acotar_al_cajero(super().get_queryset())
+        p = self.request.query_params
+        if p.get('caja'):
+            queryset = queryset.filter(caja_id=p['caja'])
+        if p.get('tipo'):
+            queryset = queryset.filter(tipo=p['tipo'].upper())
+        if p.get('transaccion'):
+            queryset = queryset.filter(transaccion_id=p['transaccion'])
+        if p.get('moneda'):
+            queryset = queryset.filter(billete__moneda_id=p['moneda'])
+        if p.get('fecha_desde'):
+            queryset = queryset.filter(fecha_hora__date__gte=p['fecha_desde'])
+        if p.get('fecha_hasta'):
+            queryset = queryset.filter(fecha_hora__date__lte=p['fecha_hasta'])
+        return queryset
+
+
+class CierreCajaViewSet(
+    _SoloLecturaDeSuCajaMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin,
+    viewsets.GenericViewSet,
+):
+    """Historial de cierres de caja (E4-100), con el balance de cada sesión.
+    Solo lectura; los cierres se crean con ``POST .../cajas/<id>/cerrar/``
+    (administrador) o ``POST .../mi-cierre/`` (cajero). Filtro: ``?caja=``."""
+
+    queryset = CierreCaja.objects.select_related('caja', 'cerrado_por').prefetch_related(
+        'detalles__moneda'
+    )
+    serializer_class = CierreCajaSerializer
+
+    def get_queryset(self):
+        queryset = self._acotar_al_cajero(super().get_queryset())
+        if self.request.query_params.get('caja'):
+            queryset = queryset.filter(caja_id=self.request.query_params['caja'])
+        return queryset

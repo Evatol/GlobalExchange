@@ -36,6 +36,30 @@ caja.models module
    :show-inheritance:
    :undoc-members:
 
+caja.serializers module
+-----------------------
+
+.. automodule:: apps.caja.serializers
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+caja.serializers_billetes module
+--------------------------------
+
+.. automodule:: apps.caja.serializers_billetes
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+caja.services module
+--------------------
+
+.. automodule:: apps.caja.services
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 caja.tests module
 -----------------
 
@@ -56,6 +80,22 @@ caja.views module
 -----------------
 
 .. automodule:: apps.caja.views
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+caja.views_billetes module
+--------------------------
+
+.. automodule:: apps.caja.views_billetes
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+caja.views_pantallas module
+---------------------------
+
+.. automodule:: apps.caja.views_pantallas
    :members:
    :show-inheritance:
    :undoc-members:

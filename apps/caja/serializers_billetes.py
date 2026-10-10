@@ -8,7 +8,8 @@ from rest_framework import serializers
 from apps.divisas.models import Moneda
 
 from .models import (
-    Arqueo, Billete, Caja, DetalleArqueo, MovimientoBillete, StockBillete,
+    Arqueo, Billete, Caja, CierreCaja, DetalleArqueo, DetalleCierre,
+    MovimientoBillete, StockBillete,
 )
 
 TIPOS_OPERACION = ('COMPRA', 'VENTA', 'CAMBIO')
@@ -134,8 +135,26 @@ class OperacionPreviewSerializer(serializers.Serializer):
 
 
 class OperacionPresencialSerializer(OperacionPreviewSerializer):
-    recibidos = _cantidades()
-    entregados = _cantidades()
+    """``recibidos`` y ``entregados`` son opcionales: si no vienen, el sistema
+    arma el desglose en billetes solo (E4-101). Si vienen, se respetan, aunque
+    sean ``{}`` (eso es "no hubo billetes de ese lado", no "calculalo")."""
+
+    recibidos = serializers.DictField(
+        child=serializers.IntegerField(min_value=0), required=False, allow_null=True
+    )
+    entregados = serializers.DictField(
+        child=serializers.IntegerField(min_value=0), required=False, allow_null=True
+    )
+
+
+class CerrarCajaSerializer(serializers.Serializer):
+    """``contados``: ``{"<moneda_id>": {"<billete_id>": cantidad}}``. Solo las
+    monedas que se incluyen se cuentan (registran un arqueo)."""
+
+    contados = serializers.DictField(
+        child=serializers.DictField(child=serializers.IntegerField(min_value=0)),
+        required=False, default=dict,
+    )
 
 
 class ArqueoEntradaSerializer(serializers.Serializer):
@@ -170,5 +189,50 @@ class ArqueoSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'caja', 'cajero', 'cajero_username', 'moneda', 'moneda_codigo',
             'fecha_hora', 'total_esperado', 'total_contado', 'diferencia', 'detalles',
+        ]
+        read_only_fields = fields
+
+class MovimientoBilleteSerializer(serializers.ModelSerializer):
+    """Movimiento de billetes de una caja (E4-101), de solo lectura."""
+
+    denominacion = serializers.DecimalField(
+        source='billete.denominacion', max_digits=10, decimal_places=2, read_only=True
+    )
+    moneda_codigo = serializers.CharField(source='billete.moneda.codigo', read_only=True)
+    subtotal = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
+    usuario_username = serializers.CharField(source='usuario.username', read_only=True, default=None)
+
+    class Meta:
+        model = MovimientoBillete
+        fields = [
+            'id', 'caja', 'transaccion', 'tipo', 'billete', 'moneda_codigo',
+            'denominacion', 'cantidad', 'subtotal', 'usuario_username', 'fecha_hora',
+        ]
+        read_only_fields = fields
+
+
+class DetalleCierreSerializer(serializers.ModelSerializer):
+    moneda_codigo = serializers.CharField(source='moneda.codigo', read_only=True)
+
+    class Meta:
+        model = DetalleCierre
+        fields = [
+            'moneda', 'moneda_codigo', 'saldo_inicial', 'recibido', 'entregado',
+            'saldo_final', 'total_contado', 'diferencia',
+        ]
+        read_only_fields = fields
+
+
+class CierreCajaSerializer(serializers.ModelSerializer):
+    """Cierre de caja (E4-100) con su balance por moneda."""
+
+    cerrado_por_username = serializers.CharField(source='cerrado_por.username', read_only=True)
+    detalles = DetalleCierreSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = CierreCaja
+        fields = [
+            'id', 'caja', 'cajero', 'cerrado_por', 'cerrado_por_username',
+            'fecha_apertura', 'fecha_cierre', 'operaciones', 'detalles',
         ]
         read_only_fields = fields

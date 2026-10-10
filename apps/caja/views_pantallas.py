@@ -12,10 +12,11 @@ from django.views.decorators.http import require_POST
 
 from apps.divisas.models import Moneda
 from apps.usuarios import sesion
+from apps.usuarios.models import Cliente
 from apps.usuarios.permissions import es_cajero
 
 from . import services
-from .models import Arqueo, AsignacionCajero, Billete, Caja
+from .models import Arqueo, AsignacionCajero, Billete, Caja, CierreCaja, MovimientoBillete
 from .serializers_billetes import BilleteSerializer, CajaSerializer
 from .views import _entero, _errores, _solo_administrador
 
@@ -147,9 +148,168 @@ def caja_abrir_view(request, pk):
     return render(request, 'caja/caja_abrir.html', context)
 
 
+@login_required
+def caja_balance_view(request, pk):
+    """Balance de la sesión de una caja y su historial de cierres (E4-100),
+    solo administrador. Desde acá el administrador también puede cerrarla."""
+    _solo_administrador(request)
+    caja = Caja.objects.select_related('sucursal', 'cajero').filter(pk=pk).first()
+    if caja is None:
+        return redirect('gestion_cajas')
+    return render(request, 'caja/caja_balance.html', {
+        'usuario': request.user,
+        'caja': caja,
+        'balance': services.balance_caja(caja),
+        'cierres': caja.cierres.prefetch_related('detalles__moneda')[:10],
+        'movimientos': MovimientoBillete.objects.filter(caja=caja).select_related(
+            'billete__moneda', 'usuario', 'transaccion'
+        ).order_by('-fecha_hora', '-id')[:15],
+    })
+
+
+@login_required
+@require_POST
+def caja_cerrar_admin_view(request, pk):
+    """El administrador cierra una caja abierta sin contarla (E4-100). Si hay
+    que contar, el cajero cierra la suya desde ``Mi Caja``."""
+    _solo_administrador(request)
+    caja = Caja.objects.filter(pk=pk).first()
+    if caja is None:
+        return redirect('gestion_cajas')
+    usuario = sesion.usuario_negocio(request)
+    if usuario is None:
+        messages.error(request, 'No se encontró tu perfil de usuario.')
+    else:
+        try:
+            services.cerrar_caja(caja, usuario)
+            messages.success(request, f'Caja #{caja.pk} cerrada.')
+        except DjangoValidationError as exc:
+            messages.error(request, ' '.join(exc.messages))
+    return redirect('caja_balance', pk=pk)
+
+
 # ---------------------------------------------------------------------------
-# Cajero: su inventario y el arqueo
+# Cajero: su inventario, el arqueo, el mostrador y el cierre
 # ---------------------------------------------------------------------------
+
+def _cajero_y_caja(request):
+    """``(usuario, caja_abierta_o_None)`` del cajero que hace el request.
+    Lanza 403 si no es cajero o no tiene perfil de usuario."""
+    if not es_cajero(request.user):
+        raise DjangoPermissionDenied('Esta sección es solo para cajeros.')
+    usuario = sesion.usuario_negocio(request)
+    if usuario is None:
+        raise DjangoPermissionDenied('No se encontró tu perfil de usuario.')
+    try:
+        return usuario, services.caja_abierta_de(usuario)
+    except DjangoValidationError:
+        return usuario, None
+
+
+@login_required
+def mostrador_view(request):
+    """Atender a un cliente en el mostrador (E4-101): compra, venta o cambio
+    en efectivo.
+
+    Dos pasos: **calcular** muestra los montos y los billetes que la caja
+    tiene que recibir y entregar (los arma el sistema); **confirmar** registra
+    la operación y, solo, los movimientos de billetes y el stock. Si algo no
+    cierra (stock, límite del cliente, cotización) no queda nada guardado.
+    """
+    usuario, caja = _cajero_y_caja(request)
+
+    error, vista_previa = None, None
+    datos = request.POST if request.method == 'POST' else {}
+    if caja is None:
+        error = 'No tenés una caja abierta. Pedile al administrador que abra tu caja.'
+    elif request.method == 'POST':
+        confirmar = request.POST.get('accion') == 'confirmar'
+        try:
+            cliente = Cliente.objects.filter(
+                documento=request.POST.get('documento', '').strip()
+            ).first()
+            if cliente is None:
+                raise DjangoValidationError('No existe un cliente con ese documento.')
+            parametros = dict(
+                cliente=cliente,
+                tipo=request.POST.get('tipo', 'COMPRA'),
+                moneda_codigo=request.POST.get('moneda_codigo'),
+                cantidad=request.POST.get('cantidad'),
+                moneda_destino_codigo=request.POST.get('moneda_destino_codigo') or None,
+            )
+            if confirmar:
+                transaccion = services.registrar_operacion_presencial(
+                    caja=caja, usuario=usuario, **parametros
+                )
+                messages.success(
+                    request,
+                    f'Operación #{transaccion.pk} confirmada. Los billetes recibidos y '
+                    f'entregados se registraron automáticamente.',
+                )
+                return redirect('mi_caja')
+            transaccion, esperado = services.previsualizar_operacion_presencial(**parametros)
+            vista_previa = {
+                'cliente': cliente,
+                'transaccion': transaccion,
+                'billetes': services.sugerir_billetes(caja, transaccion),
+            }
+        except DjangoValidationError as exc:
+            error = ' '.join(exc.messages)
+
+    return render(request, 'caja/mostrador.html', {
+        'usuario': request.user,
+        'caja': caja,
+        'monedas': Moneda.objects.filter(estado=True, tasas__estado=True).distinct().order_by('codigo'),
+        'datos': datos,
+        'vista_previa': vista_previa,
+        'error': error,
+    })
+
+
+@login_required
+def caja_cerrar_view(request):
+    """El cajero cierra su caja (E4-100): ve el balance de la sesión y, si
+    quiere, cuenta los billetes de una o más monedas (queda un arqueo con su
+    diferencia). Una moneda que deja sin completar no se cuenta."""
+    usuario, caja = _cajero_y_caja(request)
+    if caja is None:
+        messages.error(request, 'No tenés una caja abierta.')
+        return redirect('mi_caja')
+
+    inventario = services.inventario_por_moneda(caja)
+    ids = dict(
+        Moneda.objects.filter(codigo__in=[g['moneda'] for g in inventario]).values_list('codigo', 'id')
+    )
+    for grupo in inventario:
+        grupo['moneda_id'] = ids.get(grupo['moneda'])
+
+    error = None
+    if request.method == 'POST':
+        try:
+            cantidades = _leer_cantidades(request.POST, 'contado_')
+            contados = {}
+            for grupo in inventario:
+                billetes = [d['billete_id'] for d in grupo['denominaciones']]
+                if any(request.POST.get(f'contado_{i}', '').strip() for i in billetes):
+                    contados[grupo['moneda_id']] = {i: cantidades.get(i, 0) for i in billetes}
+            cierre = services.cerrar_caja(caja, usuario, contados)
+        except DjangoValidationError as exc:
+            error = ' '.join(exc.messages)
+        else:
+            con_diferencia = [d.moneda.codigo for d in cierre.detalles.all() if d.diferencia]
+            aviso = (
+                f' Con diferencia en: {", ".join(con_diferencia)}.' if con_diferencia else ''
+            )
+            messages.success(request, f'Caja #{caja.pk} cerrada.{aviso}')
+            return redirect('mi_caja')
+
+    return render(request, 'caja/caja_cerrar.html', {
+        'usuario': request.user,
+        'caja': caja,
+        'balance': services.balance_caja(caja),
+        'monedas': inventario,
+        'error': error,
+    })
 
 @login_required
 def mi_caja_view(request):
@@ -201,10 +361,21 @@ def mi_caja_view(request):
         for grupo in monedas:
             grupo['moneda_id'] = ids.get(grupo['moneda'])
 
+    ultimo_cierre = (
+        CierreCaja.objects.filter(cajero=usuario).prefetch_related('detalles__moneda').first()
+        if caja is None else None
+    )
     context = {
         'usuario': request.user,
         'caja': caja,
         'monedas': monedas,
+        'balance': services.balance_caja(caja) if caja is not None else None,
+        'movimientos': (
+            MovimientoBillete.objects.filter(caja=caja).select_related('billete__moneda', 'transaccion')
+            .order_by('-fecha_hora', '-id')[:10] if caja is not None else []
+        ),
+        'ultimo_cierre': ultimo_cierre,
+        'ultimo_cierre_lista': [ultimo_cierre] if ultimo_cierre else [],
         'arqueos': Arqueo.objects.filter(cajero=usuario).select_related('moneda')[:5],
         'error': error,
     }

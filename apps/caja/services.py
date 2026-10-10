@@ -16,7 +16,8 @@ from apps.divisas.models import Moneda
 from apps.transacciones.models import MetodoPago
 
 from .models import (
-    Arqueo, Billete, Caja, DetalleArqueo, MovimientoBillete, StockBillete,
+    Arqueo, Billete, Caja, CierreCaja, DetalleArqueo, DetalleCierre,
+    MovimientoBillete, StockBillete,
 )
 
 CERO = Decimal('0')
@@ -204,7 +205,7 @@ def validar_billetes_de_operacion(transaccion, recibidos, entregados):
 @transaction.atomic
 def registrar_operacion_presencial(
     *, caja, usuario, cliente, tipo, moneda_codigo, cantidad,
-    recibidos, entregados, moneda_destino_codigo=None,
+    recibidos=None, entregados=None, moneda_destino_codigo=None,
 ):
     """Compra, venta o cambio de divisas en el mostrador, pagado en efectivo.
 
@@ -213,6 +214,12 @@ def registrar_operacion_presencial(
     Todo o nada: si algo falla (stock, billetes que no cierran, límite del
     cliente, cotización que cambió) no queda nada guardado, ni siquiera una
     transacción CANCELADA/FALLIDA como en el flujo digital.
+
+    Registro automático (E4-101): si no se indican ``recibidos`` ni
+    ``entregados``, el sistema arma solo el desglose por denominación
+    (``desglose_automatico``) y registra los movimientos y el stock. Si se
+    indican, se respeta lo que cargó el cajero (por ejemplo, si el cliente
+    pagó con otros billetes que los sugeridos).
     """
     # Import diferido: reutiliza la misma regla de tasas y comisión que la
     # operación digital (hoy es un helper privado de transacciones.views;
@@ -244,6 +251,8 @@ def registrar_operacion_presencial(
     if error_limite:
         raise ValidationError(error_limite)
 
+    if recibidos is None and entregados is None:
+        recibidos, entregados = desglose_automatico(caja, transaccion)
     recibidos = _normalizar(recibidos, 'recibidos')
     entregados = _normalizar(entregados, 'entregados')
     validar_billetes_de_operacion(transaccion, recibidos, entregados)
@@ -286,6 +295,194 @@ def previsualizar_operacion_presencial(
     esperado = _flujo_esperado(transaccion, _moneda_local())
     monedas = Moneda.objects.in_bulk(esperado.keys())
     return transaccion, {monedas[k].codigo: v for k, v in esperado.items()}
+
+
+# ---------------------------------------------------------------------------
+# Desglose automático en billetes (E4-101)
+# ---------------------------------------------------------------------------
+
+def desglose_de_monto(moneda_id, monto, disponible=None):
+    """Billetes de ``moneda_id`` que suman ``monto``: ``{billete_id: cantidad}``.
+
+    Va de la denominación más grande a la más chica. ``disponible``
+    (``{billete_id: cantidad}``) limita lo que se puede entregar: al recibir no
+    se pasa, porque el cliente puede traer cualquier cantidad. Como los importes
+    tienen centavos que no se pagan con billetes, lo que sobra por debajo de la
+    denominación mínima se redondea al billete mínimo más cercano: el desvío
+    nunca pasa de media denominación mínima, que es la misma tolerancia con la
+    que ``validar_billetes_de_operacion`` acepta la operación.
+
+    Lanza ``ValidationError`` si no hay denominaciones cargadas o si con lo
+    disponible no se llega a cubrir el monto.
+    """
+    billetes = list(Billete.objects.filter(moneda_id=moneda_id, estado=True).order_by('-denominacion'))
+    if not billetes:
+        codigo = Moneda.objects.filter(pk=moneda_id).values_list('codigo', flat=True).first()
+        raise ValidationError(f'No hay denominaciones cargadas para {codigo}.')
+
+    resultado, restante = {}, Decimal(monto)
+    for billete in billetes:
+        cantidad = int(restante // billete.denominacion)
+        if disponible is not None:
+            cantidad = min(cantidad, disponible.get(billete.id, 0))
+        if cantidad > 0:
+            resultado[billete.id] = cantidad
+            restante -= cantidad * billete.denominacion
+
+    menor = billetes[-1]
+    if restante >= menor.denominacion / 2:
+        queda_uno = disponible is None or disponible.get(menor.id, 0) > resultado.get(menor.id, 0)
+        if restante >= menor.denominacion or not queda_uno:
+            raise ValidationError(
+                f'No hay billetes suficientes de {menor.moneda.codigo} para cubrir {monto}.'
+            )
+        resultado[menor.id] = resultado.get(menor.id, 0) + 1
+    return resultado
+
+
+def desglose_automatico(caja, transaccion):
+    """``(recibidos, entregados)`` de una operación presencial, calculados por el
+    sistema: lo que la caja recibe en cada moneda se desglosa sin límite, y lo
+    que entrega, con el stock que tiene la caja."""
+    esperado = _flujo_esperado(transaccion, _moneda_local())
+    stock = {s.billete_id: s.cantidad for s in StockBillete.objects.filter(caja=caja)}
+    recibidos, entregados = {}, {}
+    for moneda_id, monto in esperado.items():
+        if monto > 0:
+            recibidos.update(desglose_de_monto(moneda_id, monto))
+        elif monto < 0:
+            entregados.update(desglose_de_monto(moneda_id, -monto, stock))
+    return recibidos, entregados
+
+
+def sugerir_billetes(caja, transaccion):
+    """Lo que el cajero tiene que pedir y dar, legible, para la vista previa:
+    ``{'recibir': [...], 'entregar': [...], 'advertencia': str | None}``. Si con
+    el stock de la caja no se puede cubrir, devuelve la advertencia en vez de
+    fallar, para que el cajero lo sepa antes de empezar."""
+    try:
+        recibidos, entregados = desglose_automatico(caja, transaccion)
+    except ValidationError as exc:
+        return {'recibir': [], 'entregar': [], 'advertencia': ' '.join(exc.messages)}
+
+    def detalle(cantidades):
+        billetes = Billete.objects.filter(id__in=cantidades).select_related('moneda')
+        return [
+            {
+                'moneda': b.moneda.codigo, 'billete_id': b.id,
+                'denominacion': b.denominacion, 'cantidad': cantidades[b.id],
+                'subtotal': b.denominacion * cantidades[b.id],
+            }
+            for b in sorted(billetes, key=lambda b: (b.moneda.codigo, -b.denominacion))
+        ]
+
+    return {'recibir': detalle(recibidos), 'entregar': detalle(entregados), 'advertencia': None}
+
+
+# ---------------------------------------------------------------------------
+# Balance y cierre de caja (E4-100)
+# ---------------------------------------------------------------------------
+
+def balance_caja(caja):
+    """Balance de la sesión actual de la caja (desde que se abrió), por moneda.
+
+    Cada fila tiene: ``saldo_al_abrir`` (lo que había de la sesión anterior),
+    ``carga_inicial`` (lo que se cargó al abrir u otros movimientos sin
+    operación), ``recibido`` y ``entregado`` por operaciones, y ``saldo_actual``
+    (el stock del sistema). Siempre cierra: saldo_al_abrir + carga_inicial +
+    recibido - entregado = saldo_actual. Todo se calcula desde el stock y los
+    movimientos, que son lo único que lo modifica, así que no hay un saldo
+    aparte que pueda desalinearse.
+
+    Si la caja está cerrada, es el balance de la última sesión.
+    """
+    filas = {}
+
+    def fila(moneda):
+        return filas.setdefault(moneda.id, {
+            'moneda': moneda.codigo, 'moneda_id': moneda.id,
+            'saldo_al_abrir': CERO, 'carga_inicial': CERO,
+            'recibido': CERO, 'entregado': CERO, 'saldo_actual': CERO,
+        })
+
+    for stock in StockBillete.objects.filter(caja=caja).select_related('billete__moneda'):
+        fila(stock.billete.moneda)['saldo_actual'] += stock.billete.denominacion * stock.cantidad
+
+    operaciones = set()
+    if caja.fecha_apertura is not None:
+        movimientos = MovimientoBillete.objects.filter(
+            caja=caja, fecha_hora__gte=caja.fecha_apertura
+        ).select_related('billete__moneda')
+        for mov in movimientos:
+            valor = mov.billete.denominacion * mov.cantidad
+            f = fila(mov.billete.moneda)
+            if mov.transaccion_id is None:
+                f['carga_inicial'] += valor if mov.tipo == 'ENTRADA' else -valor
+            else:
+                operaciones.add(mov.transaccion_id)
+                f['recibido' if mov.tipo == 'ENTRADA' else 'entregado'] += valor
+
+    for f in filas.values():
+        f['saldo_al_abrir'] = (
+            f['saldo_actual'] - f['carga_inicial'] - f['recibido'] + f['entregado']
+        )
+    return {
+        'caja': caja.pk,
+        'estado': caja.estado,
+        'fecha_apertura': caja.fecha_apertura,
+        'fecha_cierre': caja.fecha_cierre,
+        'operaciones': len(operaciones),
+        'monedas': sorted(filas.values(), key=lambda f: f['moneda']),
+    }
+
+
+@transaction.atomic
+def cerrar_caja(caja, usuario, contados=None):
+    """Cierra la caja y guarda el balance de la sesión (``CierreCaja``).
+
+    ``contados`` es opcional: ``{moneda_id: {billete_id: cantidad}}``. Por cada
+    moneda contada se registra un arqueo y su diferencia queda en el cierre;
+    las monedas que no se cuentan quedan "sin contar". Una diferencia no
+    impide cerrar: se registra. El stock queda como está: es el remanente con
+    el que se abre la próxima sesión.
+
+    ``usuario`` es quien cierra (el cajero o un administrador).
+    """
+    caja = Caja.objects.select_for_update().get(pk=caja.pk)
+    if caja.estado != 'ABIERTA':
+        raise ValidationError('La caja no está abierta.')
+
+    arqueos = {}
+    for moneda_id, cantidades in (contados or {}).items():
+        try:
+            moneda = Moneda.objects.filter(pk=int(moneda_id)).first()
+        except (TypeError, ValueError):
+            moneda = None
+        if moneda is None:
+            raise ValidationError(f'Moneda inexistente: {moneda_id}.')
+        arqueos[moneda.id] = registrar_arqueo(caja, usuario, moneda, cantidades)
+
+    balance = balance_caja(caja)
+    ahora = timezone.now()
+    cierre = CierreCaja.objects.create(
+        caja=caja, cajero=caja.cajero, cerrado_por=usuario,
+        fecha_apertura=caja.fecha_apertura, fecha_cierre=ahora,
+        operaciones=balance['operaciones'],
+    )
+    for f in balance['monedas']:
+        arqueo = arqueos.get(f['moneda_id'])
+        DetalleCierre.objects.create(
+            cierre=cierre, moneda_id=f['moneda_id'],
+            saldo_inicial=f['saldo_al_abrir'] + f['carga_inicial'],
+            recibido=f['recibido'], entregado=f['entregado'], saldo_final=f['saldo_actual'],
+            total_contado=arqueo.total_contado if arqueo else None,
+            diferencia=arqueo.diferencia if arqueo else None,
+        )
+
+    caja.estado = 'CERRADA'
+    caja.fecha_cierre = ahora
+    caja.save(update_fields=['estado', 'fecha_cierre'])
+    return cierre
 
 
 # ---------------------------------------------------------------------------

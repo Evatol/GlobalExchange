@@ -201,6 +201,11 @@ class MovimientoBillete(models.Model):
     def validar_movimiento(self):
         return self.cantidad > 0
 
+    @property
+    def subtotal(self):
+        """Importe del movimiento: denominación por cantidad de billetes."""
+        return self.billete.denominacion * self.cantidad
+
     def __str__(self):
         return f'Movimiento #{self.id}'
 
@@ -294,3 +299,55 @@ class DetalleArqueo(models.Model):
     @property
     def diferencia(self):
         return self.cantidad_contada - self.cantidad_esperada
+
+class CierreCaja(models.Model):
+    """Cierre de una caja (E4-100): foto del balance de la sesión que termina.
+
+    Se crea con ``apps.caja.services.cerrar_caja`` y queda como historial: la
+    caja se vuelve a abrir cada día, y el cierre guarda con cuánto abrió, qué
+    recibió y entregó, y con qué terminó, por moneda.
+    """
+
+    id = models.AutoField(primary_key=True)
+    caja = models.ForeignKey(Caja, on_delete=models.PROTECT, related_name='cierres')
+    cajero = models.ForeignKey(
+        Usuario, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='cierres_de_su_caja',
+    )
+    cerrado_por = models.ForeignKey(
+        Usuario, on_delete=models.PROTECT, related_name='cierres_realizados',
+    )
+    fecha_apertura = models.DateTimeField(null=True, blank=True)
+    fecha_cierre = models.DateTimeField()
+    operaciones = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['-fecha_cierre']
+
+    def __str__(self):
+        return f'Cierre #{self.id} - {self.caja}'
+
+
+class DetalleCierre(models.Model):
+    """Balance de una moneda en un cierre de caja.
+
+    ``saldo_inicial`` incluye la carga inicial de la apertura; ``saldo_final``
+    es lo que el sistema esperaba al cerrar. ``total_contado`` y ``diferencia``
+    solo existen si el cajero contó esa moneda al cerrar (queda un arqueo).
+    """
+
+    id = models.AutoField(primary_key=True)
+    cierre = models.ForeignKey(CierreCaja, on_delete=models.CASCADE, related_name='detalles')
+    moneda = models.ForeignKey(Moneda, on_delete=models.PROTECT, related_name='detalles_cierre')
+    saldo_inicial = models.DecimalField(max_digits=15, decimal_places=2)
+    recibido = models.DecimalField(max_digits=15, decimal_places=2)
+    entregado = models.DecimalField(max_digits=15, decimal_places=2)
+    saldo_final = models.DecimalField(max_digits=15, decimal_places=2)
+    total_contado = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    diferencia = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+
+    class Meta:
+        ordering = ['moneda__codigo']
+
+    def __str__(self):
+        return f'{self.cierre} - {self.moneda.codigo}'

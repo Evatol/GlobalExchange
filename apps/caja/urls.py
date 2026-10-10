@@ -13,16 +13,24 @@ from .views_billetes import (
     ArqueoViewSet,
     BilleteViewSet,
     CajaViewSet,
+    CierreCajaViewSet,
+    MiBalanceAPIView,
+    MiCierreAPIView,
     MiInventarioAPIView,
+    MovimientoBilleteViewSet,
     OperarPresencialAPIView,
     PrevisualizarOperacionAPIView,
 )
 from .views_pantallas import (
     billete_toggle_view,
     caja_abrir_view,
+    caja_balance_view,
+    caja_cerrar_admin_view,
+    caja_cerrar_view,
     gestion_cajas_view,
     gestion_denominaciones_view,
     mi_caja_view,
+    mostrador_view,
 )
 
 router = DefaultRouter()
@@ -34,6 +42,9 @@ router.register(
 router.register('billetes', BilleteViewSet, basename='billete')
 router.register('cajas', CajaViewSet, basename='caja')
 router.register('arqueos', ArqueoViewSet, basename='arqueo')
+# E4-100 / E4-101: historial de cierres y movimientos de billetes.
+router.register('cierres', CierreCajaViewSet, basename='cierrecaja')
+router.register('movimientos', MovimientoBilleteViewSet, basename='movimientobillete')
 
 urlpatterns = [
     # Pantallas propias de gestión (HTML), en vez de la API navegable de DRF.
@@ -51,10 +62,16 @@ urlpatterns = [
     path('gestion/denominaciones/<int:pk>/toggle/', billete_toggle_view, name='billete_toggle'),
     path('gestion/cajas/', gestion_cajas_view, name='gestion_cajas'),
     path('gestion/cajas/<int:pk>/abrir/', caja_abrir_view, name='caja_abrir'),
+    path('gestion/cajas/<int:pk>/balance/', caja_balance_view, name='caja_balance'),
+    path('gestion/cajas/<int:pk>/cerrar/', caja_cerrar_admin_view, name='caja_cerrar_admin'),
     path('mi-caja/', mi_caja_view, name='mi_caja'),
+    path('mi-caja/cerrar/', caja_cerrar_view, name='caja_cerrar'),
+    path('mostrador/', mostrador_view, name='mostrador'),
 
     # RF106: API del cajero.
     path('mi-inventario/', MiInventarioAPIView.as_view(), name='mi_inventario'),
+    path('mi-balance/', MiBalanceAPIView.as_view(), name='mi_balance'),
+    path('mi-cierre/', MiCierreAPIView.as_view(), name='mi_cierre'),
     path(
         'operaciones-presenciales/calcular/',
         PrevisualizarOperacionAPIView.as_view(),

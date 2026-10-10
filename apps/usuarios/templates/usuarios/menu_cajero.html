@@ -15,6 +15,9 @@
                 <li class="nav-item">
                     <a class="nav-link" href="{% url 'mi_caja' %}">Mi Caja</a>
                 </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="{% url 'mostrador' %}">Atender cliente</a>
+                </li>
             </ul>
             <div class="d-flex align-items-center text-white">
                 <span class="me-3">Bienvenido, <strong>{{ usuario.username }}</strong></span>
@@ -30,15 +33,24 @@
         <div class="row">
             <div class="col-md-12 text-center mb-4">
                 <h2>Panel del Cajero</h2>
-                <p class="text-muted">Tu caja: inventario de billetes y arqueo.</p>
+                <p class="text-muted">Tu caja: atención de clientes, balance, inventario de billetes, arqueo y cierre.</p>
             </div>
         </div>
         <div class="row g-4 justify-content-center">
             <div class="col-md-4">
                 <div class="card h-100 shadow-sm border-0">
                     <div class="card-body text-center">
+                        <h5 class="card-title">Atender cliente</h5>
+                        <p class="card-text">Compra, venta o cambio en efectivo: los billetes se registran solos.</p>
+                        <a href="{% url 'mostrador' %}" class="btn btn-primary w-100">Atender</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
                         <h5 class="card-title">Mi Caja</h5>
-                        <p class="card-text">Inventario por moneda y denominación, y arqueo de lo contado.</p>
+                        <p class="card-text">Balance del día, inventario, arqueo y cierre de caja.</p>
                         <a href="{% url 'mi_caja' %}" class="btn btn-primary w-100">Ir a Mi Caja</a>
                     </div>
                 </div>

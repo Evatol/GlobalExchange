@@ -1,0 +1,23 @@
+{# Movimientos de billetes de una caja (E4-101). Espera ``movimientos``. #}
+<div class="table-responsive">
+    <table class="table align-middle mb-0">
+        <thead>
+            <tr class="text-muted">
+                <th>Fecha</th><th>Movimiento</th><th>Billetes</th><th class="text-end">Importe</th><th>Operación</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in movimientos %}
+            <tr>
+                <td class="text-nowrap">{{ m.fecha_hora|date:"d/m/Y H:i" }}</td>
+                <td>{% if m.tipo == 'ENTRADA' %}<span class="badge bg-success">entrada</span>{% else %}<span class="badge bg-danger">salida</span>{% endif %}</td>
+                <td>{{ m.cantidad }} × {{ m.billete.denominacion|floatformat:"-2g" }} {{ m.billete.moneda.codigo }}</td>
+                <td class="text-end">{{ m.subtotal|floatformat:"-2g" }}</td>
+                <td>{% if m.transaccion_id %}#{{ m.transaccion_id }}{% else %}<span class="text-muted small">carga inicial</span>{% endif %}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5" class="text-center text-muted">Todavía no hay movimientos.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>

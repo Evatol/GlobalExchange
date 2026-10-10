@@ -29,7 +29,7 @@
         </div>
 
         {% for m in messages %}
-            <div class="alert alert-success">{{ m }}</div>
+            <div class="alert {% if m.tags == 'error' %}alert-danger{% else %}alert-success{% endif %}">{{ m }}</div>
         {% endfor %}
         {% if error %}
             <div class="alert alert-danger">{{ error }}</div>
@@ -37,7 +37,33 @@
 
         {% if not caja %}
             <div class="alert alert-info text-center">No tenés una caja abierta. Pedile al administrador que abra tu caja.</div>
+            {% if ultimo_cierre %}
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">Tu último cierre</h5>
+                    {% include 'caja/_cierres.html' with cierres=ultimo_cierre_lista %}
+                </div>
+            </div>
+            {% endif %}
         {% else %}
+            <div class="d-flex gap-2 justify-content-center mb-4">
+                <a href="{% url 'mostrador' %}" class="btn btn-primary">Atender cliente</a>
+                <a href="{% url 'caja_cerrar' %}" class="btn btn-outline-danger">Cerrar caja</a>
+            </div>
+
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">Balance de hoy</h5>
+                    {% include 'caja/_balance.html' %}
+                </div>
+            </div>
+
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">Últimos movimientos de billetes</h5>
+                    {% include 'caja/_movimientos.html' %}
+                </div>
+            </div>
             {% for g in monedas %}
             <div class="card shadow-sm border-0 mb-4">
                 <div class="card-body">
