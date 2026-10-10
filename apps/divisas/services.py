@@ -1,9 +1,12 @@
+import logging
 from decimal import Decimal
 from django.conf import settings
 from django.core.mail import send_mail
 from django.db import transaction
 from apps.notificaciones.models import Notificaciones
 from apps.usuarios.models import Usuario
+
+logger = logging.getLogger(__name__)
 
 def procesar_cambio_cotizacion(cotizacion_nueva, cotizacion_anterior=None):
     """
@@ -75,7 +78,7 @@ def procesar_cambio_cotizacion(cotizacion_nueva, cotizacion_anterior=None):
                     )
                 except Exception as e:
                     # Criterio: Si falla el envío del correo, la cotización se guarda igual
-                    print(f"Advertencia: No se pudo enviar el correo a {u_email}: {e}")
+                    logger.warning("No se pudo enviar el correo a %s: %s", u_email, e)
 
             transaction.on_commit(enviar_correo_seguro)
 
