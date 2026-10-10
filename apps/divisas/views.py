@@ -25,6 +25,25 @@ from .serializers import (
 from .services import procesar_cambio_cotizacion
 
 
+def _valores_previos_si_vigente(cotizacion):
+    """Copia (sin guardar) de la cotización con los valores que tiene *ahora*, si
+    está vigente; ``None`` si no lo está.
+
+    Sirve para avisar cuando se **edita** la cotización vigente en el lugar
+    (E4-32/E4-33): ``procesar_cambio_cotizacion`` compara la nueva contra la
+    anterior, pero al editar no hay otra cotización anterior, solo los valores
+    que tenía la misma fila antes de guardarla. Hay que tomarlos antes de
+    ``serializer.save()``, que modifica la instancia.
+    """
+    if not cotizacion.estado:
+        return None
+    return TasaCambio(
+        moneda=cotizacion.moneda,
+        tasa_compra=cotizacion.tasa_compra,
+        tasa_venta=cotizacion.tasa_venta,
+    )
+
+
 def _exige_administrador_o_analista(user):
     if not tiene_rol(user, (ADMINISTRADOR, ANALISTA)):
         raise PermissionDenied(
@@ -128,6 +147,14 @@ class CotizacionViewSet(viewsets.ModelViewSet):
             
             # Evaluar y disparar notificaciones si supera el umbral (E4-32)
             procesar_cambio_cotizacion(cotizacion, cotizacion_anterior)
+
+    def perform_update(self, serializer):
+        """Editar la cotización vigente (PUT/PATCH) también es un cambio de tasa:
+        se avisa si la variación supera el umbral (E4-32/E4-33)."""
+        previos = _valores_previos_si_vigente(serializer.instance)
+        cotizacion = serializer.save()
+        if previos is not None and cotizacion.estado and previos.moneda_id == cotizacion.moneda_id:
+            procesar_cambio_cotizacion(cotizacion, previos)
 
     def destroy(self, request, *args, **kwargs):
         """Borrado lógico: desactiva la cotización en vez de eliminarla."""
@@ -401,6 +428,13 @@ def cotizacion_editar_view(request, pk):
     error = None
     if request.method == 'POST':
         cotizacion_anterior = TasaCambio.objects.filter(moneda=cotizacion_obj.moneda, estado=True).exclude(pk=cotizacion_obj.pk).first()
+
+        # Editar en el lugar la cotización vigente también es un cambio de tasa: se la
+        # compara con los valores que tenía antes de guardar (sin esto no había
+        # "anterior" y no avisaba a nadie).
+        valores_previos = _valores_previos_si_vigente(cotizacion_obj)
+        if valores_previos is not None:
+            cotizacion_anterior = valores_previos
         
         serializer = TasaCambioSerializer(instance=cotizacion_obj, data=request.POST, partial=True)
         if serializer.is_valid():
@@ -410,6 +444,9 @@ def cotizacion_editar_view(request, pk):
                     moneda=cotizacion.moneda, estado=True
                 ).exclude(pk=cotizacion.pk).update(estado=False)
                 
+                if cotizacion_anterior is not None and cotizacion_anterior.moneda_id != cotizacion.moneda_id:
+                    cotizacion_anterior = None  # cambió de moneda: no se pueden comparar
+
                 procesar_cambio_cotizacion(cotizacion, cotizacion_anterior)
                 
             return redirect('gestion_cotizaciones')
