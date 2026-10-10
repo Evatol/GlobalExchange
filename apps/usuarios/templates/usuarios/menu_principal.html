@@ -57,7 +57,12 @@
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'gestion_sucursales' %}">Sucursales</a>
                     </li>
-
+                    <li class="nav-item">
+                         <a class="nav-link" href="{% url 'gestion_denominaciones' %}">Denominaciones</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'gestion_cajas' %}">Cajas</a>
+                    </li>
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'gestion_roles' %}">Administración de Roles</a>
                     </li>
@@ -206,6 +211,26 @@
                         <h5 class="card-title">Sucursales y Cajeros</h5>
                         <p class="card-text">Alta de sucursales y asignación de hasta 2 cajeros por sucursal.</p>
                         <a href="{% url 'gestion_sucursales' %}" class="btn btn-primary w-100">Gestionar Sucursales</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">Denominaciones de Billetes</h5>
+                        <p class="card-text">Billetes admitidos por moneda para el stock de las cajas.</p>
+                        <a href="{% url 'gestion_denominaciones' %}" class="btn btn-primary w-100">Gestionar Denominaciones</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">Cajas</h5>
+                        <p class="card-text">Cajas por cajero, con apertura y carga inicial de billetes.</p>
+                        <a href="{% url 'gestion_cajas' %}" class="btn btn-primary w-100">Gestionar Cajas</a>
                     </div>
                 </div>
             </div>

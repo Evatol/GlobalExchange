@@ -90,3 +90,23 @@ class SoloAdministrador(BasePermission):
 
     def has_permission(self, request, view):
         return tiene_rol(request.user, (ADMINISTRADOR,))
+
+# ---------------------------------------------------------------------------
+# Dos permisos de SoloCajero y AdministradorOCajero (RF106)
+# ---------------------------------------------------------------------------
+
+class SoloCajero(BasePermission):
+    """Pantallas y API del cajero en el módulo de caja (RF106): solo el rol
+    cajero. No deja pasar al administrador: un administrador no es un cajero
+    (ver ``es_cajero``)."""
+
+    def has_permission(self, request, view):
+        return es_cajero(request.user)
+
+
+class AdministradorOCajero(BasePermission):
+    """Consulta compartida (por ejemplo, el historial de arqueos): el
+    administrador ve todo; el cajero, lo suyo (el filtrado lo hace la vista)."""
+
+    def has_permission(self, request, view):
+        return tiene_rol(request.user, (ADMINISTRADOR,)) or es_cajero(request.user)
