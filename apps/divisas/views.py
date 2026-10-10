@@ -1,3 +1,4 @@
+from decimal import Decimal
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.shortcuts import redirect, render
@@ -21,6 +22,26 @@ from .serializers import (
     SimulacionRequestSerializer,
     TasaCambioSerializer,
 )
+from .services import procesar_cambio_cotizacion
+
+
+def _valores_previos_si_vigente(cotizacion):
+    """Copia (sin guardar) de la cotización con los valores que tiene *ahora*, si
+    está vigente; ``None`` si no lo está.
+
+    Sirve para avisar cuando se **edita** la cotización vigente en el lugar
+    (E4-32/E4-33): ``procesar_cambio_cotizacion`` compara la nueva contra la
+    anterior, pero al editar no hay otra cotización anterior, solo los valores
+    que tenía la misma fila antes de guardarla. Hay que tomarlos antes de
+    ``serializer.save()``, que modifica la instancia.
+    """
+    if not cotizacion.estado:
+        return None
+    return TasaCambio(
+        moneda=cotizacion.moneda,
+        tasa_compra=cotizacion.tasa_compra,
+        tasa_venta=cotizacion.tasa_venta,
+    )
 
 
 def _exige_administrador_o_analista(user):
@@ -114,11 +135,26 @@ class CotizacionViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
+        # Obtener la cotización activa anterior antes de guardar la nueva
+        moneda = serializer.validated_data.get('moneda')
+        cotizacion_anterior = TasaCambio.objects.filter(moneda=moneda, estado=True).first()
+        
         cotizacion = serializer.save()
         if cotizacion.estado:
             TasaCambio.objects.filter(
                 moneda=cotizacion.moneda, estado=True
             ).exclude(pk=cotizacion.pk).update(estado=False)
+            
+            # Evaluar y disparar notificaciones si supera el umbral (E4-32)
+            procesar_cambio_cotizacion(cotizacion, cotizacion_anterior)
+
+    def perform_update(self, serializer):
+        """Editar la cotización vigente (PUT/PATCH) también es un cambio de tasa:
+        se avisa si la variación supera el umbral (E4-32/E4-33)."""
+        previos = _valores_previos_si_vigente(serializer.instance)
+        cotizacion = serializer.save()
+        if previos is not None and cotizacion.estado and previos.moneda_id == cotizacion.moneda_id:
+            procesar_cambio_cotizacion(cotizacion, previos)
 
     def destroy(self, request, *args, **kwargs):
         """Borrado lógico: desactiva la cotización en vez de eliminarla."""
@@ -133,12 +169,15 @@ class CotizacionViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def activar(self, request, pk=None):
         """Reactiva una cotización y desactiva las demás activas de esa moneda."""
+        cotizacion_anterior = TasaCambio.objects.filter(moneda=self.get_object().moneda, estado=True).first()
         cotizacion = self.get_object()
         cotizacion.estado = True
         cotizacion.save()
         TasaCambio.objects.filter(
             moneda=cotizacion.moneda, estado=True
         ).exclude(pk=cotizacion.pk).update(estado=False)
+        
+        procesar_cambio_cotizacion(cotizacion, cotizacion_anterior)
         return Response({'detail': f'Cotización de {cotizacion.moneda.codigo} activada.'})
 
 
@@ -149,7 +188,6 @@ class TasasPublicasView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        # Obtiene la lista de tasas activas
         tasas = TasaCambio.objects.filter(estado=True).select_related('moneda')
         serializer = TasaCambioSerializer(tasas, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -166,46 +204,63 @@ class SimuladorConversionView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        moneda_codigo = serializer.validated_data['moneda_codigo']
-        tipo_operacion = serializer.validated_data['tipo_operacion']
-        cantidad = serializer.validated_data['cantidad']
+        datos = serializer.validated_data
+        simulacion, tasa_aplicada, tasa_obj, error = _simular(
+            datos['moneda_codigo'], datos['tipo_operacion'], datos['cantidad'],
+            datos.get('moneda_destino_codigo'),
+        )
+        if error:
+            return Response({"error": error}, status=status.HTTP_404_NOT_FOUND)
 
-        tasa_obj = TasaCambio.objects.activa_para(moneda_codigo)
+        respuesta = {
+            "moneda": tasa_obj.moneda.codigo,
+            "simbolo": tasa_obj.moneda.simbolo,
+            "tipo_operacion": datos['tipo_operacion'],
+            "cantidad": datos['cantidad'],
+            "tasa_aplicada": tasa_aplicada,
+            "resultado": simulacion.resultado,
+            "fecha_hora": simulacion.fecha_hora,
+        }
+        if datos['tipo_operacion'] == 'cambio':
+            # El resultado está en la divisa que se recibe, no en guaraníes.
+            respuesta["moneda_destino"] = datos['moneda_destino_codigo'].upper()
+        return Response(respuesta, status=status.HTTP_200_OK)
 
-        if not tasa_obj:
-            return Response(
-                {
-                    "error": f"No se encontró una tasa de cambio activa para la moneda '{moneda_codigo}'."
-                },
-                status=status.HTTP_404_NOT_FOUND,
+
+def _simular(moneda_codigo, tipo_operacion, cantidad, moneda_destino_codigo=None):
+    """Calcula y guarda una ``Simulacion``. La usan la pantalla pública y el
+    simulador por API, para que calculen siempre igual.
+
+    * ``compra``/``venta``: el resultado está en guaraníes, a la tasa que
+      corresponde al cliente (ver ``TasaCambio.tasa_para``).
+    * ``cambio``: el resultado está en la divisa de destino (ver
+      ``TasaCambio.convertir_entre_divisas``).
+
+    Devuelve ``(simulacion, tasa_aplicada, tasa_origen, error)``; si hay
+    ``error``, lo demás es ``None``.
+    """
+    tasa_obj = TasaCambio.objects.activa_para(moneda_codigo)
+    if not tasa_obj:
+        return None, None, None, (
+            f"No se encontró una tasa de cambio activa para la moneda '{moneda_codigo}'."
+        )
+
+    if tipo_operacion == 'cambio':
+        tasa_destino = TasaCambio.objects.activa_para(moneda_destino_codigo)
+        if not tasa_destino:
+            return None, None, None, (
+                f"No se encontró una tasa de cambio activa para la moneda '{moneda_destino_codigo}'."
             )
+        tasa_aplicada = tasa_obj.tasa_para('VENTA')
+        resultado = TasaCambio.convertir_entre_divisas(tasa_obj, tasa_destino, cantidad)
+    else:
+        tasa_aplicada = tasa_obj.tasa_para(tipo_operacion)
+        resultado = cantidad * tasa_aplicada
 
-        # Seleccionar la tasa correspondiente según si es compra o venta
-        if tipo_operacion == 'compra':
-            tasa_aplicada = tasa_obj.tasa_compra
-        else:
-            tasa_aplicada = tasa_obj.tasa_venta
-
-        # Utilizar el modelo Simulacion para guardar y calcular
-        simulacion = Simulacion(
-            tipo_operacion=tipo_operacion,
-            cantidad=cantidad,
-            resultado=cantidad * tasa_aplicada,
-        )
-        simulacion.save()
-
-        return Response(
-            {
-                "moneda": tasa_obj.moneda.codigo,
-                "simbolo": tasa_obj.moneda.simbolo,
-                "tipo_operacion": tipo_operacion,
-                "cantidad": cantidad,
-                "tasa_aplicada": tasa_aplicada,
-                "resultado": simulacion.resultado,
-                "fecha_hora": simulacion.fecha_hora,
-            },
-            status=status.HTTP_200_OK,
-        )
+    simulacion = Simulacion.objects.create(
+        tipo_operacion=tipo_operacion, cantidad=cantidad, resultado=resultado,
+    )
+    return simulacion, tasa_aplicada, tasa_obj, None
 
 
 class PantallaPublicaCambiosView(View):
@@ -232,29 +287,22 @@ class PantallaPublicaCambiosView(View):
         error = None
         moneda_codigo = request.POST.get('moneda_codigo', '')
         tipo_operacion = request.POST.get('tipo_operacion', 'compra')
+        moneda_destino = request.POST.get('moneda_destino_codigo', '')
 
         if not serializer.is_valid():
             error = ' '.join(
                 str(msg) for errores in serializer.errors.values() for msg in errores
             )
         else:
-            moneda_codigo = serializer.validated_data['moneda_codigo']
-            tipo_operacion = serializer.validated_data['tipo_operacion']
-            cantidad = serializer.validated_data['cantidad']
-
-            tasa_obj = TasaCambio.objects.activa_para(moneda_codigo)
-            if not tasa_obj:
-                error = f"No se encontró una tasa de cambio activa para la moneda '{moneda_codigo}'."
-            else:
-                tasa_aplicada = (
-                    tasa_obj.tasa_compra if tipo_operacion == 'compra' else tasa_obj.tasa_venta
-                )
-                resultado = cantidad * tasa_aplicada
-                Simulacion.objects.create(
-                    tipo_operacion=tipo_operacion,
-                    cantidad=cantidad,
-                    resultado=resultado,
-                )
+            datos = serializer.validated_data
+            moneda_codigo = datos['moneda_codigo']
+            tipo_operacion = datos['tipo_operacion']
+            moneda_destino = datos.get('moneda_destino_codigo', '').upper()
+            simulacion, tasa_aplicada, _, error = _simular(
+                moneda_codigo, tipo_operacion, datos['cantidad'], moneda_destino,
+            )
+            if simulacion is not None:
+                resultado = simulacion.resultado
 
         context = {
             'tasas': tasas,
@@ -263,6 +311,7 @@ class PantallaPublicaCambiosView(View):
             'cantidad_ingresada': request.POST.get('cantidad'),
             'moneda_seleccionada': moneda_codigo,
             'tipo_operacion': tipo_operacion,
+            'moneda_destino': moneda_destino,
             'error': error,
         }
         return render(request, 'divisas/publica.html', context)
@@ -340,11 +389,17 @@ def gestion_cotizaciones_view(request):
     if request.method == 'POST':
         serializer = TasaCambioSerializer(data=request.POST)
         if serializer.is_valid():
+            moneda = serializer.validated_data.get('moneda')
+            cotizacion_anterior = TasaCambio.objects.filter(moneda=moneda, estado=True).first()
+            
             cotizacion = serializer.save()
             if cotizacion.estado:
                 TasaCambio.objects.filter(
                     moneda=cotizacion.moneda, estado=True
                 ).exclude(pk=cotizacion.pk).update(estado=False)
+                
+                procesar_cambio_cotizacion(cotizacion, cotizacion_anterior)
+                
             return redirect('gestion_cotizaciones')
         error = ' '.join(
             str(msg) for errores in serializer.errors.values() for msg in errores
@@ -366,19 +421,34 @@ def cotizacion_editar_view(request, pk):
     ser menor a la compra) y, si queda activa, desactiva las demás activas
     de esa misma moneda (igual que al crear). Solo administrador/analista."""
     _exige_administrador_o_analista(request.user)
-    cotizacion = TasaCambio.objects.select_related('moneda').filter(pk=pk).first()
-    if cotizacion is None:
+    cotizacion_obj = TasaCambio.objects.select_related('moneda').filter(pk=pk).first()
+    if cotizacion_obj is None:
         return redirect('gestion_cotizaciones')
 
     error = None
     if request.method == 'POST':
-        serializer = TasaCambioSerializer(instance=cotizacion, data=request.POST, partial=True)
+        cotizacion_anterior = TasaCambio.objects.filter(moneda=cotizacion_obj.moneda, estado=True).exclude(pk=cotizacion_obj.pk).first()
+
+        # Editar en el lugar la cotización vigente también es un cambio de tasa: se la
+        # compara con los valores que tenía antes de guardar (sin esto no había
+        # "anterior" y no avisaba a nadie).
+        valores_previos = _valores_previos_si_vigente(cotizacion_obj)
+        if valores_previos is not None:
+            cotizacion_anterior = valores_previos
+        
+        serializer = TasaCambioSerializer(instance=cotizacion_obj, data=request.POST, partial=True)
         if serializer.is_valid():
             cotizacion = serializer.save()
             if cotizacion.estado:
                 TasaCambio.objects.filter(
                     moneda=cotizacion.moneda, estado=True
                 ).exclude(pk=cotizacion.pk).update(estado=False)
+                
+                if cotizacion_anterior is not None and cotizacion_anterior.moneda_id != cotizacion.moneda_id:
+                    cotizacion_anterior = None  # cambió de moneda: no se pueden comparar
+
+                procesar_cambio_cotizacion(cotizacion, cotizacion_anterior)
+                
             return redirect('gestion_cotizaciones')
         error = ' '.join(
             str(msg) for errores in serializer.errors.values() for msg in errores
@@ -386,7 +456,7 @@ def cotizacion_editar_view(request, pk):
 
     context = {
         'usuario': request.user,
-        'cotizacion': cotizacion,
+        'cotizacion': cotizacion_obj,
         'monedas': Moneda.objects.filter(estado=True).order_by('codigo'),
         'error': error,
     }
@@ -401,10 +471,14 @@ def cotizacion_toggle_view(request, pk):
     _exige_administrador_o_analista(request.user)
     cotizacion = TasaCambio.objects.filter(pk=pk).first()
     if cotizacion is not None:
+        cotizacion_anterior = TasaCambio.objects.filter(moneda=cotizacion.moneda, estado=True).exclude(pk=cotizacion.pk).first()
         cotizacion.estado = not cotizacion.estado
         cotizacion.save()
         if cotizacion.estado:
             TasaCambio.objects.filter(
                 moneda=cotizacion.moneda, estado=True
             ).exclude(pk=cotizacion.pk).update(estado=False)
+            
+            procesar_cambio_cotizacion(cotizacion, cotizacion_anterior)
+            
     return redirect('gestion_cotizaciones')

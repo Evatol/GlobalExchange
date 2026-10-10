@@ -35,6 +35,12 @@ class MedioPagoClienteSerializer(serializers.ModelSerializer):
             'fecha_creacion',
         ]
         read_only_fields = ['id', 'fecha_creacion']
+        # Sin el validador automático de la restricción única del modelo: se
+        # adelantaba a validate() y mostraba "Los campos cliente, metodo_pago,
+        # identificador deben formar un conjunto único.". El duplicado lo
+        # controla validate() con un mensaje claro, y la base lo sigue
+        # garantizando con la UniqueConstraint.
+        validators = []
 
     def validate_metodo_pago(self, value):
         if not value.estado:
@@ -64,6 +70,14 @@ class MedioPagoClienteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 'Ese cliente ya tiene registrado ese medio de pago.'
             )
+
+        # Salvo el efectivo, tiene que ser una cuenta del banco a nombre del
+        # cliente: si no, cualquiera podría pagar con la tarjeta de otro.
+        error_banco = MedioPagoCliente(
+            cliente=cliente, metodo_pago=metodo_pago, identificador=identificador,
+        ).validar_cuenta_banco()
+        if error_banco:
+            raise serializers.ValidationError({'identificador': error_banco})
         return attrs
 
 
@@ -72,6 +86,12 @@ class TransaccionSerializer(serializers.ModelSerializer):
     cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
     moneda_codigo = serializers.CharField(source='moneda.codigo', read_only=True)
     metodo_pago_nombre = serializers.CharField(source='metodo_pago.nombre', read_only=True)
+    medio_pago_alias = serializers.CharField(
+        source='medio_pago.alias', read_only=True, default=None
+    )
+    moneda_destino_codigo = serializers.CharField(
+        source='moneda_destino.codigo', read_only=True, default=None
+    )
 
     class Meta:
         model = Transaccion
@@ -80,7 +100,10 @@ class TransaccionSerializer(serializers.ModelSerializer):
             'cliente', 'cliente_nombre',
             'moneda', 'moneda_codigo',
             'metodo_pago', 'metodo_pago_nombre',
+            'medio_pago', 'medio_pago_alias',
             'cantidad', 'tasa_cambio', 'monto_total',
-            'estado', 'modalidad',
+            'moneda_destino', 'moneda_destino_codigo',
+            'tasa_cambio_destino', 'cantidad_destino',
+            'estado', 'observacion', 'modalidad',
         ]
         read_only_fields = fields

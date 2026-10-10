@@ -141,11 +141,13 @@ cat <<'FIN'
   Aplicacion .... http://localhost:8000/
   Keycloak ...... http://localhost:8080/   (admin / admin)
 
-  Usuarios (misma contrasena para los tres: Demo1234!)
+  Usuarios (misma contrasena para todos: Demo1234!)
 
     admin_demo      administrador   ve y administra todo
     analista_demo   analista        monedas y cotizaciones, sin roles
     cliente_demo    usuario final   opera sobre "Comercial Uno"
+    cajero_demo     cajero          atiende en el mostrador (Caja #1, solo el modulo de caja)
+    angel           (sin rol)       para asignarle un rol en la demo
 
   Para apagar:   docker compose down
   Ver los logs:  docker compose logs -f web

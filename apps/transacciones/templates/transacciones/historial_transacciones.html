@@ -114,9 +114,15 @@
                                     {% for t in transacciones %}
                                     <tr>
                                         <td>{{ t.fecha_hora|date:"d/m/Y H:i" }}</td>
-                                        <td>{{ t.get_tipo_display }}</td>
-                                        <td>{{ t.moneda.codigo }}</td>
-                                        <td>{{ t.cantidad }}</td>
+                                        <td>
+                                            {{ t.get_tipo_display }}
+                                            {% if t.medio_pago %}<br><small class="text-muted">{{ t.medio_pago.alias }}</small>{% endif %}
+                                        </td>
+                                        <td>{{ t.moneda.codigo }}{% if t.moneda_destino %} → {{ t.moneda_destino.codigo }}{% endif %}</td>
+                                        <td>
+                                            {{ t.cantidad }}
+                                            {% if t.cantidad_destino is not None %}<br><small class="text-muted">recibe {{ t.cantidad_destino }} {{ t.moneda_destino.codigo }}</small>{% endif %}
+                                        </td>
                                         <td>{{ t.tasa_cambio }}</td>
                                         <td>{{ t.monto_total }}</td>
                                         <td>
@@ -124,11 +130,14 @@
                                                 <span class="badge bg-success">{{ t.get_estado_display }}</span>
                                             {% elif t.estado == 'PENDIENTE' %}
                                                 <span class="badge bg-warning text-dark">{{ t.get_estado_display }}</span>
+                                            {% elif t.estado == 'PENDIENTE_PAGO' or t.estado == 'PAGADO' %}
+                                                <span class="badge bg-info text-dark">{{ t.get_estado_display }}</span>
                                             {% elif t.estado == 'CANCELADA' %}
                                                 <span class="badge bg-secondary">{{ t.get_estado_display }}</span>
                                             {% else %}
                                                 <span class="badge bg-danger">{{ t.get_estado_display }}</span>
                                             {% endif %}
+                                            {% if t.observacion %}<br><small class="text-muted">{{ t.observacion }}</small>{% endif %}
                                         </td>
                                     </tr>
                                     {% empty %}

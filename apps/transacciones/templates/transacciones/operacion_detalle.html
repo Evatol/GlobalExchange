@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GlobalExchange - Operación #{{ transaccion.id }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="{% url 'menu_principal' %}">GlobalExchange</a>
+            <div class="d-flex align-items-center text-white">
+                <span class="me-3">Bienvenido, <strong>{{ usuario.username }}</strong></span>
+                <a href="{% url 'menu_principal' %}" class="btn btn-outline-light btn-sm">Volver al Portal</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container my-5">
+        <div class="row justify-content-center">
+            <div class="col-md-6 col-lg-5">
+                <div class="text-center mb-4">
+                    <h2>Operación #{{ transaccion.id }}</h2>
+                    <p class="text-muted mb-1">{{ transaccion.cliente.nombre }}</p>
+                    {% if transaccion.estado == 'PENDIENTE' %}
+                        <span class="badge bg-warning text-dark">Pendiente de pago</span>
+                    {% elif transaccion.estado == 'PENDIENTE_PAGO' %}
+                        <span class="badge bg-info text-dark">Esperando el pago externo</span>
+                    {% elif transaccion.estado == 'PAGADO' %}
+                        <span class="badge bg-info text-dark">Pagado, confirmando</span>
+                    {% elif transaccion.estado == 'EXITOSA' %}
+                        <span class="badge bg-success">Exitosa</span>
+                    {% elif transaccion.estado == 'CANCELADA' %}
+                        <span class="badge bg-secondary">Cancelada</span>
+                    {% else %}
+                        <span class="badge bg-danger">{{ transaccion.get_estado_display }}</span>
+                    {% endif %}
+                </div>
+
+                {% for m in messages %}
+                    <div class="alert {% if m.tags == 'error' %}alert-danger{% elif m.tags == 'success' %}alert-success{% else %}alert-info{% endif %} py-2">{{ m }}</div>
+                {% empty %}
+                    {% if transaccion.observacion %}
+                        <div class="alert alert-secondary py-2 small">{{ transaccion.observacion }}</div>
+                    {% endif %}
+                {% endfor %}
+
+                <div class="card shadow-sm border-0">
+                    <div class="card-body p-4">
+                        <div class="d-flex justify-content-between mb-2">
+                            <span class="text-muted">
+                                {% if transaccion.tipo == 'COMPRA' %}Comprás{% elif transaccion.tipo == 'VENTA' %}Vendés{% else %}Entregás{% endif %}
+                            </span>
+                            <span>{{ transaccion.cantidad|floatformat:"2g" }} {{ transaccion.moneda.codigo }}</span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-baseline mb-2">
+                            <span class="text-muted">
+                                {% if transaccion.tipo == 'COMPRA' %}Pagás{% else %}Recibís{% endif %}
+                            </span>
+                            <span class="fs-4 fw-bold">
+                                {% if transaccion.tipo == 'CAMBIO' %}
+                                    {{ transaccion.cantidad_destino|floatformat:"2g" }} {{ transaccion.moneda_destino.codigo }}
+                                {% else %}
+                                    {{ transaccion.monto_total|floatformat:"2g" }} Gs
+                                {% endif %}
+                            </span>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <span class="text-muted">Medio de pago</span>
+                            <span>{% if transaccion.medio_pago %}{{ transaccion.medio_pago.alias }}{% else %}{{ transaccion.metodo_pago.nombre }}{% endif %}</span>
+                        </div>
+                        <p class="text-muted small text-center border-top pt-3 mt-3 mb-0">
+                            {% if transaccion.tipo == 'CAMBIO' %}
+                                1 {{ transaccion.moneda.codigo }} = {{ transaccion.tasa_cambio|floatformat:"0g" }} Gs ·
+                                1 {{ transaccion.moneda_destino.codigo }} = {{ transaccion.tasa_cambio_destino|floatformat:"0g" }} Gs ·
+                            {% else %}
+                                1 {{ transaccion.moneda.codigo }} = {{ transaccion.tasa_cambio|floatformat:"0g" }} Gs ·
+                            {% endif %}
+                            comisión {{ transaccion.comision_porcentaje|floatformat:"2" }}% incluida
+                        </p>
+                    </div>
+                </div>
+
+                {% if transaccion.estado == 'PENDIENTE_PAGO' %}
+                    <div class="alert alert-info small mt-3 mb-3">
+                        Pago externo iniciado. Referencia: <strong>{{ transaccion.referencia_pago_externo }}</strong>.
+                        La operación se confirma sola cuando la pasarela avise que cobró.
+                    </div>
+                    {% if pasarela_activa %}
+                    <a href="{% url 'pasarela_pagar' transaccion.referencia_pago_externo %}" class="btn btn-primary w-100 mb-2">Ir a la pasarela para pagar</a>
+                    {% endif %}
+                    <form method="post" action="{% url 'operacion_cancelar' transaccion.id %}" class="m-0">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-secondary w-100">Cancelar operación</button>
+                    </form>
+                {% elif transaccion.estado == 'PENDIENTE' %}
+                    <p class="text-muted small text-center mt-3">
+                        Si la cotización cambia antes de confirmar, la operación se cancela.
+                    </p>
+                    <div class="d-flex gap-2">
+                        <form method="post" action="{% url 'operacion_cancelar' transaccion.id %}" class="flex-fill m-0">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-outline-secondary w-100">Cancelar operación</button>
+                        </form>
+                        <form method="post" action="{% url 'operacion_confirmar' transaccion.id %}" class="flex-fill m-0">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-success w-100">Confirmar pago</button>
+                        </form>
+                    </div>
+                    {% if transaccion.tipo == 'COMPRA' and pasarela_activa %}
+                    <form method="post" action="{% url 'operacion_pago_externo' transaccion.id %}" class="mt-2 mb-0">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-primary w-100">Pagar con la pasarela</button>
+                    </form>
+                    {% endif %}
+                {% else %}
+                    <div class="d-flex gap-2 mt-3">
+                        <a href="{% url 'operar_divisa' %}" class="btn btn-primary flex-fill">Nueva operación</a>
+                        <a href="{% url 'historial_transacciones' %}" class="btn btn-outline-primary flex-fill">Ver historial</a>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

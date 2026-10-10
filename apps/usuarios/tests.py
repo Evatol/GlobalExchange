@@ -34,9 +34,7 @@ def cliente_valido(**overrides):
         documento='80012345-6',
         tipo='JURIDICA',
         razon_social='Comercial Guaraní S.A.',
-        categoria=Cliente.CATEGORIA_CORPORATIVO,
-        limite_compra=Decimal('1000000.00'),
-        limite_venta=Decimal('500000.00'),
+        categoria=Cliente.CATEGORIA_MAYORISTA,
         preferencia_tipo_cambio=Cliente.PREFERENCIA_PREFERENCIAL,
     )
     datos.update(overrides)
@@ -56,8 +54,7 @@ class ClienteModelTests(TestCase):
         self.assertEqual(
             cliente.preferencia_tipo_cambio, Cliente.PREFERENCIA_ESTANDAR
         )
-        self.assertEqual(cliente.limite_compra, Decimal('0.00'))
-        self.assertEqual(cliente.limite_venta, Decimal('0.00'))
+        self.assertEqual(cliente.limite_por_operacion, Decimal('100000.00'))
         self.assertEqual(cliente.frecuencia_transacciones, 0)
         self.assertTrue(cliente.estado)
         self.assertIsNotNone(cliente.fecha_creacion)
@@ -68,11 +65,16 @@ class ClienteModelTests(TestCase):
         with self.assertRaises(IntegrityError):
             Cliente.objects.create(**cliente_valido(nombre='Otro'))
 
-    def test_clean_rechaza_limites_negativos(self):
-        cliente = Cliente(**cliente_valido(limite_compra=Decimal('-1.00')))
-        with self.assertRaises(ValidationError) as ctx:
-            cliente.full_clean()
-        self.assertIn('limite_compra', ctx.exception.message_dict)
+    def test_limite_por_operacion_segun_categoria(self):
+        """Minorista 100.000 Gs, Mayorista 1.000.000 Gs y VIP sin límite."""
+        esperado = {
+            Cliente.CATEGORIA_MINORISTA: Decimal('100000.00'),
+            Cliente.CATEGORIA_MAYORISTA: Decimal('1000000.00'),
+            Cliente.CATEGORIA_VIP: None,
+        }
+        for categoria, limite in esperado.items():
+            with self.subTest(categoria=categoria):
+                self.assertEqual(Cliente(categoria=categoria).limite_por_operacion, limite)
 
     def test_clean_rechaza_frecuencia_negativa(self):
         cliente = Cliente(**cliente_valido(frecuencia_transacciones=-5))
@@ -116,13 +118,10 @@ class ClienteModelTests(TestCase):
     def test_helpers_de_segmentacion(self):
         cliente = Cliente.objects.create(**cliente_valido())
         cliente.actualizar_categoria(Cliente.CATEGORIA_VIP)
-        cliente.establecer_limite_compra(Decimal('9.00'))
-        cliente.establecer_limite_venta(Decimal('8.00'))
         cliente.establecer_frecuencia(3)
         cliente.refresh_from_db()
         self.assertEqual(cliente.categoria, Cliente.CATEGORIA_VIP)
-        self.assertEqual(cliente.limite_compra, Decimal('9.00'))
-        self.assertEqual(cliente.limite_venta, Decimal('8.00'))
+        self.assertIsNone(cliente.limite_por_operacion)
         self.assertEqual(cliente.frecuencia_transacciones, 3)
 
 
@@ -138,7 +137,8 @@ class ClienteAPITests(TestCase):
         resp = self.client.post(self.url, cliente_valido(), format='json')
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
         self.assertEqual(Cliente.objects.count(), 1)
-        self.assertEqual(resp.data['categoria'], Cliente.CATEGORIA_CORPORATIVO)
+        self.assertEqual(resp.data['categoria'], Cliente.CATEGORIA_MAYORISTA)
+        self.assertEqual(resp.data['limite_por_operacion'], Decimal('1000000.00'))
 
     def test_crear_cliente_juridica_sin_razon_social_falla(self):
         resp = self.client.post(
@@ -147,12 +147,14 @@ class ClienteAPITests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('razon_social', resp.data)
 
-    def test_crear_cliente_limite_negativo_falla(self):
+    def test_el_limite_no_se_carga_a_mano_lo_fija_la_categoria(self):
         resp = self.client.post(
-            self.url, cliente_valido(limite_venta='-3.00'), format='json'
+            self.url,
+            cliente_valido(categoria=Cliente.CATEGORIA_MINORISTA, limite_por_operacion='5.00'),
+            format='json',
         )
-        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('limite_venta', resp.data)
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        self.assertEqual(resp.data['limite_por_operacion'], Decimal('100000.00'))
 
     def test_listar_clientes(self):
         Cliente.objects.create(**cliente_valido())
@@ -184,13 +186,13 @@ class ClienteAPITests(TestCase):
         cliente = Cliente.objects.create(**cliente_valido())
         resp = self.client.patch(
             f'{self.url}{cliente.pk}/',
-            {'categoria': Cliente.CATEGORIA_VIP, 'limite_compra': '2000000.00'},
+            {'categoria': Cliente.CATEGORIA_VIP},
             format='json',
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
         cliente.refresh_from_db()
         self.assertEqual(cliente.categoria, Cliente.CATEGORIA_VIP)
-        self.assertEqual(cliente.limite_compra, Decimal('2000000.00'))
+        self.assertIsNone(cliente.limite_por_operacion)  # VIP: sin límite
 
     def test_eliminar_cliente(self):
         cliente = Cliente.objects.create(**cliente_valido())
@@ -534,10 +536,6 @@ class GestionRolesTests(TestCase):
         resp = self.client.post('/api/usuarios/roles/asignar/', {
             'username': 'analista_demo', 'rol': 'analista',
         })
-        # fetch_redirect_response=False: no seguir el redirect. La pantalla de
-        # destino (gestion_roles_view) llama a listar_usuarios_con_roles(),
-        # que no está mockeado acá (sí lo está en test_accesible_para_administrador)
-        # y en CI no hay Keycloak disponible para responderle.
         self.assertRedirects(resp, '/api/usuarios/roles/', fetch_redirect_response=False)
         mock_asignar.assert_called_once_with('analista_demo', 'analista')
 
@@ -873,6 +871,37 @@ class MiPerfilViewTests(TestCase):
         self.assertEqual(self.perfil.nombres, 'Nombre Original')
 
 
+class MonedasFavoritasE424Tests(TestCase):
+    """Test de la tarea E4-24: Marcar monedas favoritas."""
+
+    def setUp(self):
+        self.url = '/api/usuarios/mi-perfil/'
+        self.django_user = _usuario_con_rol('favoritos_user', rol='usuario_final')
+        self.perfil = Usuario.objects.create(
+            username='favoritos_user',
+            email='favoritos_user@example.com',
+            nombres='Fav',
+            apellidos='User',
+        )
+        from apps.divisas.models import Moneda
+        self.moneda_activa = Moneda.objects.create(codigo='USD', nombre='Dólar', estado=True)
+        self.moneda_inactiva = Moneda.objects.create(codigo='XXX', nombre='Inactiva', estado=False)
+
+    def test_agregar_y_persistir_monedas_favoritas(self):
+        self.client.force_login(self.django_user)
+        resp = self.client.post(self.url, {
+            'actualizar_favoritos': '1',
+            'monedas_favoritas': [self.moneda_activa.pk],
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.perfil.refresh_from_db()
+        self.assertIn(self.moneda_activa, self.perfil.monedas_favoritas.all())
+
+    def test_limit_choices_to_solo_permite_activas_en_modelo(self):
+        self.perfil.monedas_favoritas.add(self.moneda_activa)
+        self.assertIn(self.moneda_activa, self.perfil.monedas_favoritas.all())
+
+
 class CambiarPasswordViewTests(TestCase):
     """RF9: cambio de la contraseña propia desde Mi Perfil, sin salir de la
     aplicación. La llamada real a Keycloak se mockea: la lógica de
@@ -982,39 +1011,113 @@ class SeedDatosDemoTests(TestCase):
 
         call_command('seed_datos_demo', stdout=StringIO())
 
-        # monedas con su cotización activa
-        self.assertEqual(Moneda.objects.count(), 3)
+        # monedas con su cotización activa; el guaraní es la moneda local y no se cotiza
+        self.assertEqual(Moneda.objects.count(), 4)
         for codigo in ('USD', 'EUR', 'BRL'):
             moneda = Moneda.objects.get(codigo=codigo)
             self.assertTrue(TasaCambio.objects.filter(moneda=moneda, estado=True).exists())
+        self.assertFalse(TasaCambio.objects.filter(moneda__codigo='PYG').exists())
 
-        self.assertEqual(MetodoPago.objects.count(), 3)
+        # un método de cada tipo, incluida la tarjeta de crédito
+        self.assertEqual(
+            set(MetodoPago.objects.values_list('tipo', flat=True)),
+            {tipo for tipo, _ in MetodoPago.TIPO_CHOICES},
+        )
 
-        # un cliente mayorista con tope y otro estandar sin tope
+        # un cliente de cada categoría
         mayorista = Cliente.objects.get(nombre='Comercial Uno')
+        self.assertEqual(mayorista.categoria, Cliente.CATEGORIA_MAYORISTA)
         self.assertEqual(mayorista.preferencia_tipo_cambio, Cliente.PREFERENCIA_MAYORISTA)
-        self.assertEqual(mayorista.limite_compra, Decimal('100000.00'))
-        estandar = Cliente.objects.get(nombre='Comercial Dos')
-        self.assertEqual(estandar.preferencia_tipo_cambio, Cliente.PREFERENCIA_ESTANDAR)
+        self.assertEqual(
+            Cliente.objects.get(nombre='Comercial Dos').categoria, Cliente.CATEGORIA_MINORISTA
+        )
+        self.assertEqual(
+            Cliente.objects.get(nombre='Importadora Tres').categoria, Cliente.CATEGORIA_VIP
+        )
 
-        # el usuario queda asociado y con un medio de pago listo
+        # el usuario queda asociado, con un medio de pago de cada tipo, y los
+        # que no son efectivo respaldados por una cuenta suya en el banco
         usuario = Usuario.objects.get(username='cliente_demo')
         self.assertIn(mayorista, usuario.clientes.all())
-        self.assertTrue(MedioPagoCliente.objects.filter(cliente=mayorista, estado=True).exists())
+        medios = MedioPagoCliente.objects.filter(cliente=mayorista, estado=True)
+        self.assertEqual(medios.count(), 4)
+        for medio in medios:
+            self.assertIsNone(medio.validar_cuenta_banco(), medio.alias)
+        tarjeta = medios.get(metodo_pago__tipo=MetodoPago.TIPO_TARJETA_CREDITO)
+        self.assertEqual(tarjeta.disponible, Decimal('500000.00'))
 
     def test_es_idempotente(self):
+        from apps.banco.models import CuentaBancaria
         from apps.divisas.models import Moneda
         from apps.transacciones.models import MedioPagoCliente
 
         call_command('seed_datos_demo', stdout=StringIO())
         call_command('seed_datos_demo', stdout=StringIO())
 
-        self.assertEqual(Moneda.objects.count(), 3)
-        self.assertEqual(Cliente.objects.count(), 2)
+        self.assertEqual(Moneda.objects.count(), 4)
+        self.assertEqual(Cliente.objects.count(), 3)
         self.assertEqual(Usuario.objects.filter(username='cliente_demo').count(), 1)
-        self.assertEqual(MedioPagoCliente.objects.count(), 1)
+        self.assertEqual(MedioPagoCliente.objects.count(), 4)
+        self.assertEqual(CuentaBancaria.objects.count(), 3)
+        # el saldo inicial no se vuelve a acreditar
+        self.assertEqual(CuentaBancaria.objects.get(numero='CA-1001').saldo, Decimal('5000000.00'))
 
     def test_permite_asociar_otro_usuario(self):
         call_command('seed_datos_demo', '--usuario', 'otro_demo', stdout=StringIO())
         usuario = Usuario.objects.get(username='otro_demo')
         self.assertIn(Cliente.objects.get(nombre='Comercial Uno'), usuario.clientes.all())
+
+    def test_deja_la_caja_del_cajero_demo_abierta_con_billetes(self):
+        from apps.caja.models import AsignacionCajero, Billete, Caja, StockBillete
+
+        call_command('seed_datos_demo', stdout=StringIO())
+
+        cajero = Usuario.objects.get(username='cajero_demo')
+        self.assertTrue(AsignacionCajero.objects.filter(usuario=cajero, estado=True).exists())
+        caja = Caja.objects.get(cajero=cajero)
+        self.assertEqual(caja.estado, 'ABIERTA')
+        self.assertIsNotNone(caja.fecha_apertura)
+        # un tipo de billete de cada denominación de cada moneda, con su stock
+        self.assertEqual(StockBillete.objects.filter(caja=caja).count(), Billete.objects.count())
+        self.assertTrue(StockBillete.objects.filter(caja=caja, cantidad=10).exists())
+
+    def test_la_caja_demo_funciona_para_operar_en_el_mostrador(self):
+        """Con solo el seed ya se puede atender un cliente: está el guaraní, las
+        denominaciones y el efectivo."""
+        from apps.caja import services as caja_services
+        from apps.caja.models import Caja
+
+        call_command('seed_datos_demo', stdout=StringIO())
+        caja = Caja.objects.get(cajero__username='cajero_demo')
+        transaccion = caja_services.registrar_operacion_presencial(
+            caja=caja, usuario=caja.cajero, cliente=Cliente.objects.get(nombre='Comercial Uno'),
+            tipo='COMPRA', moneda_codigo='USD', cantidad=Decimal('13'),
+        )
+        self.assertEqual(transaccion.estado, 'EXITOSA')
+
+    def test_repetir_el_seed_no_vuelve_a_cargar_billetes_ni_reabre_la_caja(self):
+        from apps.caja import services as caja_services
+        from apps.caja.models import Caja, MovimientoBillete
+
+        call_command('seed_datos_demo', stdout=StringIO())
+        movimientos = MovimientoBillete.objects.count()
+        call_command('seed_datos_demo', stdout=StringIO())
+        self.assertEqual(MovimientoBillete.objects.count(), movimientos)  # no recarga
+
+        caja = Caja.objects.get(cajero__username='cajero_demo')
+        caja_services.cerrar_caja(caja, caja.cajero)
+        call_command('seed_datos_demo', stdout=StringIO())
+        caja.refresh_from_db()
+        self.assertEqual(caja.estado, 'CERRADA')  # lo que pasó en la demo no se pisa
+
+    def test_operar_no_ofrece_el_guarani(self):
+        from django.contrib.auth.models import Group
+
+        call_command('seed_datos_demo', stdout=StringIO())
+        user = User.objects.create_user('cliente_demo')
+        user.groups.add(Group.objects.get_or_create(name='usuario_final')[0])
+        self.client.force_login(user)
+        resp = self.client.get('/api/transacciones/gestion/operar/')
+        self.assertEqual(
+            {m.codigo for m in resp.context['monedas']}, {'USD', 'EUR', 'BRL'}
+        )

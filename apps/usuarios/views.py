@@ -7,10 +7,11 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.divisas.models import Moneda
 from . import services, sesion
 from .models import Cliente, Usuario
 from .oidc import account_console_url
-from .permissions import ADMINISTRADOR, ANALISTA, ClientesPermission, tiene_rol
+from .permissions import ADMINISTRADOR, ANALISTA, ClientesPermission, es_cajero, tiene_rol
 from .serializers import (
     AsignacionUsuarioSerializer,
     ClienteResumenSerializer,
@@ -31,6 +32,10 @@ def _es_administrador(user):
 def menu_principal_view(request):
     """Menú principal, con el selector de cliente activo (RF43) y los
     accesos a cada CRUD según el rol de quien inició sesión."""
+    if es_cajero(request.user):
+        # El cajero solo accede al módulo de caja (RF109): menú propio, sin
+        # tarjetas a pantallas que el middleware le rechazaría con 403.
+        return render(request, 'usuarios/menu_cajero.html', {'usuario': request.user})
     context = {
         'usuario': request.user,
         'mis_clientes': sesion.clientes_disponibles(request),
@@ -45,24 +50,32 @@ def menu_principal_view(request):
 def mi_perfil_view(request):
     """RF9/RF10: cualquier usuario logueado (sin importar su rol) actualiza
     sus propios datos personales complementarios (nombres, apellidos,
-    teléfono, dirección). El usuario y el correo se muestran pero no se
-    pueden editar acá: quedan bloqueados para garantizar la identificación
-    única (RF10) y porque son los que vienen de Keycloak."""
+    teléfono, dirección) y gestiona sus monedas favoritas."""
     perfil = sesion.usuario_negocio(request)
     if perfil is None:
         raise PermissionDenied('No se encontró tu perfil de usuario.')
 
     error_datos = None
     exito_datos = False
+    
     if request.method == 'POST':
-        serializer = PerfilSerializer(instance=perfil, data=request.POST, partial=True)
-        if serializer.is_valid():
-            serializer.save()
+        # Verificamos si la petición corresponde a la actualización de favoritos
+        if 'monedas_favoritas' in request.POST or 'actualizar_favoritos' in request.POST:
+            monedas_ids = request.POST.getlist('monedas_favoritas')
+            # Validamos estrictamente que solo se guarden monedas que estén activas
+            monedas_activas = Moneda.objects.filter(id__in=monedas_ids, estado=True)
+            perfil.monedas_favoritas.set(monedas_activas)
             exito_datos = True
         else:
-            error_datos = ' '.join(
-                str(msg) for errores in serializer.errors.values() for msg in errores
-            )
+            # Actualización normal de datos personales del perfil
+            serializer = PerfilSerializer(instance=perfil, data=request.POST, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                exito_datos = True
+            else:
+                error_datos = ' '.join(
+                    str(msg) for errores in serializer.errors.values() for msg in errores
+                )
 
     context = {
         'usuario': request.user,
@@ -70,6 +83,7 @@ def mi_perfil_view(request):
         'error_datos': error_datos,
         'exito_datos': exito_datos,
         'cambiar_password_url': account_console_url(request),
+        'monedas_disponibles': Moneda.objects.filter(estado=True),
     }
     return render(request, 'usuarios/mi_perfil.html', context)
 
@@ -148,7 +162,7 @@ def gestion_clientes_view(request):
     """Pantalla propia del CRUD de Clientes (E4-125), con la asociación de
     usuarios (RF42) en la misma pantalla. Reutiliza ``ClienteSerializer``
     para no duplicar validaciones (razón social obligatoria para jurídica,
-    límites no negativos, etc.).
+    frecuencia no negativa, etc.).
 
     Consulta: administrador o analista. Crear/editar/activar/desactivar y
     asociar/desasociar usuarios: solo administrador.
@@ -186,9 +200,10 @@ def gestion_clientes_view(request):
 @login_required
 def cliente_editar_view(request, pk):
     """Edita los datos de un cliente existente (E4-125): nombre, documento,
-    tipo, razón social, categoría, límites, frecuencia y preferencia de
-    cambio. Reutiliza ``ClienteSerializer`` (misma validación que el alta:
-    razón social obligatoria si es jurídica, límites no negativos). No toca
+    tipo, razón social, categoría (que fija el límite por operación),
+    frecuencia y preferencia de cambio. Reutiliza ``ClienteSerializer``
+    (misma validación que el alta: razón social obligatoria si es
+    jurídica). No toca
     los usuarios asociados (eso se maneja aparte, en la pantalla de
     listado). Solo administrador."""
     if not tiene_rol(request.user, (ADMINISTRADOR,)):

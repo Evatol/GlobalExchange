@@ -37,12 +37,15 @@
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'gestion_cotizaciones' %}">CRUD Cotizaciones</a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'gestion_cuentas_banco' %}">Banco</a>
+                    </li>
                     {% endif %}
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'gestion_medios_pago' %}">Mis Medios de Pago</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'operar_divisa' %}">Comprar/Vender Divisas</a>
+                        <a class="nav-link" href="{% url 'operar_divisa' %}">Operar Divisas</a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'historial_transacciones' %}">Historial</a>
@@ -50,6 +53,15 @@
                     {% if es_administrador %}
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'gestion_metodos_pago' %}">Métodos de Pago</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'gestion_sucursales' %}">Sucursales</a>
+                    </li>
+                    <li class="nav-item">
+                         <a class="nav-link" href="{% url 'gestion_denominaciones' %}">Denominaciones</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'gestion_cajas' %}">Cajas</a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'gestion_roles' %}">Administración de Roles</a>
@@ -87,6 +99,9 @@
             </div>
         </div>
     </nav>
+
+    <!-- Notificaciones en Tiempo Real (E4-32): contenedor y sondeo -->
+    {% include 'usuarios/_notificaciones_tiempo_real.html' %}
 
     <!-- Contenido Principal -->
     <div class="container my-5">
@@ -131,8 +146,8 @@
             <div class="col-md-4">
                 <div class="card h-100 shadow-sm border-0">
                     <div class="card-body text-center">
-                        <h5 class="card-title">Comprar/Vender Divisas</h5>
-                        <p class="card-text">Operá de forma digital, con la comisión de tu categoría de cliente.</p>
+                        <h5 class="card-title">Operar Divisas</h5>
+                        <p class="card-text">Comprá, vendé o cambiá divisas de forma digital.</p>
                         <a href="{% url 'operar_divisa' %}" class="btn btn-primary w-100">Operar</a>
                     </div>
                 </div>
@@ -169,6 +184,16 @@
                     </div>
                 </div>
             </div>
+
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">Banco (simulado)</h5>
+                        <p class="card-text">Cuentas, billeteras y tarjetas de los clientes, con su disponible.</p>
+                        <a href="{% url 'gestion_cuentas_banco' %}" class="btn btn-primary w-100">Ver Banco</a>
+                    </div>
+                </div>
+            </div>
             {% endif %}
 
             {# Solo visible para el rol 'administrador'. #}
@@ -179,6 +204,36 @@
                         <h5 class="card-title">Métodos de Pago</h5>
                         <p class="card-text">Catálogo de métodos de pago admitidos.</p>
                         <a href="{% url 'gestion_metodos_pago' %}" class="btn btn-primary w-100">Gestionar Métodos</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">Sucursales y Cajeros</h5>
+                        <p class="card-text">Alta de sucursales y asignación de hasta 2 cajeros por sucursal.</p>
+                        <a href="{% url 'gestion_sucursales' %}" class="btn btn-primary w-100">Gestionar Sucursales</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">Denominaciones de Billetes</h5>
+                        <p class="card-text">Billetes admitidos por moneda para el stock de las cajas.</p>
+                        <a href="{% url 'gestion_denominaciones' %}" class="btn btn-primary w-100">Gestionar Denominaciones</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">Cajas</h5>
+                        <p class="card-text">Cajas por cajero, con apertura y carga inicial de billetes.</p>
+                        <a href="{% url 'gestion_cajas' %}" class="btn btn-primary w-100">Gestionar Cajas</a>
                     </div>
                 </div>
             </div>
@@ -198,5 +253,6 @@
 
     <!-- Bootstrap 5 JS Bundle -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
 </body>
 </html>

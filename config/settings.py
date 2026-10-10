@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 from pathlib import Path
 
 import environ
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -63,6 +64,8 @@ INSTALLED_APPS = [
     'apps.facturacion',
     'apps.notificaciones',
     'apps.reportes',
+    'apps.banco',
+    'apps.pasarela',
 ]
 
 MIDDLEWARE = [
@@ -75,6 +78,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'apps.usuarios.middleware.CajeroSoloCajaMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -194,10 +198,11 @@ DEFAULT_FROM_EMAIL = env(
 # https://www.django-rest-framework.org/api-guide/settings/
 
 REST_FRAMEWORK = {
-    # TODO: reemplazar por autenticación/permisos vía Keycloak (RF4) cuando
-    # esté disponible el IAM centralizado.
+    # Cerrado por defecto: un endpoint nuevo que se olvide de declarar sus
+    # permisos exige login, en vez de quedar público. Los que sí son públicos
+    # (tasas y simulador, RF24) lo declaran explícitamente con AllowAny.
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny',
+        'rest_framework.permissions.IsAuthenticated',
     ],
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
@@ -286,3 +291,17 @@ if not DEBUG:
 
     # Detrás de un proxy inverso (Nginx, etc.) que termina TLS.
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+PRICE_CHANGE_THRESHOLD_PERCENT = float(os.getenv('PRICE_CHANGE_THRESHOLD_PERCENT', '1.0')) # se creo el umbral
+
+# Secreto compartido con la pasarela de pago externa (E4-157/E4-158). El webhook
+# solo acepta mensajes firmados con HMAC-SHA256 con este secreto. Sin secreto
+# configurado el webhook rechaza todo; en desarrollo hay uno por defecto para
+# poder probarlo, en produccion (DEBUG=False) hay que definirlo por entorno.
+WEBHOOK_PAGO_SECRET = env('WEBHOOK_PAGO_SECRET', default='secreto-dev-webhook' if DEBUG else '')
+
+# Pasarela de pago simulada (apps.pasarela): una pantalla que hace de empresa de pagos
+# para probar el pago externo sin un proveedor real. Deja "pagar" sin pagar, asi que
+# nunca debe estar encendida en un ambiente que cobre de verdad. Por defecto solo en
+# desarrollo; el compose de produccion de este proyecto academico la enciende.
+PASARELA_SIMULADA_ACTIVA = env.bool('PASARELA_SIMULADA_ACTIVA', default=DEBUG)

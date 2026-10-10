@@ -36,9 +36,10 @@ def enviar_credenciales_por_correo(email, username, password):
 
 
 # Roles de negocio del sistema (RF44 del ERS: administrador, analista,
-# usuario final). Se crean en el realm con
-# ``manage.py configure_keycloak_roles_negocio``.
-ROLES_NEGOCIO = ("administrador", "analista", "usuario_final")
+# usuario final) y el cajero del módulo de caja (RF105/RF109). Se crean en el
+# realm con ``manage.py configure_keycloak_roles_negocio``. Un usuario tiene uno
+# solo: asignar un rol quita los otros.
+ROLES_NEGOCIO = ("administrador", "analista", "usuario_final", "cajero")
 
 
 def _keycloak_admin():

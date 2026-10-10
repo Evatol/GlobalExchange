@@ -1,3 +1,5 @@
+from decimal import ROUND_DOWN, Decimal
+
 from django.db import models
 
 
@@ -35,6 +37,19 @@ class TasaCambioQuerySet(models.QuerySet):
             .first()
         )
 
+    def vigentes(self):
+        """La cotización vigente de cada moneda activa: la última activa,
+        que es la que ``activa_para`` le aplica a una operación. Para mostrar
+        "el cambio del día" sin repetir monedas que tengan cotizaciones
+        anteriores todavía activas."""
+        ultimas = (
+            self.filter(estado=True, moneda__estado=True)
+            .order_by('moneda_id', '-fecha_hora')
+            .distinct('moneda_id')
+            .values('id')
+        )
+        return self.filter(id__in=ultimas).select_related('moneda').order_by('moneda_id')
+
 
 class TasaCambio(models.Model):
     id = models.AutoField(primary_key=True)
@@ -55,6 +70,48 @@ class TasaCambio(models.Model):
             return f"{int(valor):,}".replace(",", ".")
         texto = f"{valor:.6f}".rstrip('0').rstrip('.')
         return texto.replace(".", ",")
+
+    def tasa_para(self, operacion):
+        """Tasa que se le aplica al cliente según la operación que hace.
+
+        ``tasa_compra`` y ``tasa_venta`` son las de la pizarra de la casa de
+        cambio, desde el punto de vista de la casa: a cuánto *compra* y a
+        cuánto *vende* la divisa. Por eso se cruzan con la operación del
+        cliente:
+
+        * el cliente **compra** divisas → la casa le vende → ``tasa_venta``;
+        * el cliente **vende** divisas → la casa se las compra → ``tasa_compra``.
+
+        Así el cliente siempre compra al precio más alto y vende al más bajo,
+        y la diferencia (el *spread*) queda para la casa. Al revés, una compra
+        y una venta seguidas le dejaban ganancia al cliente.
+
+        Es el único lugar donde se decide esto: la usan el simulador, la
+        operación de compra/venta y la confirmación del pago (E4-28), que
+        tienen que coincidir siempre.
+
+        ``operacion``: ``'COMPRA'`` o ``'VENTA'`` (sin importar mayúsculas).
+        """
+        operacion = str(operacion).upper()
+        if operacion == 'COMPRA':
+            return self.tasa_venta
+        if operacion == 'VENTA':
+            return self.tasa_compra
+        raise ValueError(f'Operación inválida: {operacion!r} (debe ser COMPRA o VENTA).')
+
+    @staticmethod
+    def convertir_entre_divisas(tasa_origen, tasa_destino, cantidad):
+        """Cuánto recibe quien cambia ``cantidad`` de la divisa de
+        ``tasa_origen`` por la de ``tasa_destino``, sin comisión.
+
+        Pasa por el guaraní: la casa le compra la divisa que entrega (tasa de
+        compra de la pizarra) y le vende la que recibe (tasa de venta). Se
+        redondea hacia abajo, como en la operación real de ``Transaccion``.
+        """
+        guaranies = cantidad * tasa_origen.tasa_para('VENTA')
+        return (guaranies / tasa_destino.tasa_para('COMPRA')).quantize(
+            Decimal('0.01'), rounding=ROUND_DOWN
+        )
 
     def obtener_tasa_compra(self):
         return self.tasa_compra

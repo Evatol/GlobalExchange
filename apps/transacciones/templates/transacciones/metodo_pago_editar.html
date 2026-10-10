@@ -40,7 +40,11 @@
                             </div>
                             <div class="mb-3">
                                 <label class="form-label">Tipo</label>
-                                <input type="text" name="tipo" class="form-control" value="{{ metodo.tipo }}" required>
+                                <select name="tipo" class="form-select" required>
+                                    {% for valor, etiqueta in tipo_choices %}
+                                    <option value="{{ valor }}" {% if metodo.tipo == valor %}selected{% endif %}>{{ etiqueta }}</option>
+                                    {% endfor %}
+                                </select>
                             </div>
                             <div class="form-check mb-3">
                                 <input type="checkbox" name="estado" class="form-check-input" id="estadoMetodo" {% if metodo.estado %}checked{% endif %}>
