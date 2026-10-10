@@ -1011,11 +1011,12 @@ class SeedDatosDemoTests(TestCase):
 
         call_command('seed_datos_demo', stdout=StringIO())
 
-        # monedas con su cotización activa
-        self.assertEqual(Moneda.objects.count(), 3)
+        # monedas con su cotización activa; el guaraní es la moneda local y no se cotiza
+        self.assertEqual(Moneda.objects.count(), 4)
         for codigo in ('USD', 'EUR', 'BRL'):
             moneda = Moneda.objects.get(codigo=codigo)
             self.assertTrue(TasaCambio.objects.filter(moneda=moneda, estado=True).exists())
+        self.assertFalse(TasaCambio.objects.filter(moneda__codigo='PYG').exists())
 
         # un método de cada tipo, incluida la tarjeta de crédito
         self.assertEqual(
@@ -1053,7 +1054,7 @@ class SeedDatosDemoTests(TestCase):
         call_command('seed_datos_demo', stdout=StringIO())
         call_command('seed_datos_demo', stdout=StringIO())
 
-        self.assertEqual(Moneda.objects.count(), 3)
+        self.assertEqual(Moneda.objects.count(), 4)
         self.assertEqual(Cliente.objects.count(), 3)
         self.assertEqual(Usuario.objects.filter(username='cliente_demo').count(), 1)
         self.assertEqual(MedioPagoCliente.objects.count(), 4)
@@ -1065,3 +1066,58 @@ class SeedDatosDemoTests(TestCase):
         call_command('seed_datos_demo', '--usuario', 'otro_demo', stdout=StringIO())
         usuario = Usuario.objects.get(username='otro_demo')
         self.assertIn(Cliente.objects.get(nombre='Comercial Uno'), usuario.clientes.all())
+
+    def test_deja_la_caja_del_cajero_demo_abierta_con_billetes(self):
+        from apps.caja.models import AsignacionCajero, Billete, Caja, StockBillete
+
+        call_command('seed_datos_demo', stdout=StringIO())
+
+        cajero = Usuario.objects.get(username='cajero_demo')
+        self.assertTrue(AsignacionCajero.objects.filter(usuario=cajero, estado=True).exists())
+        caja = Caja.objects.get(cajero=cajero)
+        self.assertEqual(caja.estado, 'ABIERTA')
+        self.assertIsNotNone(caja.fecha_apertura)
+        # un tipo de billete de cada denominación de cada moneda, con su stock
+        self.assertEqual(StockBillete.objects.filter(caja=caja).count(), Billete.objects.count())
+        self.assertTrue(StockBillete.objects.filter(caja=caja, cantidad=10).exists())
+
+    def test_la_caja_demo_funciona_para_operar_en_el_mostrador(self):
+        """Con solo el seed ya se puede atender un cliente: está el guaraní, las
+        denominaciones y el efectivo."""
+        from apps.caja import services as caja_services
+        from apps.caja.models import Caja
+
+        call_command('seed_datos_demo', stdout=StringIO())
+        caja = Caja.objects.get(cajero__username='cajero_demo')
+        transaccion = caja_services.registrar_operacion_presencial(
+            caja=caja, usuario=caja.cajero, cliente=Cliente.objects.get(nombre='Comercial Uno'),
+            tipo='COMPRA', moneda_codigo='USD', cantidad=Decimal('13'),
+        )
+        self.assertEqual(transaccion.estado, 'EXITOSA')
+
+    def test_repetir_el_seed_no_vuelve_a_cargar_billetes_ni_reabre_la_caja(self):
+        from apps.caja import services as caja_services
+        from apps.caja.models import Caja, MovimientoBillete
+
+        call_command('seed_datos_demo', stdout=StringIO())
+        movimientos = MovimientoBillete.objects.count()
+        call_command('seed_datos_demo', stdout=StringIO())
+        self.assertEqual(MovimientoBillete.objects.count(), movimientos)  # no recarga
+
+        caja = Caja.objects.get(cajero__username='cajero_demo')
+        caja_services.cerrar_caja(caja, caja.cajero)
+        call_command('seed_datos_demo', stdout=StringIO())
+        caja.refresh_from_db()
+        self.assertEqual(caja.estado, 'CERRADA')  # lo que pasó en la demo no se pisa
+
+    def test_operar_no_ofrece_el_guarani(self):
+        from django.contrib.auth.models import Group
+
+        call_command('seed_datos_demo', stdout=StringIO())
+        user = User.objects.create_user('cliente_demo')
+        user.groups.add(Group.objects.get_or_create(name='usuario_final')[0])
+        self.client.force_login(user)
+        resp = self.client.get('/api/transacciones/gestion/operar/')
+        self.assertEqual(
+            {m.codigo for m in resp.context['monedas']}, {'USD', 'EUR', 'BRL'}
+        )

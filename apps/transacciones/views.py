@@ -546,7 +546,9 @@ def operar_divisa_view(request):
     context = {
         'usuario': request.user,
         'cliente_activo': cliente_activo,
-        'monedas': Moneda.objects.filter(estado=True).order_by('codigo'),
+        # Solo las que tienen cotización vigente: la moneda local (guaraní) está
+        # en el catálogo por la caja pero no se compra ni se vende.
+        'monedas': Moneda.objects.filter(estado=True, tasas__estado=True).distinct().order_by('codigo'),
         'tasas': TasaCambio.objects.vigentes(),
         'medios_pago': (
             MedioPagoCliente.objects.select_related('metodo_pago')
