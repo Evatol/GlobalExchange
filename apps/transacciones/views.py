@@ -32,7 +32,6 @@ from .serializers import MedioPagoClienteSerializer, MetodoPagoSerializer, Trans
 
 
 class _BorradoLogicoMixin:
-
     """DELETE desactiva el registro en vez de eliminarlo; ``POST .../activar/`` lo reactiva."""
 
     def destroy(self, request, *args, **kwargs):
@@ -303,7 +302,6 @@ def medio_pago_toggle_view(request, pk):
     return redirect('gestion_medios_pago')
 
 
-
 TIPOS_OPERACION = ('COMPRA', 'VENTA', 'CAMBIO')
 
 
@@ -312,13 +310,6 @@ def _preparar_transaccion(cliente, tipo_operacion, moneda_codigo, cantidad, mone
     comisión calculada (E4-144). La comparten la vista previa
     (``CalcularTransaccionAPIView``) y la operación real
     (``_crear_transaccion_digital``), para que siempre den lo mismo.
-
-    En un ``CAMBIO`` la casa le compra al cliente la divisa de origen y le
-    vende la de destino, así que se usan las mismas tasas que en una venta y
-    una compra respectivamente (ver ``TasaCambio.tasa_para``).
-
-    Devuelve ``(transaccion, error)``: si ``error`` no es ``None``,
-    ``transaccion`` es ``None``.
     """
     if tipo_operacion not in TIPOS_OPERACION:
         return None, 'Tipo de operación inválido (debe ser COMPRA, VENTA o CAMBIO).'
@@ -359,15 +350,8 @@ def _preparar_transaccion(cliente, tipo_operacion, moneda_codigo, cantidad, mone
 
 
 class CalcularTransaccionAPIView(APIView):
-    """
-    Endpoint para E4-144: Lógica de cálculo de tasas y comisiones en la transacción.
-    Servicio API REST para simular/desglosar montos en tiempo real, sin
-    persistir nada. Usa el cliente activo de la sesión para aplicar la misma
-    comisión que va a cobrar la operación real (según su categoría); sin
-    cliente activo, la estándar.
-
-    Body: ``tipo`` (COMPRA/VENTA/CAMBIO), ``moneda_codigo``, ``cantidad`` y,
-    en un cambio, ``moneda_destino_codigo``.
+    """Endpoint para E4-144: Lógica de cálculo de tasas y comisiones en la transacción.
+    Servicio API REST para simular/desglosar montos en tiempo real, sin persistir nada.
     """
     permission_classes = [IsAuthenticated]
 
@@ -400,22 +384,7 @@ class CalcularTransaccionAPIView(APIView):
 def _crear_transaccion_digital(request, tipo_operacion, moneda_codigo, cantidad, medio_pago_id,
                                moneda_destino_codigo=None):
     """Lógica compartida por ``OperarDivisaAPIView`` y ``operar_divisa_view``
-    para comprar (E4-19) o vender (E4-20) divisas, o cambiar una por otra, de
-    forma digital, con la comisión y tasa aplicada según el cliente (E4-144).
-
-    La transacción queda ``PENDIENTE`` de pago: se confirma después, con
-    ``Transaccion.confirmar()``, que la cancela si la cotización cambió en el
-    medio (E4-28) y cobra en el banco. El saldo del medio de pago no se mira
-    acá sino al confirmar, que es cuando se cobra.
-
-    Reglas del medio de pago: una tarjeta de crédito no sirve para vender
-    (el cliente recibe plata), y el cambio entre divisas es solo en efectivo
-    (las cuentas del banco son en guaraníes).
-
-    Devuelve ``(transaccion, error)``: si ``error`` no es ``None``,
-    ``transaccion`` es ``None``. No usa ``request.user`` como ``Usuario`` de
-    la transacción -- ese es el ``User`` de autenticación de Django, no el
-    ``Usuario`` de negocio que espera ``Transaccion.usuario``.
+    para comprar (E4-19) o vender (E4-20) divisas, o cambiar una por otra.
     """
     cliente_activo = sesion.get_cliente_activo(request)
     if cliente_activo is None:
@@ -452,24 +421,16 @@ def _crear_transaccion_digital(request, tipo_operacion, moneda_codigo, cantidad,
     transaccion.metodo_pago = medio_pago.metodo_pago
     transaccion.modalidad = 'DIGITAL'
 
-    # E4-143: el monto no puede superar el límite de la categoría del
-    # cliente. Se valida antes de confirmar, para no dejar la transacción
-    # registrada si se pasa.
     error_limite = transaccion.validar_limite_cliente()
     if error_limite:
         return None, error_limite
 
-    transaccion.save()  # PENDIENTE hasta que se confirme el pago
+    transaccion.save()
     return transaccion, None
 
 
 def _transaccion_del_cliente_activo(request, pk):
-    """Transacción ``pk`` del cliente activo de la sesión, o ``Http404``.
-
-    Confirmar, cancelar o ver el resumen de una operación es cosa del cliente
-    que la hizo: se busca siempre dentro del cliente activo, sin importar el
-    rol, para que nadie pague o cancele una operación ajena.
-    """
+    """Transacción ``pk`` del cliente activo de la sesión, o ``Http404``."""
     cliente_activo = sesion.get_cliente_activo(request)
     transaccion = (
         Transaccion.objects.select_related(
@@ -485,13 +446,9 @@ def _transaccion_del_cliente_activo(request, pk):
 
 
 class OperarDivisaAPIView(APIView):
-    """
-    Endpoint para E4-19 (comprar) y E4-20 (vender) divisas de forma digital,
+    """Endpoint para E4-19 (comprar) y E4-20 (vender) divisas de forma digital,
     o cambiar una por otra. Ejecuta el cálculo de E4-144 y registra la
-    transacción ``PENDIENTE`` de pago; se confirma con
-    ``POST .../transacciones/<id>/confirmar/``.
-    ``tipo`` en el body: ``COMPRA`` (default), ``VENTA`` o ``CAMBIO`` (este
-    último con ``moneda_destino_codigo``).
+    transacción ``PENDIENTE`` de pago.
     """
     permission_classes = [IsAuthenticated]
 
@@ -536,15 +493,8 @@ def _desglose(transaccion):
 
 @login_required
 def operar_divisa_view(request):
-    """
-    Vista HTML para iniciar una compra (E4-19) o venta (E4-20) de divisas,
-    o un cambio entre divisas, con la comisión y tasa aplicada según el
-    cliente (E4-144).
-
-    Al enviar el formulario la operación queda ``PENDIENTE`` y se redirige a
-    su resumen (``operacion_detalle_view``), donde se confirma el pago o se
-    cancela. Esta pantalla también lista las operaciones que el cliente dejó
-    pendientes, para poder retomarlas.
+    """Vista HTML para iniciar una compra (E4-19) o venta (E4-20) de divisas,
+    o un cambio entre divisas.
     """
     cliente_activo = sesion.get_cliente_activo(request)
     error = None
@@ -584,11 +534,7 @@ def operar_divisa_view(request):
 
 @login_required
 def operacion_detalle_view(request, pk):
-    """Resumen de una operación: tasa aplicada, subtotal, comisión y total.
-
-    Si está ``PENDIENTE`` ofrece "Confirmar pago" y "Cancelar operación";
-    si no, muestra cómo terminó.
-    """
+    """Resumen de una operación: tasa aplicada, subtotal, comisión y total."""
     transaccion = _transaccion_del_cliente_activo(request, pk)
     return render(request, 'transacciones/operacion_detalle.html', {
         'usuario': request.user,
@@ -599,8 +545,7 @@ def operacion_detalle_view(request, pk):
 @login_required
 @require_POST
 def operacion_confirmar_view(request, pk):
-    """Confirma el pago (E4-28): ``EXITOSA``, o ``CANCELADA`` si la
-    cotización cambió desde que se inició la operación."""
+    """Confirma el pago (E4-28)."""
     transaccion = _transaccion_del_cliente_activo(request, pk)
     try:
         transaccion.confirmar()
@@ -627,17 +572,7 @@ def operacion_cancelar_view(request, pk):
 
 
 class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
-    """Historial de transacciones, de solo consulta (RF111 / E4-104 y E4-36).
-        ``administrador``/``analista`` ven el historial de cualquier cliente.
-        El resto (``usuario_final``) solo ve las del cliente activo de su
-        propia sesión, igual criterio que ``MedioPagoClienteViewSet``.
-        Filtros disponibles en el listado y en la exportación:
-        ``?fecha_desde=``, ``?fecha_hasta=`` (YYYY-MM-DD), ``?tipo=``
-        (COMPRA/VENTA), ``?moneda=`` (id), ``?estado=``.
-
-        Exportación: ``GET .../exportar/?formato=csv|excel|pdf``, respetando
-        siempre los mismos filtros aplicados en el listado (E4-36).
-        """
+    """Historial de transacciones, de solo consulta (RF111 / E4-104 y E4-36)."""
     queryset = Transaccion.objects.select_related(
         'cliente', 'moneda', 'moneda_destino', 'metodo_pago', 'medio_pago'
     ).all()
@@ -648,13 +583,6 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
         return tiene_rol(self.request.user, (ADMINISTRADOR, ANALISTA))
 
     def _queryset_filtrado(self):
-        """Aplica el alcance por cliente activo y los filtros de la query string.
-
-               Centralizado acá para que el listado (``get_queryset``) y la
-               exportación (``exportar``) usen siempre exactamente los mismos
-               criterios, tal como pide el RF36 (el archivo debe coincidir con
-               los filtros aplicados en pantalla).
-               """
         queryset = self.queryset.order_by('-fecha_hora')
         if not self._puede_ver_todos():
             cliente_activo = sesion.get_cliente_activo(self.request)
@@ -671,7 +599,6 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
         if params.get('tipo'):
             queryset = queryset.filter(tipo=params['tipo'])
         if params.get('moneda'):
-            # En un cambio entre divisas cuenta tanto la de origen como la de destino.
             queryset = queryset.filter(
                 Q(moneda_id=params['moneda']) | Q(moneda_destino_id=params['moneda'])
             )
@@ -684,11 +611,6 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=['post'])
     def confirmar(self, request, pk=None):
-        """``POST .../transacciones/<id>/confirmar/``: confirma el pago (E4-28).
-
-        Responde 200 si quedó ``EXITOSA`` y 409 si se canceló porque la
-        cotización cambió (o si ya no estaba pendiente).
-        """
         transaccion = _transaccion_del_cliente_activo(request, pk)
         try:
             transaccion.confirmar()
@@ -702,8 +624,6 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=['post'])
     def cancelar(self, request, pk=None):
-        """``POST .../transacciones/<id>/cancelar/``: el cliente cancela una
-        operación todavía no pagada (RF23)."""
         transaccion = _transaccion_del_cliente_activo(request, pk)
         try:
             transaccion.cancelar()
@@ -716,12 +636,6 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['get'])
     def exportar(self, request):
-        """``GET .../transacciones/exportar/?formato=csv|excel|pdf`` (E4-36).
-
-        Exporta exactamente lo que muestra el historial: usa
-        ``_queryset_filtrado()``, así que respeta el alcance por cliente y los
-        mismos filtros de fecha, tipo, moneda y estado.
-        """
         formato = request.query_params.get('formato', 'csv').lower()
         transacciones = self._queryset_filtrado()
 
@@ -792,17 +706,7 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
 
 @login_required
 def historial_transacciones_view(request):
-    """Pantalla propia de "Historial de Transacciones" (RF111 / E4-104),
-    en vez de la API navegable de DRF. Mismo criterio de alcance que
-    ``TransaccionViewSet``: administrador/analista ven el historial de
-    cualquier cliente; el resto (``usuario_final``) solo ve las del
-    cliente activo de su propia sesión.
-
-    Los botones de descarga (E4-36) apuntan directo al endpoint
-    ``exportar`` de la API, reenviando los mismos filtros aplicados acá
-    como query params, para garantizar que el archivo coincida siempre
-    con lo que se ve en pantalla.
-    """
+    """Pantalla propia de 'Historial de Transacciones' (RF111 / E4-104)."""
     ve_todos = tiene_rol(request.user, (ADMINISTRADOR, ANALISTA))
     cliente_activo = sesion.get_cliente_activo(request)
 
