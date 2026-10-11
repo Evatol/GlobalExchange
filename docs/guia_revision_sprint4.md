@@ -20,6 +20,8 @@ Los números de esta guía son los que salen con los datos de demostración
   Caja chica, Cuenta Itaú, Tigo Money y Visa Itaú.
 - `cajero_demo` atiende en **Casa Central**, con la **Caja #1 abierta** y 10
   billetes de cada denominación: PYG 1.870.000, USD 1.860, EUR 8.850 y BRL 3.870.
+- Límites de stock de billetes (RF107): USD 1.850 – 3.000, EUR 500 – 20.000 y
+  PYG 500.000 – 5.000.000. El mínimo de USD está justo debajo del stock inicial.
 
 ---
 
@@ -86,7 +88,7 @@ Todos los usuarios usan la contraseña `Demo1234!`.
 ./scripts/pruebas.sh
 ```
 
-Termina con **`Ran 460 tests ... OK`**. Los tests nuevos del sprint están en
+Termina con **`Ran 505 tests ... OK`**. Los tests nuevos del sprint están en
 `apps/caja/test_*.py`, `apps/pasarela/tests.py` y `apps/notificaciones/tests.py`.
 
 ```
@@ -176,8 +178,9 @@ correo falla, la cotización se guarda igual y el problema queda en el log."*
 
 **Administrador** (`admin_demo`): en el menú, **Sucursales y Cajeros** (Casa
 Central con `cajero_demo` asignado; una sucursal admite hasta 2 cajeros),
-**Denominaciones de Billetes** (26, por moneda) y **Cajas** (la Caja #1,
-abierta, con su botón **Balance**).
+**Denominaciones de Billetes** (26, por moneda), **Cajas** (la Caja #1,
+abierta, con su botón **Balance**) y **Límites de Stock** (mínimo y máximo de
+billetes por moneda).
 
 **Cajero** (`cajero_demo`, otra sesión): el menú tiene solo **Atender cliente** y
 **Mi Caja**. Si escribe otra URL (por ejemplo Operar Divisas), responde **403**.
@@ -196,9 +199,15 @@ abierta, con su botón **Balance**).
    **Confirmar operación** → *"Operación #3 confirmada. Los billetes recibidos y
    entregados se registraron automáticamente."* En **Mi Caja** aparecen los
    movimientos (entradas y salidas, con la operación) y el balance se movió.
+   **Además:** el stock de USD bajó a 1.847, por debajo del mínimo (1.850), así
+   que aparece el cartel rojo *"Stock bajo de USD: hay 1.847 USD en billetes y el
+   mínimo configurado es 1.850."* y, arriba, un aviso amarillo *"Stock de billetes
+   bajo: USD"*. El aviso le llega al cajero y a los administradores (el
+   administrador lo ve en su menú).
 3. **Cambio entre divisas:** *Cambio de una divisa por otra*, USD → EUR, **100**:
    *"Entrega 100,00 USD y recibe 90,22 EUR"*; la caja recibe 1 × 100 USD y entrega
-   1 × 50 + 2 × 20 EUR. **Confirmar.**
+   1 × 50 + 2 × 20 EUR. **Confirmar.** El stock de USD vuelve a 1.947: **la
+   alerta desaparece** (y no se manda ningún aviso nuevo).
 4. **Balance** (Mi Caja): USD 1.860 + 100 − 13 = **1.947**; EUR 8.850 − 90 =
    **8.760**; PYG 1.870.000 + 97.000 = **1.967.000**. Siempre cierra: *al abrir +
    carga inicial + recibido − entregado = saldo actual*.
@@ -214,13 +223,24 @@ abierta, con su botón **Balance**).
    abrirla: **Abrir** con una carga inicial (por ejemplo 2 billetes de 5 USD) →
    *al abrir* USD **1.947** (el stock se conserva) y *carga inicial* **10**.
 
+8. **Límites de stock (RF107):** como administrador, **Límites de Stock** →
+   se ven los límites cargados. Probá un valor inválido (USD mínimo **600** y
+   máximo **500**) → *"USD: El mínimo no puede ser mayor que el máximo"* y **no se
+   guarda ninguna fila**. Después poné USD mínimo **5000** → **Guardar límites**:
+   al recargar Mi Caja del cajero aparece el cartel rojo de USD, pero **no llega un
+   aviso nuevo**: el aviso salta cuando una operación **cruza** el límite, no al
+   cambiar la configuración. **Volvé USD a mínimo 1850.**
+
 🗣️ *"Los billetes los arma el sistema: va de la denominación más grande a la más
 chica, usando el stock de la caja al entregar, y registra solo los movimientos y
 el stock; si el cajero indica otros billetes por la API, se respetan. Todo o
 nada: si no hay stock o se pasa el límite del cliente, no queda nada guardado. El
 balance sale de los mismos movimientos, no de un saldo aparte, así que no se
 puede desalinear. Al cerrar, el stock queda como remanente de la próxima
-apertura."*
+apertura. Y el administrador configura un mínimo y un máximo de billetes por
+moneda: cuando una caja los alcanza avisa al cajero y a los administradores, una
+sola vez por cruce, y la alerta queda visible en Mi Caja mientras el stock siga
+fuera de límites (RF107)."*
 
 ---
 
@@ -241,7 +261,7 @@ transacciones en efectivo y script de despliegue automático.
 ## 7. QA
 
 - CI en cada PR: pruebas unitarias (PUN) y documentación con `-W` (PDO).
-- 460 tests.
+- 505 tests.
 - Errores detectados y corregidos durante el sprint:
   - El pago externo (E4-157/158) tenía dos métodos de modelo sin endpoint, ni
     pantalla ni tests, y un aviso podía reabrir una operación ya fallida.
@@ -250,6 +270,8 @@ transacciones en efectivo y script de despliegue automático.
   - El script de avisos armaba el texto con `innerHTML` (el nombre de la moneda
     se habría interpretado como HTML).
   - La operación presencial de caja no tenía tests.
+  - Faltaba la alerta de stock mínimo/máximo de billetes que pide el ERS (RF107),
+    y el cajero no podía recibir avisos en pantalla (el middleware se lo impedía).
   - Migraciones de usuarios en conflicto entre ramas (resuelto con una migración
     de fusión), y docstrings borrados al integrar (35 restaurados).
 
@@ -370,7 +392,8 @@ además el banco; y repetir el aviso del webhook responde "ya procesado".
 2. `./scripts/levantar_sistema.sh --limpio`
 3. Pago por la pasarela: pagar, rechazar y cotización que cambia (4.1)
 4. Favorita, edición de cotización, aviso, cerrarlo y variación chica (4.2)
-5. Caja: compra, cambio, balance, arqueo, cierre y reapertura (4.3)
+5. Caja: compra (con su alerta de stock), cambio, balance, arqueo, cierre,
+   reapertura y límites de stock (4.3)
 6. `./scripts/pruebas.sh` y `./scripts/documentacion.sh`
 7. Producción y `./scripts/verificar_produccion.sh` (8)
 

@@ -21,7 +21,7 @@ from apps.usuarios.permissions import (
 )
 
 from . import services
-from .models import Arqueo, Billete, Caja, CierreCaja, MovimientoBillete
+from .models import Arqueo, Billete, Caja, CierreCaja, LimiteStock, MovimientoBillete
 from .serializers_billetes import (
     AbrirCajaSerializer,
     ArqueoEntradaSerializer,
@@ -30,6 +30,7 @@ from .serializers_billetes import (
     CajaSerializer,
     CerrarCajaSerializer,
     CierreCajaSerializer,
+    LimiteStockSerializer,
     MovimientoBilleteSerializer,
     OperacionPresencialSerializer,
     OperacionPreviewSerializer,
@@ -445,3 +446,20 @@ class CierreCajaViewSet(
         if self.request.query_params.get('caja'):
             queryset = queryset.filter(caja_id=self.request.query_params['caja'])
         return queryset
+
+
+class LimiteStockViewSet(viewsets.ModelViewSet):
+    """Límites de stock de billetes por moneda (RF107), solo administrador.
+
+    ``/api/caja/limites-stock/``. Cuando el stock de una moneda en una caja
+    llega al ``minimo`` o al ``maximo`` configurado, se avisa a los
+    administradores y al cajero (ver ``services.alertas_de_stock``). Vacío
+    (``null``) es "sin límite" de ese lado. Filtro: ``?moneda=`` (id).
+    """
+
+    queryset = LimiteStock.objects.select_related('moneda')
+    serializer_class = LimiteStockSerializer
+    permission_classes = [SoloAdministrador]
+
+    def get_queryset(self):
+        return _filtrar(super().get_queryset(), self.request.query_params, ('moneda',))

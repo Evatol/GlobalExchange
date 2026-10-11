@@ -106,13 +106,14 @@ que cada historia se integró a `develop`.
 | 2026-10-10 | `f249cae` | `apps/notificaciones` | Los avisos se marcan como leídos al cerrarlos y aparecen también en Operar | +10 | 436 | Angel |
 | 2026-10-10 | `718d58a` | `apps/pasarela` (nueva) | Pasarela de pago simulada con pantalla de pago, sin comandos (E4-157/E4-158) | +16 | 452 | Angel |
 | 2026-10-10 | `6f395ad` | `apps/notificaciones` | Editar la cotización vigente también avisa (E4-32/E4-33) | +8 | 460 | Angel |
+| 2026-10-10 | `3051ec8` | `apps/caja` (alerta de stock) | Alerta de stock mínimo y máximo de billetes por moneda, configurable (RF107): modelo, aviso solo al cruzar el límite, destinatarios, pantallas y API | +45 | 505 | Angel |
 
-**Cierre de Sprint 4 (tag `v1.5.0`): 460 tests (+168 desde el cierre de Sprint 3).**
+**Cierre de Sprint 4 (tag `v1.5.0`): 505 tests (+213 desde el cierre de Sprint 3).**
 
-Verificación: `./scripts/pruebas.sh` → `Ran 460 tests ... OK`. Cada cifra sale de contar los
+Verificación: `./scripts/pruebas.sh` → `Ran 505 tests ... OK`. Cada cifra sale de contar los
 `def test_` de cada commit contra su commit padre (`git show <hash>`); coincide con las
-corridas reales: 343 al integrar a Romina y Eva, 426 al mergear el PR #48 y 452 con la
-pasarela (PR #50). Los merges conservan los tests de las dos ramas que unen (revisado uno
+corridas reales: 343 al integrar a Romina y Eva, 426 al mergear el PR #48, 452 con la
+pasarela (PR #50) y 505 con la alerta de stock de RF107. Los merges conservan los tests de las dos ramas que unen (revisado uno
 por uno).
 
 ---

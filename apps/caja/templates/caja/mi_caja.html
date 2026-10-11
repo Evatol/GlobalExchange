@@ -18,6 +18,9 @@
         </div>
     </nav>
 
+    {% include 'usuarios/_notificaciones_tiempo_real.html' %}
+
+
     <div class="container my-5">
         <div class="row">
             <div class="col-md-12 text-center mb-4">
@@ -50,6 +53,8 @@
                 <a href="{% url 'mostrador' %}" class="btn btn-primary">Atender cliente</a>
                 <a href="{% url 'caja_cerrar' %}" class="btn btn-outline-danger">Cerrar caja</a>
             </div>
+
+            {% include 'caja/_alertas_stock.html' with alertas=balance.alertas %}
 
             <div class="card shadow-sm border-0 mb-4">
                 <div class="card-body">

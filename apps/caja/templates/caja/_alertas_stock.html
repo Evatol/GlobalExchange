@@ -1,0 +1,9 @@
+{% comment %}
+Alertas de stock de billetes vigentes (RF107). Espera ``alertas`` (services.alertas_de_stock):
+una por cada moneda cuyo stock llegó o pasó el mínimo (BAJO) o el máximo (ALTO) configurado.
+{% endcomment %}
+{% for a in alertas %}
+<div class="alert {% if a.nivel == 'BAJO' %}alert-danger{% else %}alert-warning{% endif %} py-2">
+    <strong>Stock {% if a.nivel == 'BAJO' %}bajo{% else %}alto{% endif %} de {{ a.moneda }}:</strong> {{ a.mensaje }}
+</div>
+{% endfor %}

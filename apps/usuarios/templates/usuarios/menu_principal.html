@@ -64,6 +64,9 @@
                         <a class="nav-link" href="{% url 'gestion_cajas' %}">Cajas</a>
                     </li>
                     <li class="nav-item">
+                        <a class="nav-link" href="{% url 'gestion_limites_stock' %}">Límites de Stock</a>
+                    </li>
+                    <li class="nav-item">
                         <a class="nav-link" href="{% url 'gestion_roles' %}">Administración de Roles</a>
                     </li>
                     {% endif %}
@@ -234,6 +237,16 @@
                         <h5 class="card-title">Cajas</h5>
                         <p class="card-text">Cajas por cajero, con apertura y carga inicial de billetes.</p>
                         <a href="{% url 'gestion_cajas' %}" class="btn btn-primary w-100">Gestionar Cajas</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">Límites de Stock</h5>
+                        <p class="card-text">Mínimo y máximo de billetes por moneda: avisa cuando una caja los alcanza.</p>
+                        <a href="{% url 'gestion_limites_stock' %}" class="btn btn-primary w-100">Configurar Límites</a>
                     </div>
                 </div>
             </div>
