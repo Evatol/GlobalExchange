@@ -267,7 +267,30 @@ herramienta:
 > encontró que el compose de producción no pasaba el secreto del webhook (rechazaba
 > todo) y que el cartel final no mencionaba al cajero demo (commit `46d9b8b`).
 
-## 16. Archivos / evidencia
+## 16. Contraste con el ERS: alerta de stock de billetes (RF107)
+
+> Prompt: (adjunté la guía de la cátedra y el ERS) "¿no hay nada más que
+> falte?" Y después: "Implementa eso: un límite mínimo y máximo por moneda,
+> configurable por el administrador, y un aviso a administradores y cajero, y
+> visible en Mi Caja."
+>
+> Resultado / Impacto: al contrastar el sprint con el ERS la IA encontró que
+> **RF107** pide notificar cuando el stock de billetes de una moneda llega a un
+> límite mínimo o máximo configurado, y que no existía (lo había buscado en el
+> código). Se implementó (commit `3051ec8`): límites por moneda en la propia moneda,
+> configurables desde una pantalla y la API; el aviso se manda solo cuando una
+> operación **cruza** el límite, comparando el estado antes y después de cada
+> movimiento, para no avisar en cada operación; y la alerta vigente se muestra en
+> Mi Caja, en Atender cliente y en el balance del administrador. Al hacerlo salió
+> a la luz que el cajero **no podía recibir avisos en pantalla**, porque el
+> middleware de su rol solo le dejaba `/api/caja/`; se le permitió únicamente
+> `/api/notificaciones/` (que solo devuelve los avisos propios). Se probó por HTTP
+> real con los datos de la demo: comprar 13 USD baja el stock a 1.847 (el mínimo es
+> 1.850) y dispara la alerta y un único aviso por destinatario; el cambio de 100 USD
+> la normaliza. Se detectó también, y quedó anotado, que RF110 (mostrar el número de
+> atención al cliente) no está implementado, aunque no es de este sprint.
+
+## 17. Archivos / evidencia
 
 - Código: `apps/banco/`, `apps/pasarela/`, `apps/caja/services.py` y
   `apps/caja/test_cierre_movimientos.py`, `apps/transacciones/webhook.py`,
@@ -277,5 +300,5 @@ herramienta:
 - PRs: #43 (banco, medios de pago, categorías), #44 (calculadora y guía), #48
   (integración del sprint), #49 (notificaciones), #50 (pasarela), #51 (registro y
   guía).
-- Resultado: 220 tests al empezar el trabajo del sprint y 460 al cerrarlo, con
+- Resultado: 220 tests al empezar el trabajo del sprint y 505 al cerrarlo, con
   Sphinx en `-W` sin warnings y el CI en verde.
