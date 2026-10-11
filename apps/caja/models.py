@@ -351,3 +351,54 @@ class DetalleCierre(models.Model):
 
     def __str__(self):
         return f'{self.cierre} - {self.moneda.codigo}'
+
+
+class LimiteStock(models.Model):
+    """Límites de stock de billetes de una moneda (RF107).
+
+    Los configura el administrador, uno por moneda, y se aplican al stock de
+    **cada** caja: el stock de una moneda en una caja es la suma de
+    ``denominación × cantidad`` de sus billetes, en la propia moneda (no en
+    guaraníes). Un límite vacío (``None``) significa "sin límite de ese lado".
+
+    * ``BAJO``: el stock llegó al mínimo o quedó por debajo (``stock <= minimo``).
+    * ``ALTO``: el stock llegó al máximo o lo superó (``stock >= maximo``).
+    """
+
+    NIVEL_BAJO = 'BAJO'
+    NIVEL_ALTO = 'ALTO'
+
+    id = models.AutoField(primary_key=True)
+    moneda = models.OneToOneField(Moneda, on_delete=models.CASCADE, related_name='limite_stock')
+    minimo = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    maximo = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+
+    class Meta:
+        ordering = ['moneda__codigo']
+        verbose_name = 'límite de stock'
+        verbose_name_plural = 'límites de stock'
+
+    def clean(self):
+        errores = {}
+        if self.minimo is not None and self.minimo < 0:
+            errores['minimo'] = 'El mínimo no puede ser negativo.'
+        if self.maximo is not None and self.maximo <= 0:
+            errores['maximo'] = 'El máximo tiene que ser mayor a cero.'
+        if (
+            self.minimo is not None and self.maximo is not None
+            and self.minimo > self.maximo and 'minimo' not in errores
+        ):
+            errores['minimo'] = 'El mínimo no puede ser mayor que el máximo.'
+        if errores:
+            raise ValidationError(errores)
+
+    def nivel(self, saldo):
+        """``'BAJO'``, ``'ALTO'`` o ``None`` según el ``saldo`` (en la moneda)."""
+        if self.minimo is not None and saldo <= self.minimo:
+            return self.NIVEL_BAJO
+        if self.maximo is not None and saldo >= self.maximo:
+            return self.NIVEL_ALTO
+        return None
+
+    def __str__(self):
+        return f'{self.moneda.codigo}: mínimo {self.minimo} / máximo {self.maximo}'

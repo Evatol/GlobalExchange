@@ -3,6 +3,8 @@
 Propias del portal, en vez de la API navegable de DRF. Reutilizan los
 serializers y los services de ``views_billetes`` para no duplicar reglas.
 """
+from decimal import Decimal, InvalidOperation
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
@@ -16,7 +18,9 @@ from apps.usuarios.models import Cliente
 from apps.usuarios.permissions import es_cajero
 
 from . import services
-from .models import Arqueo, AsignacionCajero, Billete, Caja, CierreCaja, MovimientoBillete
+from .models import (
+    Arqueo, AsignacionCajero, Billete, Caja, CierreCaja, LimiteStock, MovimientoBillete,
+)
 from .serializers_billetes import BilleteSerializer, CajaSerializer
 from .views import _entero, _errores, _solo_administrador
 
@@ -148,6 +152,73 @@ def caja_abrir_view(request, pk):
     return render(request, 'caja/caja_abrir.html', context)
 
 
+def _limite_o_none(texto):
+    """``Decimal`` a partir de lo escrito en el formulario; vacío es ``None``
+    (sin límite). Lanza ``ValidationError`` si no es un número."""
+    texto = texto.strip().replace(',', '.')
+    if not texto:
+        return None
+    try:
+        valor = Decimal(texto)
+    except InvalidOperation:
+        raise DjangoValidationError(f'"{texto}" no es un número.')
+    if not valor.is_finite():
+        raise DjangoValidationError(f'"{texto}" no es un número.')
+    return valor
+
+
+@login_required
+def gestion_limites_stock_view(request):
+    """Límites mínimo y máximo de stock de billetes por moneda (RF107), solo
+    administrador. Una fila por moneda activa; vacío es "sin límite" y borra el
+    que hubiera. Se guarda todo o nada: si una fila tiene un error no se
+    modifica ninguna, y se vuelve a mostrar lo que se escribió con el motivo."""
+    _solo_administrador(request)
+    monedas = list(Moneda.objects.filter(estado=True).order_by('codigo'))
+    existentes = {limite.moneda_id: limite for limite in LimiteStock.objects.all()}
+
+    errores, escrito = [], {}
+    if request.method == 'POST':
+        nuevos = {}
+        for moneda in monedas:
+            minimo_txt = request.POST.get(f'minimo_{moneda.id}', '')
+            maximo_txt = request.POST.get(f'maximo_{moneda.id}', '')
+            escrito[moneda.id] = (minimo_txt, maximo_txt)
+            try:
+                limite = LimiteStock(
+                    moneda=moneda, minimo=_limite_o_none(minimo_txt), maximo=_limite_o_none(maximo_txt)
+                )
+                limite.clean()
+            except DjangoValidationError as exc:
+                errores.append(f'{moneda.codigo}: {" ".join(exc.messages)}')
+            else:
+                nuevos[moneda.id] = limite
+        if not errores:
+            for moneda in monedas:
+                limite = nuevos[moneda.id]
+                if limite.minimo is None and limite.maximo is None:
+                    LimiteStock.objects.filter(moneda=moneda).delete()
+                else:
+                    LimiteStock.objects.update_or_create(
+                        moneda=moneda, defaults={'minimo': limite.minimo, 'maximo': limite.maximo}
+                    )
+            messages.success(request, 'Límites de stock guardados.')
+            return redirect('gestion_limites_stock')
+
+    filas = []
+    for moneda in monedas:
+        if moneda.id in escrito:
+            minimo, maximo = escrito[moneda.id]
+        else:
+            actual = existentes.get(moneda.id)
+            minimo = '' if actual is None or actual.minimo is None else f'{actual.minimo:f}'
+            maximo = '' if actual is None or actual.maximo is None else f'{actual.maximo:f}'
+        filas.append({'moneda': moneda, 'minimo': minimo, 'maximo': maximo})
+    return render(request, 'caja/gestion_limites_stock.html', {
+        'usuario': request.user, 'filas': filas, 'errores': errores,
+    })
+
+
 @login_required
 def caja_balance_view(request, pk):
     """Balance de la sesión de una caja y su historial de cierres (E4-100),
@@ -259,6 +330,7 @@ def mostrador_view(request):
     return render(request, 'caja/mostrador.html', {
         'usuario': request.user,
         'caja': caja,
+        'alertas': services.alertas_de_stock(caja) if caja is not None else [],
         'monedas': Moneda.objects.filter(estado=True, tasas__estado=True).distinct().order_by('codigo'),
         'datos': datos,
         'vista_previa': vista_previa,

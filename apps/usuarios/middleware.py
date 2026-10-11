@@ -8,11 +8,13 @@ class CajeroSoloCajaMiddleware:
     cualquier otra pantalla responde 403. Los superusuarios (administrador) no
     se restringen.
 
-    Se permite además ``/oidc/`` (login, callback y logout con Keycloak) y el
-    menú principal exacto, para que el login no termine en un 403.
+    Se permite además ``/oidc/`` (login, callback y logout con Keycloak), el
+    menú principal exacto, para que el login no termine en un 403, y
+    ``/api/notificaciones/``: el cajero recibe avisos propios (por ejemplo, de
+    stock de billetes, RF107) y esa API solo devuelve y marca los suyos.
     """
 
-    PREFIJOS_PERMITIDOS = ('/api/caja/', '/oidc/')
+    PREFIJOS_PERMITIDOS = ('/api/caja/', '/oidc/', '/api/notificaciones/')
     RUTAS_EXACTAS_PERMITIDAS = ('/api/usuarios/',)
 
     def __init__(self, get_response):

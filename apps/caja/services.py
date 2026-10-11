@@ -15,9 +15,12 @@ from django.utils import timezone
 from apps.divisas.models import Moneda
 from apps.transacciones.models import MetodoPago
 
+from apps.notificaciones.models import Notificaciones
+from apps.usuarios.models import Usuario
+
 from .models import (
     Arqueo, Billete, Caja, CierreCaja, DetalleArqueo, DetalleCierre,
-    MovimientoBillete, StockBillete,
+    LimiteStock, MovimientoBillete, StockBillete,
 )
 
 CERO = Decimal('0')
@@ -64,6 +67,114 @@ def caja_abierta_de(usuario):
 
 
 # ---------------------------------------------------------------------------
+# Alertas de stock mínimo y máximo (RF107)
+# ---------------------------------------------------------------------------
+
+def _formato(valor):
+    """``Decimal('1847.00')`` -> ``'1.847'``; ``Decimal('0.50')`` -> ``'0,50'``."""
+    texto = f'{Decimal(valor):,.2f}'.replace(',', '_').replace('.', ',').replace('_', '.')
+    return texto[:-3] if texto.endswith(',00') else texto
+
+
+def _saldos_por_moneda(caja, moneda_ids):
+    """``{moneda_id: stock}`` de la caja: suma de denominación × cantidad, en la
+    propia moneda. Una moneda sin billetes en la caja vale 0."""
+    saldos = {moneda_id: CERO for moneda_id in moneda_ids}
+    filas = StockBillete.objects.filter(
+        caja=caja, billete__moneda_id__in=moneda_ids
+    ).select_related('billete')
+    for fila in filas:
+        saldos[fila.billete.moneda_id] += fila.billete.denominacion * fila.cantidad
+    return saldos
+
+
+def alertas_de_stock(caja, moneda_ids=None):
+    """Alertas de stock vigentes de la caja, según los límites de ``LimiteStock``.
+
+    Devuelve una lista de ``{'moneda', 'moneda_id', 'nivel', 'saldo', 'limite',
+    'mensaje'}``: una por cada moneda cuyo stock llegó o pasó el mínimo
+    (``BAJO``) o el máximo (``ALTO``). Las monedas sin límite configurado, o
+    dentro de sus límites, no aparecen. ``moneda_ids`` acota el cálculo a esas
+    monedas. Se calcula siempre desde el stock actual, así que no hay un estado
+    de alerta aparte que pueda quedar desactualizado.
+    """
+    limites = LimiteStock.objects.select_related('moneda')
+    if moneda_ids is not None:
+        limites = limites.filter(moneda_id__in=moneda_ids)
+    limites = list(limites)
+    if not limites:
+        return []
+
+    saldos = _saldos_por_moneda(caja, [limite.moneda_id for limite in limites])
+    alertas = []
+    for limite in limites:
+        saldo = saldos[limite.moneda_id]
+        nivel = limite.nivel(saldo)
+        if nivel is None:
+            continue
+        valor = limite.minimo if nivel == LimiteStock.NIVEL_BAJO else limite.maximo
+        lado = 'mínimo' if nivel == LimiteStock.NIVEL_BAJO else 'máximo'
+        alertas.append({
+            'moneda': limite.moneda.codigo,
+            'moneda_id': limite.moneda_id,
+            'nivel': nivel,
+            'saldo': saldo,
+            'limite': valor,
+            'mensaje': (
+                f'hay {_formato(saldo)} {limite.moneda.codigo} en billetes y el '
+                f'{lado} configurado es {_formato(valor)}.'
+            ),
+        })
+    return alertas
+
+
+def _destinatarios_de_alerta(caja):
+    """``Usuario`` que reciben el aviso: los administradores y el cajero de la caja.
+    Quien todavía no tiene su ``Usuario`` de negocio (se crea en el primer login)
+    no recibe nada: no hay a quién asociarle la notificación."""
+    from django.contrib.auth.models import User
+    from django.db.models import Q
+
+    usernames = set(
+        User.objects.filter(Q(is_superuser=True) | Q(groups__name='administrador'))
+        .values_list('username', flat=True)
+    )
+    if caja.cajero_id:
+        usernames.add(caja.cajero.username)
+    return list(Usuario.objects.filter(username__in=usernames))
+
+
+def _notificar_alertas_nuevas(caja, antes, despues):
+    """Crea una notificación por cada alerta que **apareció o cambió de nivel**
+    entre ``antes`` y ``despues`` (``{moneda_id: alerta}``).
+
+    Solo se avisa al cruzar el límite: si el stock ya estaba bajo y sigue bajo,
+    no se repite el aviso en cada operación (la alerta sigue visible en Mi Caja
+    mientras dure). Si vuelve a la normalidad y después cruza otra vez, avisa de
+    nuevo. Corre dentro de la transacción del movimiento: si este se revierte,
+    el aviso también.
+    """
+    nuevas = [
+        alerta for moneda_id, alerta in despues.items()
+        if antes.get(moneda_id, {}).get('nivel') != alerta['nivel']
+    ]
+    if not nuevas:
+        return
+    destinatarios = _destinatarios_de_alerta(caja)
+    donde = f'Caja #{caja.pk} ({caja.sucursal.nombre}'
+    donde += f', cajero {caja.cajero.username})' if caja.cajero_id else ')'
+    for alerta in nuevas:
+        estado = 'bajo' if alerta['nivel'] == LimiteStock.NIVEL_BAJO else 'alto'
+        for usuario in destinatarios:
+            Notificaciones.objects.create(
+                usuario=usuario,
+                titulo=f'Stock de billetes {estado}: {alerta["moneda"]}',
+                mensaje=f'{donde}: {alerta["mensaje"]}',
+                tipo='stock_billetes',
+            )
+
+
+# ---------------------------------------------------------------------------
 # Stock y movimientos
 # ---------------------------------------------------------------------------
 
@@ -93,6 +204,13 @@ def registrar_movimientos_billetes(caja, usuario, transaccion, recibidos, entreg
             f'Denominaciones inexistentes o inactivas: {sorted(faltantes)}'
         )
 
+    # RF107: estado de las alertas antes de mover los billetes, para avisar solo
+    # de las que aparecen con este movimiento.
+    monedas_afectadas = {billetes[i].moneda_id for i in ids}
+    alertas_antes = {
+        a['moneda_id']: a for a in alertas_de_stock(caja, monedas_afectadas)
+    }
+
     for billete_id in ids:
         billete = billetes[billete_id]
         stock, _ = StockBillete.objects.select_for_update().get_or_create(
@@ -113,6 +231,11 @@ def registrar_movimientos_billetes(caja, usuario, transaccion, recibidos, entreg
                     caja=caja, billete=billete, usuario=usuario,
                     transaccion=transaccion, tipo=tipo, cantidad=cantidad,
                 )
+
+    alertas_despues = {
+        a['moneda_id']: a for a in alertas_de_stock(caja, monedas_afectadas)
+    }
+    _notificar_alertas_nuevas(caja, alertas_antes, alertas_despues)
 
 
 @transaction.atomic
@@ -433,6 +556,7 @@ def balance_caja(caja):
         'fecha_cierre': caja.fecha_cierre,
         'operaciones': len(operaciones),
         'monedas': sorted(filas.values(), key=lambda f: f['moneda']),
+        'alertas': alertas_de_stock(caja),
     }
 
 
