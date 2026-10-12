@@ -247,8 +247,8 @@ fuera de límites (RF107)."*
 ## 5. CHIA
 
 En `docs/`: los de Romina por historia (`chia_e4_24_romina.md`,
-`chia_e4_32_romina.md`, `chia_e4_33_romina.md`) y los de Eva, Eduardo y Angel
-del Sprint 4.
+`chia_e4_32_romina.md`, `chia_e4_33_romina.md`) y los de Eva y Angel del
+Sprint 4.
 
 ## 6. PLA
 
