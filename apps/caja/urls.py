@@ -14,6 +14,7 @@ from .views_billetes import (
     BilleteViewSet,
     CajaViewSet,
     CierreCajaViewSet,
+    LimiteStockViewSet,
     MiBalanceAPIView,
     MiCierreAPIView,
     MiInventarioAPIView,
@@ -29,6 +30,7 @@ from .views_pantallas import (
     caja_cerrar_view,
     gestion_cajas_view,
     gestion_denominaciones_view,
+    gestion_limites_stock_view,
     mi_caja_view,
     mostrador_view,
 )
@@ -45,6 +47,8 @@ router.register('arqueos', ArqueoViewSet, basename='arqueo')
 # E4-100 / E4-101: historial de cierres y movimientos de billetes.
 router.register('cierres', CierreCajaViewSet, basename='cierrecaja')
 router.register('movimientos', MovimientoBilleteViewSet, basename='movimientobillete')
+# RF107: limites minimo y maximo de stock de billetes por moneda.
+router.register('limites-stock', LimiteStockViewSet, basename='limitestock')
 
 urlpatterns = [
     # Pantallas propias de gestión (HTML), en vez de la API navegable de DRF.
@@ -60,6 +64,7 @@ urlpatterns = [
     # RF106: pantallas del administrador y del cajero.
     path('gestion/denominaciones/', gestion_denominaciones_view, name='gestion_denominaciones'),
     path('gestion/denominaciones/<int:pk>/toggle/', billete_toggle_view, name='billete_toggle'),
+    path('gestion/limites-stock/', gestion_limites_stock_view, name='gestion_limites_stock'),
     path('gestion/cajas/', gestion_cajas_view, name='gestion_cajas'),
     path('gestion/cajas/<int:pk>/abrir/', caja_abrir_view, name='caja_abrir'),
     path('gestion/cajas/<int:pk>/balance/', caja_balance_view, name='caja_balance'),

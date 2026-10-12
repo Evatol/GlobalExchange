@@ -31,7 +31,7 @@ from django.contrib.auth.models import Group, User
 from apps.banco import services as banco
 from apps.banco.models import CuentaBancaria
 from apps.caja import services as caja_services
-from apps.caja.models import AsignacionCajero, Billete, Caja, Sucursal
+from apps.caja.models import AsignacionCajero, Billete, Caja, LimiteStock, Sucursal
 from apps.divisas.models import Moneda, TasaCambio
 from apps.transacciones.models import MedioPagoCliente, MetodoPago
 from apps.usuarios.models import Cliente, Usuario
@@ -56,6 +56,14 @@ DENOMINACIONES = {
     'BRL': [2, 5, 10, 20, 50, 100, 200],
 }
 BILLETES_POR_DENOMINACION = 10
+# Límites de stock de billetes (RF107): (minimo, maximo) en la propia moneda. Con 10 billetes
+# de cada denominación la caja demo arranca dentro de los límites, y el mínimo de USD está
+# justo debajo del stock inicial (1.860) para que una compra de dólares dispare la alerta.
+LIMITES_STOCK = {
+    'USD': (Decimal('1850'), Decimal('3000')),
+    'EUR': (Decimal('500'), Decimal('20000')),
+    'PYG': (Decimal('500000'), Decimal('5000000')),
+}
 CAJERO_DEMO = 'cajero_demo'
 SUCURSAL_DEMO = ('Casa Central', 'Asunción')
 
@@ -243,6 +251,15 @@ class Command(BaseCommand):
         else:
             detalle = f'ya estaba {caja.estado.lower()}'
         self.stdout.write(f'  Caja #{caja.pk} de {CAJERO_DEMO} en {sucursal.nombre}: {detalle}')
+
+        # get_or_create: si el administrador ya cambio los limites, no se pisan.
+        for moneda_codigo, (minimo, maximo) in LIMITES_STOCK.items():
+            moneda = Moneda.objects.filter(codigo=moneda_codigo).first()
+            if moneda is not None:
+                LimiteStock.objects.get_or_create(
+                    moneda=moneda, defaults={'minimo': minimo, 'maximo': maximo},
+                )
+        self.stdout.write(f'  Límites de stock: {LimiteStock.objects.count()} monedas')
 
 
 def _limite(cliente):

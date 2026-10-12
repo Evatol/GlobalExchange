@@ -9,7 +9,7 @@ from apps.divisas.models import Moneda
 
 from .models import (
     Arqueo, Billete, Caja, CierreCaja, DetalleArqueo, DetalleCierre,
-    MovimientoBillete, StockBillete,
+    LimiteStock, MovimientoBillete, StockBillete,
 )
 
 TIPOS_OPERACION = ('COMPRA', 'VENTA', 'CAMBIO')
@@ -236,3 +236,26 @@ class CierreCajaSerializer(serializers.ModelSerializer):
             'fecha_apertura', 'fecha_cierre', 'operaciones', 'detalles',
         ]
         read_only_fields = fields
+
+
+class LimiteStockSerializer(serializers.ModelSerializer):
+    """Límites de stock de billetes por moneda (RF107). Vacío = sin límite."""
+
+    moneda_codigo = serializers.CharField(source='moneda.codigo', read_only=True)
+
+    class Meta:
+        model = LimiteStock
+        fields = ['id', 'moneda', 'moneda_codigo', 'minimo', 'maximo']
+        read_only_fields = ['id']
+
+    def validate(self, attrs):
+        """Mismas reglas que ``LimiteStock.clean`` (mínimo no negativo, máximo
+        mayor a cero, mínimo no mayor que el máximo), tomando lo que no se mandó
+        del límite que se está editando."""
+        minimo = attrs.get('minimo', getattr(self.instance, 'minimo', None))
+        maximo = attrs.get('maximo', getattr(self.instance, 'maximo', None))
+        try:
+            LimiteStock(minimo=minimo, maximo=maximo).clean()
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict)
+        return attrs

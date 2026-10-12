@@ -18,6 +18,9 @@
         </div>
     </nav>
 
+    {% include 'usuarios/_notificaciones_tiempo_real.html' %}
+
+
     <div class="container my-5">
         <div class="row justify-content-center">
             <div class="col-md-8 col-lg-6">
@@ -30,6 +33,8 @@
                 {% if error %}
                     <div class="alert alert-danger py-2">{{ error }}</div>
                 {% endif %}
+
+                {% include 'caja/_alertas_stock.html' %}
 
                 {% if caja %}
                 <div class="card shadow-sm border-0 mb-4">

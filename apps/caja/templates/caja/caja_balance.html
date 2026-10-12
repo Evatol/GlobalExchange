@@ -33,6 +33,8 @@
             <div class="alert {% if m.tags == 'error' %}alert-danger{% else %}alert-success{% endif %}">{{ m }}</div>
         {% endfor %}
 
+        {% include 'caja/_alertas_stock.html' with alertas=balance.alertas %}
+
         <div class="card shadow-sm border-0 mb-4">
             <div class="card-body">
                 <div class="d-flex justify-content-between align-items-center mb-3">
