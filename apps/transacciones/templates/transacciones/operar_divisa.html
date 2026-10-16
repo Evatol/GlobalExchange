@@ -25,6 +25,11 @@
             <div class="col-12">
                 <div class="text-center">
                     <h2>Comprar, Vender o Cambiar Divisas</h2>
+                    {% for m in messages %}
+                     <div class="col-12">
+                        <div class="alert {% if m.tags == 'error' %}alert-danger{% elif m.tags == 'success' %}alert-success{% else %}alert-info{% endif %} py-2 mb-0">{{ m }}</div>
+                     </div>
+                    {% endfor %}
                     <p class="text-muted">La comisión aplicada depende de tu preferencia de tipo de cambio.</p>
                     {% if cliente_activo %}
                     <p class="text-muted small mb-0">
@@ -125,7 +130,13 @@
                                     <span class="text-muted small">· {{ p.monto_total|floatformat:"2g" }} PYG</span>
                                     {% endif %}
                                 </span>
-                                <a href="{% url 'operacion_detalle' p.id %}" class="btn btn-sm btn-outline-primary">Ver y pagar</a>
+                                <span class="d-flex gap-2">
+                                    <a href="{% url 'operacion_detalle' p.id %}" class="btn btn-sm btn-outline-primary">Ver y pagar</a>
+                                    <form method="post" action="{% url 'operacion_cancelar' p.id %}" class="m-0">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary">Cancelar</button>
+                                    </form>
+                                </span>
                             </li>
                             {% endfor %}
                         </ul>

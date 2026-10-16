@@ -693,3 +693,113 @@ def registrar_arqueo(caja, cajero, moneda, contados):
         d.arqueo = arqueo
     DetalleArqueo.objects.bulk_create(detalles)
     return arqueo
+
+
+# ---------------------------------------------------------------------------
+# E4-195 (criterio 1): pegar AL FINAL de apps/caja/services.py, después de
+# registrar_arqueo. No hay imports nuevos: todo lo que usa (desglose_de_monto,
+# _formato, _moneda_local, alertas_de_stock, _notificar_alertas_nuevas,
+# _destinatarios_de_alerta, Notificaciones, Caja, StockBillete, Billete, Moneda,
+# MetodoPago) ya está importado o definido en ese archivo.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Disponibilidad de billetes de la terminal (E4-195)
+# ---------------------------------------------------------------------------
+
+def _billetes_a_entregar(transaccion):
+    """``{moneda_id: monto}`` que la terminal entrega en billetes en esta operación.
+
+    * Compra: la divisa que compra el cliente.
+    * Cambio: la divisa de destino.
+    * Venta: guaraníes, pero solo si el cliente cobra en efectivo; si cobra en
+      una cuenta o billetera no se entregan billetes.
+    """
+    t = transaccion
+    if t.tipo == 'COMPRA':
+        return {t.moneda_id: t.cantidad}
+    if t.tipo == 'CAMBIO':
+        return {t.moneda_destino_id: t.cantidad_destino}
+    if t.metodo_pago.tipo != MetodoPago.TIPO_EFECTIVO:
+        return {}
+    try:
+        return {_moneda_local().id: t.monto_total}
+    except ValidationError:
+        return {}  # sin moneda local en el catálogo no hay inventario de guaraníes
+
+
+def _stock_en_cajas_abiertas(moneda_id):
+    """``{billete_id: cantidad}`` sumando el stock de todas las cajas abiertas.
+    Las cajas cerradas no cuentan: su efectivo no está disponible para operar."""
+    disponible = {}
+    filas = StockBillete.objects.filter(
+        caja__estado='ABIERTA', billete__moneda_id=moneda_id
+    )
+    for fila in filas:
+        disponible[fila.billete_id] = disponible.get(fila.billete_id, 0) + fila.cantidad
+    return disponible
+
+
+def evaluar_entrega_de_billetes(transaccion):
+    """E4-195: ¿alcanza el stock de billetes para entregar lo que la operación requiere?
+
+    Usa la misma regla de composición que el mostrador (``desglose_de_monto``:
+    de la denominación mayor a la menor, con la tolerancia de media denominación
+    mínima) sobre el stock total de las cajas abiertas.
+
+    Devuelve ``None`` si alcanza, o ``(moneda_id, mensaje)`` con un mensaje claro
+    para el usuario si no. Una moneda sin denominaciones cargadas no maneja
+    inventario de billetes y no se evalúa.
+    """
+    for moneda_id, monto in _billetes_a_entregar(transaccion).items():
+        if not Billete.objects.filter(moneda_id=moneda_id, estado=True).exists():
+            continue
+        try:
+            desglose_de_monto(moneda_id, monto, _stock_en_cajas_abiertas(moneda_id))
+        except ValidationError:
+            codigo = Moneda.objects.filter(pk=moneda_id).values_list('codigo', flat=True).first()
+            return moneda_id, (
+                f'La terminal no cuenta con billetes suficientes de {codigo} '
+                f'para entregar {_formato(monto)} {codigo}.'
+            )
+    return None
+
+
+def notificar_falla_por_stock(transaccion, moneda_id):
+    """E4-195: avisa que una operación quedó fallida por falta de billetes.
+
+    1. Dispara la alerta de mínimo/máximo configurada (RF107) de esa moneda en
+       cada caja abierta, aunque no sea nueva: la falla es el motivo del aviso.
+       Si la moneda no tiene límite configurado o está dentro de sus límites,
+       no hay alerta de RF107 que mandar.
+    2. Avisa de la operación fallida a los administradores y a los cajeros de
+       las cajas abiertas, siempre.
+
+    Corre dentro de la transacción de ``Transaccion.confirmar()``: el estado
+    FALLIDA y los avisos se guardan juntos.
+    """
+    cajas = list(Caja.objects.filter(estado='ABIERTA').select_related('sucursal', 'cajero'))
+
+    for caja in cajas:
+        vigentes = {a['moneda_id']: a for a in alertas_de_stock(caja, [moneda_id])}
+        _notificar_alertas_nuevas(caja, {}, vigentes)
+
+    # Una Caja vacía no tiene cajero: ``_destinatarios_de_alerta`` devuelve solo
+    # a los administradores.
+    destinatarios = {u.pk: u for u in _destinatarios_de_alerta(Caja())}
+    for caja in cajas:
+        destinatarios.update({u.pk: u for u in _destinatarios_de_alerta(caja)})
+
+    codigo = Moneda.objects.filter(pk=moneda_id).values_list('codigo', flat=True).first()
+    mensaje = (
+        f'La operación #{transaccion.pk} ({transaccion.get_tipo_display()} de '
+        f'{_formato(transaccion.cantidad)} {transaccion.moneda.codigo}) quedó fallida: '
+        f'la terminal no cuenta con billetes suficientes de {codigo}.'
+    )
+    for usuario in destinatarios.values():
+        Notificaciones.objects.create(
+            usuario=usuario,
+            titulo=f'Operación fallida por falta de billetes: {codigo}',
+            mensaje=mensaje,
+            tipo='stock_billetes',
+        )
