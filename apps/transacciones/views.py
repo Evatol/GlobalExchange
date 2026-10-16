@@ -628,18 +628,31 @@ def operacion_pago_externo_view(request, pk):
         return redirect('operacion_detalle', pk=transaccion.pk)
     return redirect('pasarela_pagar', referencia=referencia)
 
+# ---------------------------------------------------------------------------
+# E4-195 (criterio 2): en apps/transacciones/views.py, reemplazar la vista
+# operacion_cancelar_view completa por esta. No hay imports nuevos.
+# ---------------------------------------------------------------------------
 
 @login_required
 @require_POST
 def operacion_cancelar_view(request, pk):
-    """Cancela a pedido del cliente una operación todavía no pagada (RF23)."""
+    """Cancela a pedido del cliente una operación todavía no pagada (RF23 / E4-195).
+
+    Si se cancela, el cliente vuelve a la pantalla inicial (Operar Divisas) con
+    el aviso de que la operación se canceló. Si no se puede (ya se pagó o ya
+    terminó), se queda en el detalle de la operación con el motivo.
+    """
     transaccion = _transaccion_del_cliente_activo(request, pk)
     try:
         transaccion.cancelar()
-        messages.info(request, f'Cancelaste la operación #{transaccion.pk}.')
     except ValidationError as exc:
         messages.error(request, exc.messages[0])
-    return redirect('operacion_detalle', pk=transaccion.pk)
+        return redirect('operacion_detalle', pk=transaccion.pk)
+    messages.info(
+        request,
+        f'Cancelaste la operación #{transaccion.pk}. Podés iniciar una nueva.',
+    )
+    return redirect('operar_divisa')
 
 
 class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
