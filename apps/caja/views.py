@@ -2,10 +2,13 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_http_methods
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from apps.usuarios.models import Usuario
@@ -16,8 +19,13 @@ from apps.usuarios.permissions import (
     tiene_rol,
 )
 
-from .models import AsignacionCajero, Sucursal
-from .serializers import AsignacionCajeroSerializer, SucursalSerializer
+from . import services
+from .models import AsignacionCajero, Billete, Sucursal, Terminal
+from .serializers import (
+    AsignacionCajeroSerializer,
+    SucursalSerializer,
+    TerminalSerializer,
+)
 
 
 class SucursalViewSet(viewsets.ModelViewSet):
@@ -46,6 +54,54 @@ class SucursalViewSet(viewsets.ModelViewSet):
         sucursal = self.get_object()
         sucursal.activar()
         return Response({'detail': f'Sucursal {sucursal.nombre} activada.'})
+
+
+class TerminalViewSet(viewsets.ModelViewSet):
+    """Administración de terminales y comprobación pública de disponibilidad."""
+
+    queryset = Terminal.objects.select_related('sucursal', 'caja').order_by('nombre')
+    serializer_class = TerminalSerializer
+    permission_classes = [SoloAdministrador]
+
+    def destroy(self, request, *args, **kwargs):
+        terminal = self.get_object()
+        terminal.estado = Terminal.INACTIVA
+        terminal.save(update_fields=['estado'])
+        return Response({
+            'detail': f'Terminal {terminal.nombre} desactivada correctamente.'
+        })
+
+    @action(detail=True, methods=['post'])
+    def activar(self, request, pk=None):
+        terminal = self.get_object()
+        serializer = self.get_serializer(
+            terminal, data={'estado': Terminal.ACTIVA}, partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response({'detail': f'Terminal {terminal.nombre} activada.'})
+
+    @action(
+        detail=True,
+        methods=['post'],
+        permission_classes=[AllowAny],
+        url_path='iniciar-operacion',
+    )
+    def iniciar_operacion(self, request, pk=None):
+        terminal = self.get_object()
+        try:
+            services.validar_terminal_operativa(terminal)
+        except DjangoValidationError as exc:
+            return Response(
+                {'detail': _errores_validacion(exc)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response({
+            'operativa': True,
+            'terminal': terminal.nombre,
+            'sucursal': terminal.sucursal.nombre,
+            'mensaje': 'Terminal operativa. Puede iniciar una operación.',
+        })
 
 
 class AsignacionCajeroViewSet(viewsets.ModelViewSet):
@@ -104,9 +160,122 @@ def _errores(serializer):
     )
 
 
+def _errores_validacion(exc):
+    if hasattr(exc, 'message_dict'):
+        return ' '.join(
+            str(msg) for errores in exc.message_dict.values() for msg in errores
+        )
+    return ' '.join(exc.messages)
+
+
 def _entero(valor):
     """Convierte a int un valor de formulario, o ``None`` si no es un número."""
     return int(valor) if valor and valor.isdigit() else None
+
+
+def _stock_inicial_form(request):
+    stock = {}
+    for campo, valor in request.POST.items():
+        if not campo.startswith('stock_'):
+            continue
+        billete_id = _entero(campo[6:])
+        cantidad = 0 if valor == '' else _entero(valor)
+        if billete_id is None or cantidad is None:
+            raise ValueError('Las cantidades de billetes deben ser números enteros.')
+        stock[str(billete_id)] = cantidad
+    return stock
+
+
+@login_required
+def gestion_terminales_view(request):
+    """Alta y consulta administrativa de terminales de autoservicio."""
+    _solo_administrador(request)
+    error = None
+    if request.method == 'POST':
+        try:
+            data = request.POST.dict()
+            data['stock_inicial'] = _stock_inicial_form(request)
+            serializer = TerminalSerializer(data=data)
+            if serializer.is_valid():
+                serializer.save()
+                return redirect('gestion_terminales')
+            error = _errores(serializer)
+        except (DjangoValidationError, ValueError) as exc:
+            error = _errores_validacion(exc) if isinstance(
+                exc, DjangoValidationError
+            ) else str(exc)
+        except DRFValidationError as exc:
+            error = str(exc.detail)
+
+    context = {
+        'usuario': request.user,
+        'terminales': Terminal.objects.select_related('sucursal', 'caja').order_by('nombre'),
+        'sucursales': Sucursal.objects.filter(estado=True).order_by('nombre'),
+        'billetes': Billete.objects.filter(estado=True).select_related('moneda'),
+        'estados': Terminal.ESTADOS,
+        'error': error,
+    }
+    return render(request, 'caja/gestion_terminales.html', context)
+
+
+@login_required
+def terminal_editar_view(request, pk):
+    """Edita el nombre, la sucursal y el estado operativo de una terminal."""
+    _solo_administrador(request)
+    terminal = get_object_or_404(Terminal.objects.select_related('sucursal'), pk=pk)
+    error = None
+    if request.method == 'POST':
+        serializer = TerminalSerializer(
+            terminal, data=request.POST, partial=True
+        )
+        if serializer.is_valid():
+            try:
+                serializer.save()
+                return redirect('gestion_terminales')
+            except DjangoValidationError as exc:
+                error = _errores_validacion(exc)
+        else:
+            error = _errores(serializer)
+    return render(request, 'caja/terminal_editar.html', {
+        'usuario': request.user,
+        'terminal': terminal,
+        'sucursales': Sucursal.objects.filter(estado=True).order_by('nombre'),
+        'estados': Terminal.ESTADOS,
+        'error': error,
+    })
+
+
+@login_required
+@require_POST
+def terminal_desactivar_view(request, pk):
+    """Da de baja lógica una terminal y conserva su caja e historial."""
+    _solo_administrador(request)
+    Terminal.objects.filter(pk=pk).update(estado=Terminal.INACTIVA)
+    return redirect('gestion_terminales')
+
+
+@require_http_methods(['GET', 'POST'])
+def terminal_demo_view(request, pk):
+    """Pantalla pública simulada que valida el estado antes de iniciar."""
+    terminal = get_object_or_404(
+        Terminal.objects.select_related('sucursal'), pk=pk
+    )
+    mensaje = None
+    error = None
+    response_status = status.HTTP_200_OK
+    try:
+        services.validar_terminal_operativa(terminal)
+        if request.method == 'POST':
+            mensaje = 'Terminal operativa. La simulación está lista para iniciar una operación.'
+    except DjangoValidationError as exc:
+        error = _errores_validacion(exc)
+        response_status = status.HTTP_409_CONFLICT
+    return render(
+        request,
+        'caja/terminal_demo.html',
+        {'terminal': terminal, 'mensaje': mensaje, 'error': error},
+        status=response_status,
+    )
 
 
 @login_required
