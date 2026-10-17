@@ -110,7 +110,9 @@ def gestion_cajas_view(request):
 
     context = {
         'usuario': request.user,
-        'cajas': Caja.objects.select_related('sucursal', 'cajero').order_by(
+        'cajas': Caja.objects.filter(terminal__isnull=True).select_related(
+            'sucursal', 'cajero'
+        ).order_by(
             'sucursal__nombre', 'id'
         ),
         'asignaciones': AsignacionCajero.objects.filter(
@@ -127,7 +129,9 @@ def gestion_cajas_view(request):
 def caja_abrir_view(request, pk):
     """Abre una caja con su carga inicial de billetes por denominación."""
     _solo_administrador(request)
-    caja = Caja.objects.select_related('sucursal', 'cajero').filter(pk=pk).first()
+    caja = Caja.objects.filter(terminal__isnull=True).select_related(
+        'sucursal', 'cajero'
+    ).filter(pk=pk).first()
     if caja is None:
         return redirect('gestion_cajas')
 
@@ -224,7 +228,9 @@ def caja_balance_view(request, pk):
     """Balance de la sesión de una caja y su historial de cierres (E4-100),
     solo administrador. Desde acá el administrador también puede cerrarla."""
     _solo_administrador(request)
-    caja = Caja.objects.select_related('sucursal', 'cajero').filter(pk=pk).first()
+    caja = Caja.objects.filter(terminal__isnull=True).select_related(
+        'sucursal', 'cajero'
+    ).filter(pk=pk).first()
     if caja is None:
         return redirect('gestion_cajas')
     return render(request, 'caja/caja_balance.html', {
@@ -244,7 +250,7 @@ def caja_cerrar_admin_view(request, pk):
     """El administrador cierra una caja abierta sin contarla (E4-100). Si hay
     que contar, el cajero cierra la suya desde ``Mi Caja``."""
     _solo_administrador(request)
-    caja = Caja.objects.filter(pk=pk).first()
+    caja = Caja.objects.filter(terminal__isnull=True, pk=pk).first()
     if caja is None:
         return redirect('gestion_cajas')
     usuario = sesion.usuario_negocio(request)

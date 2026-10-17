@@ -20,7 +20,7 @@ from apps.usuarios.models import Usuario
 
 from .models import (
     Arqueo, Billete, Caja, CierreCaja, DetalleArqueo, DetalleCierre,
-    LimiteStock, MovimientoBillete, StockBillete,
+    LimiteStock, MovimientoBillete, StockBillete, Terminal,
 )
 
 CERO = Decimal('0')
@@ -64,6 +64,96 @@ def caja_abierta_de(usuario):
     if caja is None:
         raise ValidationError('No tenés una caja abierta asignada.')
     return caja
+
+
+@transaction.atomic
+def crear_terminal(nombre, sucursal, estado, stock_inicial=None):
+    """Crea una terminal, su caja y el inventario inicial como una unidad."""
+    if not sucursal.estado:
+        raise ValidationError({'sucursal': 'La sucursal debe estar activa.'})
+
+    stock_inicial = _normalizar(stock_inicial, 'stock inicial')
+    billetes = {
+        billete.pk: billete
+        for billete in Billete.objects.filter(pk__in=stock_inicial, estado=True)
+    }
+    faltantes = set(stock_inicial) - set(billetes)
+    if faltantes:
+        raise ValidationError(
+            f'Denominaciones inexistentes o inactivas: {sorted(faltantes)}'
+        )
+
+    caja = Caja.objects.create(
+        sucursal=sucursal,
+        cajero=None,
+        saldo_inicial=0,
+        saldo_actual=0,
+    )
+    terminal = Terminal.objects.create(
+        nombre=nombre, sucursal=sucursal, estado=estado, caja=caja
+    )
+
+    denominaciones_activas = list(Billete.objects.filter(estado=True))
+    StockBillete.objects.bulk_create([
+        StockBillete(
+            caja=caja,
+            billete=billete,
+            cantidad=stock_inicial.get(billete.pk, 0),
+        )
+        for billete in denominaciones_activas
+    ])
+    MovimientoBillete.objects.bulk_create([
+        MovimientoBillete(
+            caja=caja,
+            billete=billetes[billete_id],
+            tipo='ENTRADA',
+            cantidad=cantidad,
+        )
+        for billete_id, cantidad in stock_inicial.items()
+        if cantidad > 0
+    ])
+    return terminal
+
+
+@transaction.atomic
+def actualizar_terminal(terminal, cambios):
+    """Actualiza datos de una terminal, manteniendo sucursal y caja coherentes."""
+    terminal = Terminal.objects.select_for_update().select_related('caja', 'sucursal').get(
+        pk=terminal.pk
+    )
+    sucursal = cambios.get('sucursal', terminal.sucursal)
+    estado = cambios.get('estado', terminal.estado)
+    if estado == Terminal.ACTIVA and not sucursal.estado:
+        raise ValidationError({'estado': 'No se puede activar una terminal en una sucursal inactiva.'})
+    if sucursal != terminal.sucursal and (
+        terminal.caja.movimientos_billetes.filter(transaccion__isnull=False).exists()
+        or terminal.caja.cierres.exists()
+        or terminal.caja.arqueos.exists()
+    ):
+        raise ValidationError({
+            'sucursal': 'No se puede cambiar la sucursal de una terminal con operaciones o cierres.'
+        })
+
+    terminal.nombre = cambios.get('nombre', terminal.nombre)
+    terminal.sucursal = sucursal
+    terminal.estado = estado
+    terminal.save()
+    if terminal.caja.sucursal_id != sucursal.pk:
+        terminal.caja.sucursal = sucursal
+        terminal.caja.save(update_fields=['sucursal'])
+    return terminal
+
+
+def validar_terminal_operativa(terminal):
+    """Rechaza el inicio en terminales no operativas o de sucursales inactivas."""
+    if terminal.estado != Terminal.ACTIVA:
+        estados = dict(Terminal.ESTADOS)
+        raise ValidationError(
+            f'Terminal no operativa: se encuentra {estados[terminal.estado].lower()}.'
+        )
+    if not terminal.sucursal.estado:
+        raise ValidationError('Terminal no operativa: la sucursal está inactiva.')
+    return terminal
 
 
 # ---------------------------------------------------------------------------
