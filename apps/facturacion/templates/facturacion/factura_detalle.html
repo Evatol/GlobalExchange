@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GlobalExchange - Factura {{ factura.numero_legal }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="{% url 'menu_principal' %}">GlobalExchange</a>
+            <div class="d-flex align-items-center text-white">
+                <span class="me-3">Bienvenido, <strong>{{ usuario.username }}</strong></span>
+                <a href="{% url 'facturas' %}" class="btn btn-outline-light btn-sm me-2">Mis facturas</a>
+                <a href="{% url 'menu_principal' %}" class="btn btn-outline-light btn-sm">Volver al Portal</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container my-5">
+        <div class="row justify-content-center">
+            <div class="col-lg-8">
+                <div class="text-center mb-4">
+                    <h2>Factura {{ factura.numero_legal }}</h2>
+                    {% if factura.estado == 'EMITIDA' %}
+                        <span class="badge bg-success">{{ factura.get_estado_display }}</span>
+                    {% elif factura.estado == 'RECHAZADA' %}
+                        <span class="badge bg-danger">{{ factura.get_estado_display }}</span>
+                    {% else %}
+                        <span class="badge bg-warning text-dark">{{ factura.get_estado_display }}</span>
+                    {% endif %}
+                    {% if factura.proveedor == 'SIMULADO' %}
+                        <div class="small text-danger mt-2">Documento de prueba generado por el simulador: sin validez tributaria.</div>
+                    {% endif %}
+                </div>
+
+                <div class="card shadow-sm border-0 mb-3">
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <h6 class="text-muted">Emisor</h6>
+                                <div class="fw-semibold">{{ datos.dNomEmi }}</div>
+                                <div class="small">RUC {{ datos.dRucEm }}-{{ datos.dDVEmi }}</div>
+                                <div class="small">{{ datos.dDirEmi }} {{ datos.dNumCas }}, {{ datos.dDesCiuEmi }}</div>
+                                <div class="small">Tel. {{ datos.dTelEmi }} · {{ datos.dEmailE }}</div>
+                            </div>
+                            <div class="col-md-6">
+                                <h6 class="text-muted">Factura</h6>
+                                <div class="small">N° <strong>{{ factura.numero_legal }}</strong></div>
+                                <div class="small">Timbrado N° {{ datos.dNumTim }} (desde {{ datos.dFeIniT }})</div>
+                                <div class="small">Emitida el {{ emision_local|date:"d/m/Y H:i" }}</div>
+                                <div class="small">Condición: contado</div>
+                                {% if factura.cdc %}<div class="small text-break">CDC: {{ factura.cdc }}</div>{% endif %}
+                            </div>
+                            <div class="col-12">
+                                <h6 class="text-muted">Cliente</h6>
+                                <div class="fw-semibold">{{ datos.dNomRec }}</div>
+                                <div class="small">
+                                    {% if datos.dRucRec %}RUC {{ datos.dRucRec }}-{{ datos.dDVRec }}{% else %}Documento {{ datos.dNumIDRec }}{% endif %}
+                                    · {{ datos.dEmailRec }}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card shadow-sm border-0 mb-3">
+                    <div class="card-body">
+                        <h6 class="text-muted">Detalle</h6>
+                        <div class="d-flex justify-content-between">
+                            <span>{{ item.dDesProSer }}</span>
+                            <span>{{ factura.monto|floatformat:"0g" }} Gs</span>
+                        </div>
+                        <hr>
+                        <div class="d-flex justify-content-between fs-5 fw-bold">
+                            <span>Total a pagar</span>
+                            <span>{{ factura.monto|floatformat:"0g" }} Gs</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card shadow-sm border-0 mb-3">
+                    <div class="card-body">
+                        <h6 class="text-muted">Desglose de la operación</h6>
+                        <div class="d-flex justify-content-between"><span class="text-muted">Operación</span><span>
+                            {% if not ve_todas %}<a href="{% url 'operacion_detalle' transaccion.id %}">#{{ transaccion.id }}</a>{% else %}#{{ transaccion.id }}{% endif %}
+                            · {{ transaccion.get_tipo_display }}
+                        </span></div>
+                        <div class="d-flex justify-content-between"><span class="text-muted">Moneda</span><span>{{ transaccion.moneda.codigo }}{% if transaccion.moneda_destino %} a {{ transaccion.moneda_destino.codigo }}{% endif %}</span></div>
+                        <div class="d-flex justify-content-between"><span class="text-muted">Cantidad</span><span>{{ transaccion.cantidad|floatformat:"2g" }} {{ transaccion.moneda.codigo }}</span></div>
+                        <div class="d-flex justify-content-between"><span class="text-muted">Tasa aplicada</span><span>{{ transaccion.tasa_cambio|floatformat:"2g" }} Gs{% if transaccion.tasa_cambio_destino %} / {{ transaccion.tasa_cambio_destino|floatformat:"2g" }} Gs{% endif %}</span></div>
+                        <div class="d-flex justify-content-between"><span class="text-muted">Subtotal</span><span>{{ transaccion.subtotal|floatformat:"0g" }} Gs</span></div>
+                        <div class="d-flex justify-content-between"><span class="text-muted">Comisión ({{ transaccion.comision_porcentaje|floatformat:"2" }}%)</span><span>{{ transaccion.monto_comision|floatformat:"0g" }} Gs</span></div>
+                        <div class="d-flex justify-content-between"><span class="text-muted">Medio de pago</span><span>{% if transaccion.medio_pago %}{{ transaccion.medio_pago.alias }}{% else %}{{ transaccion.metodo_pago.nombre }}{% endif %}</span></div>
+                    </div>
+                </div>
+
+                {% if ve_todas %}
+                <div class="card shadow-sm border-0 mb-3">
+                    <div class="card-body small">
+                        <h6 class="text-muted">Soporte</h6>
+                        <div>Proveedor: {{ factura.proveedor|default:"—" }} · Intentos de envío: {{ factura.intentos }}</div>
+                        <div>Estado en SIFEN: {{ factura.estado_sifen|default:"—" }}</div>
+                        {% if factura.ultimo_error %}<div class="text-danger">Último error: {{ factura.ultimo_error }}</div>{% endif %}
+                        {% if factura.proximo_intento %}<div>Próximo reintento: {{ factura.proximo_intento|date:"d/m/Y H:i" }} (UTC)</div>{% endif %}
+                    </div>
+                </div>
+                {% endif %}
+
+                <div class="d-flex gap-2">
+                    <a href="{% url 'facturas' %}" class="btn btn-outline-secondary flex-fill">Volver al listado</a>
+                    {% if factura.esta_emitida %}
+                    <a href="{% url 'factura_pdf' factura.id %}" class="btn btn-success flex-fill">Descargar PDF</a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

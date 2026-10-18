@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GlobalExchange - Facturas</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="{% url 'menu_principal' %}">GlobalExchange</a>
+            <div class="d-flex align-items-center text-white">
+                <span class="me-3">Bienvenido, <strong>{{ usuario.username }}</strong></span>
+                <a href="{% url 'menu_principal' %}" class="btn btn-outline-light btn-sm">Volver al Portal</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container my-5">
+        <div class="row">
+            <div class="col-md-12 text-center mb-4">
+                <h2>Facturas electrónicas</h2>
+                <p class="text-muted">
+                    {% if ve_todas %}Consulta de las facturas de todos los clientes (solo lectura).
+                    {% else %}Consultá tus facturas y descargalas en PDF.{% endif %}
+                </p>
+            </div>
+        </div>
+
+        {% for m in messages %}
+            <div class="alert {% if m.tags == 'error' %}alert-danger{% elif m.tags == 'success' %}alert-success{% else %}alert-info{% endif %} py-2">{{ m }}</div>
+        {% endfor %}
+
+        <div class="row g-4">
+            <!-- Filtros -->
+            <div class="col-md-3">
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Filtros</h5>
+                        <form method="get">
+                            <div class="mb-3">
+                                <label class="form-label">Desde</label>
+                                <input type="date" name="fecha_desde" class="form-control" value="{{ filtros.fecha_desde }}">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Hasta</label>
+                                <input type="date" name="fecha_hasta" class="form-control" value="{{ filtros.fecha_hasta }}">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Número</label>
+                                <input type="text" name="numero" class="form-control" placeholder="12 o 001-001-0000012" value="{{ filtros.numero }}">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Moneda</label>
+                                <select name="moneda" class="form-select">
+                                    <option value="">Todas</option>
+                                    {% for m in monedas %}
+                                    <option value="{{ m.id }}" {% if filtros.moneda == m.id|stringformat:"s" %}selected{% endif %}>{{ m.codigo }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Estado</label>
+                                <select name="estado" class="form-select">
+                                    <option value="">Todos</option>
+                                    {% for valor, etiqueta in estados %}
+                                    <option value="{{ valor }}" {% if filtros.estado == valor %}selected{% endif %}>{{ etiqueta }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            {% if ve_todas %}
+                            <div class="mb-3">
+                                <label class="form-label">Cliente</label>
+                                <select name="cliente" class="form-select">
+                                    <option value="">Todos</option>
+                                    {% for c in clientes %}
+                                    <option value="{{ c.id }}" {% if filtros.cliente == c.id|stringformat:"s" %}selected{% endif %}>{{ c.nombre }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            {% endif %}
+                            <button type="submit" class="btn btn-primary w-100 mb-2">Filtrar</button>
+                            <a href="{% url 'facturas' %}" class="btn btn-outline-secondary w-100">Limpiar filtros</a>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Listado -->
+            <div class="col-md-9">
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table align-middle mb-0">
+                                <thead>
+                                    <tr class="text-muted">
+                                        <th>N° de factura</th>
+                                        <th>Fecha</th>
+                                        {% if ve_todas %}<th>Cliente</th>{% endif %}
+                                        <th>Operación</th>
+                                        <th class="text-end">Monto</th>
+                                        <th>Estado</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for f in facturas %}
+                                    <tr>
+                                        <td class="fw-semibold">{{ f.numero_legal }}</td>
+                                        <td>{{ f.emision_local|date:"d/m/Y H:i" }}</td>
+                                        {% if ve_todas %}<td>{{ f.transaccion.cliente.nombre }}</td>{% endif %}
+                                        <td>
+                                            {{ f.transaccion.get_tipo_display }}
+                                            {{ f.transaccion.moneda.codigo }}{% if f.transaccion.moneda_destino %} a {{ f.transaccion.moneda_destino.codigo }}{% endif %}
+                                            <br><small class="text-muted">Operación #{{ f.transaccion.id }}</small>
+                                        </td>
+                                        <td class="text-end">{{ f.monto|floatformat:"0g" }} Gs</td>
+                                        <td>
+                                            {% if f.estado == 'EMITIDA' %}
+                                                <span class="badge bg-success">{{ f.get_estado_display }}</span>
+                                            {% elif f.estado == 'RECHAZADA' %}
+                                                <span class="badge bg-danger">{{ f.get_estado_display }}</span>
+                                            {% else %}
+                                                <span class="badge bg-warning text-dark">{{ f.get_estado_display }}</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-end text-nowrap">
+                                            {% if f.puede_abrir %}
+                                                <a href="{% url 'factura_detalle' f.id %}" class="btn btn-outline-primary btn-sm">Ver</a>
+                                            {% endif %}
+                                            {% if f.esta_emitida %}
+                                                <a href="{% url 'factura_pdf' f.id %}" class="btn btn-outline-success btn-sm">PDF</a>
+                                            {% elif not f.puede_abrir %}
+                                                <small class="text-muted">Todavía no emitida</small>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% empty %}
+                                    <tr>
+                                        <td colspan="{% if ve_todas %}7{% else %}6{% endif %}" class="text-center text-muted py-4">
+                                            No hay facturas con esos filtros.
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

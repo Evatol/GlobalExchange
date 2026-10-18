@@ -13,6 +13,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_POST
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -22,6 +23,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.divisas.models import Moneda, TasaCambio
+from apps.pasarela import stripe_pago
 from apps.usuarios import sesion
 from apps.usuarios.models import Cliente
 from apps.usuarios.permissions import (
@@ -578,7 +580,7 @@ def operacion_detalle_view(request, pk):
     return render(request, 'transacciones/operacion_detalle.html', {
         'usuario': request.user,
         'transaccion': transaccion,
-        'pasarela_activa': settings.PASARELA_SIMULADA_ACTIVA,
+        'pasarela_activa': _pasarela_disponible(transaccion),
     })
 
 
@@ -599,12 +601,43 @@ def operacion_confirmar_view(request, pk):
     return redirect('operacion_detalle', pk=transaccion.pk)
 
 
-def _iniciar_pago_externo(transaccion):
-    """Genera la referencia de la pasarela e inicia el pago externo (E4-157).
-    Lanza ``ValidationError`` si la operación no puede pagarse por ahí."""
-    referencia = f'PAS-{uuid.uuid4().hex[:20].upper()}'
-    transaccion.iniciar_pago_externo(referencia)
-    return referencia
+def _pasarela_disponible(transaccion):
+    """True si esta operación puede pagarse por una pasarela en este ambiente: con
+    Stripe, cualquier medio que no sea efectivo; si no, la pasarela simulada, si
+    está encendida."""
+    if stripe_pago.activa():
+        return transaccion.metodo_pago.usa_banco
+    return settings.PASARELA_SIMULADA_ACTIVA
+
+
+def _iniciar_pago_externo(request, transaccion):
+    """Inicia el pago externo de una compra (E4-157) y devuelve ``(referencia,
+    url_pago)``. Lanza ``ValidationError`` si la operación no puede pagarse por ahí.
+
+    Con Stripe crea la sesión de Checkout: la referencia es su id y ``url_pago`` la
+    página de Stripe donde paga el cliente. Con la pasarela simulada la referencia es
+    propia y ``url_pago`` es ``None`` (la pantalla simulada se abre por la referencia).
+    Lanza ``stripe_pago.ErrorStripe`` si Stripe no pudo atender el pedido; en ese caso
+    la operación sigue ``PENDIENTE``.
+    """
+    if not stripe_pago.activa():
+        referencia = f'PAS-{uuid.uuid4().hex[:20].upper()}'
+        transaccion.iniciar_pago_externo(referencia)
+        return referencia, None
+
+    transaccion.validar_pago_externo(Transaccion.PROVEEDOR_STRIPE)
+    sesion_stripe = stripe_pago.crear_sesion(
+        transaccion,
+        url_exito=(
+            request.build_absolute_uri(reverse('pasarela_stripe_retorno'))
+            + '?session_id={CHECKOUT_SESSION_ID}'  # lo reemplaza Stripe
+        ),
+        url_cancelacion=request.build_absolute_uri(
+            reverse('operacion_detalle', args=[transaccion.pk])
+        ),
+    )
+    transaccion.iniciar_pago_externo(sesion_stripe.id, Transaccion.PROVEEDOR_STRIPE)
+    return sesion_stripe.id, sesion_stripe.url
 
 
 @login_required
@@ -612,21 +645,47 @@ def _iniciar_pago_externo(transaccion):
 def operacion_pago_externo_view(request, pk):
     """Inicia el pago de una compra por la pasarela externa (E4-157): la
     operación queda ``PENDIENTE_PAGO`` hasta que el webhook avise (E4-158), y se
-    lleva al cliente a la pantalla de pago de la pasarela.
+    lleva al cliente a la pantalla de pago de la pasarela (la página de Stripe, o la
+    pantalla de la pasarela simulada).
 
-    Si la pasarela simulada no está habilitada en este ambiente no se inicia
-    nada: la operación quedaría esperando un pago que nadie puede hacer.
+    Si no hay pasarela disponible en este ambiente no se inicia nada: la operación
+    quedaría esperando un pago que nadie puede hacer. Si ya estaba iniciado, se
+    vuelve a llevar al cliente a pagar (un doble clic no crea otra sesión).
     """
     transaccion = _transaccion_del_cliente_activo(request, pk)
-    if not settings.PASARELA_SIMULADA_ACTIVA:
+    if not _pasarela_disponible(transaccion):
         messages.error(request, 'La pasarela de pago no está habilitada en este ambiente.')
         return redirect('operacion_detalle', pk=transaccion.pk)
+    if transaccion.estado == 'PENDIENTE_PAGO' and transaccion.referencia_pago_externo:
+        return redirect('pasarela_pagar', referencia=transaccion.referencia_pago_externo)
     try:
-        referencia = _iniciar_pago_externo(transaccion)
+        referencia, url_pago = _iniciar_pago_externo(request, transaccion)
     except ValidationError as exc:
         messages.error(request, exc.messages[0])
         return redirect('operacion_detalle', pk=transaccion.pk)
+    except stripe_pago.ErrorStripe as exc:
+        messages.error(request, str(exc))
+        return redirect('operacion_detalle', pk=transaccion.pk)
+    if url_pago:
+        return redirect(url_pago)
     return redirect('pasarela_pagar', referencia=referencia)
+
+
+def _cancelar_operacion(transaccion):
+    """Cancela la operación (RF23). Si estaba esperando el pago de Stripe, cierra
+    también la sesión, para que el cliente ya no pueda pagarla. Si no se pudo
+    cerrar (por ejemplo, porque el cliente justo pagó), el aviso de pago que llegue
+    después se devuelve solo (ver ``apps.pasarela.views``)."""
+    esperaba_stripe = (
+        transaccion.estado == 'PENDIENTE_PAGO'
+        and transaccion.proveedor_pago == Transaccion.PROVEEDOR_STRIPE
+    )
+    transaccion.cancelar()
+    if esperaba_stripe:
+        try:
+            stripe_pago.expirar_sesion(transaccion.referencia_pago_externo)
+        except stripe_pago.ErrorStripe:
+            pass
 
 
 @login_required
@@ -635,7 +694,7 @@ def operacion_cancelar_view(request, pk):
     """Cancela a pedido del cliente una operación todavía no pagada (RF23)."""
     transaccion = _transaccion_del_cliente_activo(request, pk)
     try:
-        transaccion.cancelar()
+        _cancelar_operacion(transaccion)
         messages.info(request, f'Cancelaste la operación #{transaccion.pk}.')
     except ValidationError as exc:
         messages.error(request, exc.messages[0])
@@ -720,17 +779,28 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
         """``POST .../transacciones/<id>/iniciar-pago-externo/``: inicia el
         pago de una compra por la pasarela externa (E4-157). Devuelve la
         ``referencia_pago_externo`` con la que la pasarela va a avisar por el
-        webhook. 409 si la operación no puede pagarse por ahí."""
+        webhook. Con Stripe devuelve además ``url_pago``, la página de Stripe a
+        la que hay que llevar al cliente. 409 si la operación no puede pagarse
+        por ahí y 502 si Stripe no pudo atender el pedido."""
         transaccion = _transaccion_del_cliente_activo(request, pk)
         try:
-            _iniciar_pago_externo(transaccion)
+            _, url_pago = _iniciar_pago_externo(request, transaccion)
         except ValidationError as exc:
             return Response(
                 {'detail': exc.messages[0], **_desglose(transaccion)},
                 status=status.HTTP_409_CONFLICT,
             )
+        except stripe_pago.ErrorStripe as exc:
+            return Response(
+                {'detail': str(exc), **_desglose(transaccion)},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
         return Response(
-            {'detail': 'Pago externo iniciado.', **_desglose(transaccion)},
+            {
+                'detail': 'Pago externo iniciado.',
+                **({'url_pago': url_pago} if url_pago else {}),
+                **_desglose(transaccion),
+            },
             status=status.HTTP_201_CREATED,
         )
 
@@ -740,7 +810,7 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
         operación todavía no pagada (RF23)."""
         transaccion = _transaccion_del_cliente_activo(request, pk)
         try:
-            transaccion.cancelar()
+            _cancelar_operacion(transaccion)
         except ValidationError as exc:
             return Response(
                 {'detail': exc.messages[0], **_desglose(transaccion)},
@@ -925,7 +995,18 @@ def procesar_aviso_de_pago(cuerpo, firma):
         )
     if evento not in ('PAGADO', 'RECHAZADO'):
         return {'detail': 'estado debe ser PAGADO o RECHAZADO.'}, status.HTTP_400_BAD_REQUEST
+    return aplicar_aviso_de_pago(referencia, evento)
 
+
+def aplicar_aviso_de_pago(referencia, evento, motivo=None):
+    """Aplica a la operación con esa ``referencia`` el resultado del pago que informó
+    la pasarela (``evento``: ``PAGADO`` o ``RECHAZADO``) y devuelve
+    ``(datos, codigo_http)``. Es lo que hay detrás de ``procesar_aviso_de_pago``,
+    ya con la autenticidad del aviso verificada por quien llama: ``procesar_aviso_de_pago``
+    con la firma HMAC, y ``apps.pasarela`` con lo que le dijo Stripe.
+
+    ``motivo`` es el texto que queda en la operación si el pago se rechaza.
+    """
     with transaction.atomic():
         tx = (
             Transaccion.objects.select_for_update(of=('self',))  # solo bloquea esta fila
@@ -940,6 +1021,8 @@ def procesar_aviso_de_pago(cuerpo, firma):
             if evento == 'PAGADO':
                 tx.confirmar_pago_webhook()
                 tx.confirmar()  # EXITOSA, o se cancela si cambió la cotización
+            elif motivo:
+                tx.rechazar_pago_webhook(motivo)
             else:
                 tx.rechazar_pago_webhook()
         except ValidationError as exc:

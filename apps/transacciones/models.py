@@ -1,11 +1,15 @@
+import logging
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 
+from django.conf import settings
 from django.db import models, transaction
 from django.core.exceptions import ValidationError
 from apps.banco import services as banco
 from apps.banco.models import CuentaBancaria
 from apps.usuarios.models import Usuario, Cliente
 from apps.divisas.models import Moneda
+
+logger = logging.getLogger(__name__)
 
 
 def _a_guaranies(monto):
@@ -184,6 +188,15 @@ class Transaccion(models.Model):
     rechazó el cobro (``rechazar_pago_webhook()``). En ese caso el cobro lo hizo
     la pasarela, así que no se debita además el banco.
 
+    Con Stripe activo (``PASARELA_PROVEEDOR='stripe'``) la pasarela es obligatoria
+    para toda compra que no sea en efectivo (``requiere_pasarela``): ya no se
+    debita la cuenta del banco simulado. La venta sigue acreditando en el banco
+    (Stripe cobra, no le paga a un cliente) y el efectivo se paga en caja.
+
+    Cuando una operación pasa a ``EXITOSA`` se registra su factura electrónica
+    (``_registrar_factura``, ver ``apps.facturacion``). La factura es un efecto de la
+    operación: si falla, la operación sigue exitosa.
+
     En un ``CAMBIO``, ``moneda``/``cantidad``/``tasa_cambio`` son los de la
     divisa que entrega el cliente, y ``moneda_destino``/``cantidad_destino``/
     ``tasa_cambio_destino`` los de la que recibe. La conversión pasa por el
@@ -252,12 +265,25 @@ class Transaccion(models.Model):
         Cliente.PREFERENCIA_MAYORISTA: Decimal('0.50'),
     }
 
-    def iniciar_pago_externo(self, referencia, proveedor='PASARELA_LOCAL'):
-        """Ticket E4-157: Registra la referencia e inicia la confirmación externa.
+    PROVEEDOR_STRIPE = 'STRIPE'
+
+    @property
+    def requiere_pasarela(self):
+        """True si esta compra solo puede pagarse por la pasarela: con Stripe
+        activo, toda compra con un medio que no es efectivo."""
+        return (
+            settings.PASARELA_PROVEEDOR == 'stripe'
+            and self.tipo == 'COMPRA'
+            and self.metodo_pago.usa_banco
+        )
+
+    def validar_pago_externo(self, proveedor='PASARELA_LOCAL'):
+        """Lanza ``ValidationError`` si esta operación no puede pagarse por la
+        pasarela. Se llama antes de crear nada en el proveedor externo.
 
         Solo una compra ``PENDIENTE`` puede pagarse por la pasarela: en una
         venta el cliente recibe plata (no la paga) y en un cambio solo hay
-        efectivo.
+        efectivo. Con Stripe tampoco el efectivo: se paga en caja.
         """
         if self.estado != 'PENDIENTE':
             raise ValidationError(
@@ -266,6 +292,13 @@ class Transaccion(models.Model):
             )
         if self.tipo != 'COMPRA':
             raise ValidationError('El pago externo solo aplica a las compras.')
+        if proveedor == self.PROVEEDOR_STRIPE and not self.metodo_pago.usa_banco:
+            raise ValidationError('El efectivo se paga en caja: no se cobra con Stripe.')
+
+    def iniciar_pago_externo(self, referencia, proveedor='PASARELA_LOCAL'):
+        """Ticket E4-157: Registra la referencia e inicia la confirmación externa
+        (ver ``validar_pago_externo`` para qué operaciones pueden hacerlo)."""
+        self.validar_pago_externo(proveedor)
         self.referencia_pago_externo = referencia
         self.proveedor_pago = proveedor
         self.estado = 'PENDIENTE_PAGO'
@@ -299,6 +332,33 @@ class Transaccion(models.Model):
         self.estado = 'FALLIDA'
         self.observacion = motivo[:255]
         self.save()
+
+    def anotar_devolucion(self, id_reembolso=None):
+        """Anota en la operación qué pasó con un pago externo que quedó sin
+        realizarse (cancelada o fallida después de que el cliente pagó).
+
+        Con ``id_reembolso`` el pago ya se devolvió al cliente; sin él, queda anotado
+        que hay que devolverlo. Reemplaza el aviso "debe devolverse al cliente" que
+        deja ``confirmar()``, y repetirlo con el mismo reembolso no cambia nada.
+        """
+        pendiente = 'debe devolverse al cliente'
+        if id_reembolso is None:
+            if 'devolverse' not in self.observacion and 'devolvió' not in self.observacion:
+                self.observacion = (
+                    f'{self.observacion} El pago externo {self.referencia_pago_externo} '
+                    f'{pendiente}.'
+                ).strip()[:255]
+        elif id_reembolso not in self.observacion:
+            devuelto = f'se devolvió al cliente (reembolso {id_reembolso})'
+            if pendiente in self.observacion:
+                self.observacion = self.observacion.replace(pendiente, devuelto)
+            else:
+                self.observacion = (
+                    f'{self.observacion} El pago externo {self.referencia_pago_externo} '
+                    f'{devuelto}.'
+                ).strip()
+            self.observacion = self.observacion[:255]
+        self.save(update_fields=['observacion'])
 
     def calcular_tasas_y_comisiones(self):
         """
@@ -415,6 +475,11 @@ class Transaccion(models.Model):
             )
         if not self.validar():
             return 'La transacción no es válida.'
+        if self.requiere_pasarela and not self.referencia_pago_externo:
+            return (
+                'Las compras con transferencia, billetera o tarjeta se pagan con Stripe: '
+                'usá "Pagar con Stripe".'
+            )
 
         cambios, error = self._cambios_de_cotizacion()
         if error:
@@ -443,7 +508,20 @@ class Transaccion(models.Model):
 
         self.estado = 'EXITOSA'
         self.save()
+        self._registrar_factura()
         return None
+
+    def _registrar_factura(self):
+        """Crea la factura electrónica de la operación recién exitosa (RF33). La
+        factura es un efecto de la operación, no una condición: si no se pudo crear, la
+        operación sigue exitosa y ``manage.py procesar_facturas`` la crea después."""
+        from apps.facturacion import services  # import diferido: facturación depende de esta app
+
+        try:
+            with transaction.atomic():  # savepoint: un fallo acá no daña la operación
+                services.registrar_factura(self)
+        except Exception:
+            logger.exception('No se pudo registrar la factura de la operación %s', self.pk)
 
     def _cambios_de_cotizacion(self):
         """Compara las tasas guardadas con las vigentes. Devuelve

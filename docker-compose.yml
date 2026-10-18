@@ -67,6 +67,12 @@ services:
 
       SEED_DEMO_USERS: ${SEED_DEMO_USERS:-true}
 
+      # Stripe (claves de PRUEBA, de tu .env: nunca en el repositorio). Sin
+      # STRIPE_SECRET_KEY las compras siguen con la pasarela simulada.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+
       # App Password de Gmail para que Keycloak pueda mandar los correos de
       # verificación del autoregistro. NO va hardcodeado acá: el repo es
       # público. Cada uno lo pone en su propio .env (que git ignora) y el

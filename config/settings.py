@@ -14,6 +14,7 @@ from pathlib import Path
 
 import environ
 import os
+import sys
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -305,3 +306,64 @@ WEBHOOK_PAGO_SECRET = env('WEBHOOK_PAGO_SECRET', default='secreto-dev-webhook' i
 # nunca debe estar encendida en un ambiente que cobre de verdad. Por defecto solo en
 # desarrollo; el compose de produccion de este proyecto academico la enciende.
 PASARELA_SIMULADA_ACTIVA = env.bool('PASARELA_SIMULADA_ACTIVA', default=DEBUG)
+
+# Stripe (apps.pasarela.stripe_pago): pasarela de pago real, hoy con claves de prueba
+# (sk_test_/pk_test_). Las claves van en el .env, nunca en el repo. Sin clave secreta
+# no hay Stripe y el sistema sigue con la pasarela simulada. STRIPE_WEBHOOK_SECRET
+# (whsec_...) es opcional: sin el, el pago igual se confirma cuando el cliente vuelve
+# de Stripe, pero no si cierra la pestana antes de volver.
+STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY', default='')
+STRIPE_PUBLISHABLE_KEY = env('STRIPE_PUBLISHABLE_KEY', default='')
+STRIPE_WEBHOOK_SECRET = env('STRIPE_WEBHOOK_SECRET', default='')
+# Que pasarela cobra las compras que no son en efectivo: 'stripe' o 'simulada'.
+PASARELA_PROVEEDOR = env(
+    'PASARELA_PROVEEDOR', default='stripe' if STRIPE_SECRET_KEY else 'simulada'
+)
+
+# Facturación electrónica (apps.facturacion). Cada transacción exitosa genera una factura
+# que se envía al proveedor: 'simulado' (por defecto: aprueba al instante, sin validez
+# tributaria) o 'facturasegura' (API de Factura Segura / SIFEN, que necesita el token del
+# usuario ESI y que el emisor esté asociado a él; ver docs/facturacion.md).
+FACTURACION_PROVEEDOR = env('FACTURACION_PROVEEDOR', default='simulado')
+FACTURA_SEGURA_URL = env(
+    'FACTURA_SEGURA_URL', default='https://apitest.facturasegura.com.py/misife00/v1/esi'
+)
+FACTURA_SEGURA_TOKEN = env('FACTURA_SEGURA_TOKEN', default='')
+# Al emitirse, la factura se manda por correo (con el PDF) al usuario que hizo la operación.
+# Factura Segura, además, manda su propio correo con el XML y el KuDE al receptor.
+FACTURACION_ENVIAR_CORREO = env.bool('FACTURACION_ENVIAR_CORREO', default=True)
+# Para mostrar el reintento: con False el simulador responde como si estuviera caído.
+FACTURACION_SIMULADOR_DISPONIBLE = env.bool('FACTURACION_SIMULADOR_DISPONIBLE', default=True)
+# Timbrado y numeración que la DNIT le dio al emisor. Los valores por defecto son de DEMO.
+FACTURACION_TIMBRADO = env('FACTURACION_TIMBRADO', default='12345678')
+FACTURACION_TIMBRADO_INICIO = env('FACTURACION_TIMBRADO_INICIO', default='2026-01-01')
+FACTURACION_ESTABLECIMIENTO = env('FACTURACION_ESTABLECIMIENTO', default='001')
+FACTURACION_PUNTO_EXPEDICION = env('FACTURACION_PUNTO_EXPEDICION', default='001')
+# Datos del emisor (la casa de cambio). Los valores por defecto son de DEMO.
+FACTURACION_EMISOR = {
+    'ruc': env('FACTURACION_EMISOR_RUC', default='80000000'),
+    'dv': env('FACTURACION_EMISOR_DV', default='0'),
+    'nombre': env('FACTURACION_EMISOR_NOMBRE', default='GLOBAL EXCHANGE S.A. (DEMO)'),
+    'direccion': env('FACTURACION_EMISOR_DIRECCION', default='AVENIDA MARISCAL LOPEZ'),
+    'numero_casa': env('FACTURACION_EMISOR_NUMERO_CASA', default='0'),
+    'departamento_codigo': env('FACTURACION_EMISOR_DEPARTAMENTO_CODIGO', default='1'),
+    'departamento': env('FACTURACION_EMISOR_DEPARTAMENTO', default='CAPITAL'),
+    'ciudad_codigo': env('FACTURACION_EMISOR_CIUDAD_CODIGO', default='1'),
+    'ciudad': env('FACTURACION_EMISOR_CIUDAD', default='ASUNCION (DISTRITO)'),
+    'telefono': env('FACTURACION_EMISOR_TELEFONO', default='(021)000000'),
+    'email': env('FACTURACION_EMISOR_EMAIL', default='globalexchange314@gmail.com'),
+    'actividad_codigo': env('FACTURACION_EMISOR_ACTIVIDAD_CODIGO', default='66199'),
+    'actividad': env(
+        'FACTURACION_EMISOR_ACTIVIDAD',
+        default='Otras actividades auxiliares de servicios financieros n.c.p.',
+    ),
+}
+
+# Las pruebas nunca hablan con Stripe ni con Factura Segura, tenga o no claves el .env de
+# quien las corre.
+if 'test' in sys.argv:
+    STRIPE_SECRET_KEY = STRIPE_PUBLISHABLE_KEY = STRIPE_WEBHOOK_SECRET = ''
+    PASARELA_PROVEEDOR = 'simulada'
+    FACTURACION_PROVEEDOR = 'simulado'
+    FACTURA_SEGURA_TOKEN = ''
+    FACTURACION_SIMULADOR_DISPONIBLE = True

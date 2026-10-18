@@ -85,11 +85,17 @@
 
                 {% if transaccion.estado == 'PENDIENTE_PAGO' %}
                     <div class="alert alert-info small mt-3 mb-3">
+                        {% if transaccion.proveedor_pago == 'STRIPE' %}
+                        Pago con Stripe iniciado. Referencia: <strong>{{ transaccion.referencia_pago_externo }}</strong>.
+                        La operación se confirma sola apenas Stripe avise que cobró. Si cerraste la página de pago
+                        antes de terminar, podés retomarla desde acá.
+                        {% else %}
                         Pago externo iniciado. Referencia: <strong>{{ transaccion.referencia_pago_externo }}</strong>.
                         La operación se confirma sola cuando la pasarela avise que cobró.
+                        {% endif %}
                     </div>
                     {% if pasarela_activa %}
-                    <a href="{% url 'pasarela_pagar' transaccion.referencia_pago_externo %}" class="btn btn-primary w-100 mb-2">Ir a la pasarela para pagar</a>
+                    <a href="{% url 'pasarela_pagar' transaccion.referencia_pago_externo %}" class="btn btn-primary w-100 mb-2">{% if transaccion.proveedor_pago == 'STRIPE' %}Ir a Stripe para pagar{% else %}Ir a la pasarela para pagar{% endif %}</a>
                     {% endif %}
                     <form method="post" action="{% url 'operacion_cancelar' transaccion.id %}" class="m-0">
                         {% csrf_token %}
@@ -99,6 +105,19 @@
                     <p class="text-muted small text-center mt-3">
                         Si la cotización cambia antes de confirmar, la operación se cancela.
                     </p>
+                    {% if transaccion.requiere_pasarela %}
+                    <p class="text-muted small text-center">
+                        Esta compra se paga con tarjeta en la página segura de Stripe.
+                    </p>
+                    <form method="post" action="{% url 'operacion_pago_externo' transaccion.id %}" class="mb-2">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-primary w-100">Pagar con Stripe</button>
+                    </form>
+                    <form method="post" action="{% url 'operacion_cancelar' transaccion.id %}" class="m-0">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-secondary w-100">Cancelar operación</button>
+                    </form>
+                    {% else %}
                     <div class="d-flex gap-2">
                         <form method="post" action="{% url 'operacion_cancelar' transaccion.id %}" class="flex-fill m-0">
                             {% csrf_token %}
@@ -115,7 +134,19 @@
                         <button type="submit" class="btn btn-outline-primary w-100">Pagar con la pasarela</button>
                     </form>
                     {% endif %}
+                    {% endif %}
                 {% else %}
+                    {% if transaccion.factura %}
+                    <div class="alert alert-light border small mt-3 mb-0 text-center">
+                        Factura electrónica <strong>{{ transaccion.factura.numero_legal }}</strong>:
+                        {% if transaccion.factura.esta_emitida %}
+                            <a href="{% url 'factura_detalle' transaccion.factura.id %}">verla</a> ·
+                            <a href="{% url 'factura_pdf' transaccion.factura.id %}">descargar PDF</a>
+                        {% else %}
+                            se está emitiendo, la vas a ver en <a href="{% url 'facturas' %}">Facturas</a> en unos minutos.
+                        {% endif %}
+                    </div>
+                    {% endif %}
                     <div class="d-flex gap-2 mt-3">
                         <a href="{% url 'operar_divisa' %}" class="btn btn-primary flex-fill">Nueva operación</a>
                         <a href="{% url 'historial_transacciones' %}" class="btn btn-outline-primary flex-fill">Ver historial</a>
