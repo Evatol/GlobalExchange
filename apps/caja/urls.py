@@ -4,10 +4,15 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     AsignacionCajeroViewSet,
     SucursalViewSet,
+    TerminalViewSet,
     asignacion_cajero_desasignar_view,
+    gestion_terminales_view,
     gestion_sucursales_view,
     sucursal_editar_view,
     sucursal_toggle_view,
+    terminal_desactivar_view,
+    terminal_demo_view,
+    terminal_editar_view,
 )
 from .views_billetes import (
     ArqueoViewSet,
@@ -38,6 +43,7 @@ from .views_pantallas import (
 
 router = DefaultRouter()
 router.register('sucursales', SucursalViewSet, basename='sucursal')
+router.register('terminales', TerminalViewSet, basename='terminal')
 router.register(
     'asignaciones-cajero', AsignacionCajeroViewSet, basename='asignacioncajero'
 )
@@ -53,6 +59,18 @@ router.register('limites-stock', LimiteStockViewSet, basename='limitestock')
 
 urlpatterns = [
     # Pantallas propias de gestión (HTML), en vez de la API navegable de DRF.
+    path('gestion/terminales/', gestion_terminales_view, name='gestion_terminales'),
+    path(
+        'gestion/terminales/<int:pk>/editar/',
+        terminal_editar_view,
+        name='terminal_editar',
+    ),
+    path(
+        'gestion/terminales/<int:pk>/desactivar/',
+        terminal_desactivar_view,
+        name='terminal_desactivar',
+    ),
+    path('autoservicio/<int:pk>/', terminal_demo_view, name='terminal_demo'),
     path('gestion/sucursales/', gestion_sucursales_view, name='gestion_sucursales'),
     path('gestion/sucursales/<int:pk>/editar/', sucursal_editar_view, name='sucursal_editar'),
     path('gestion/sucursales/<int:pk>/toggle/', sucursal_toggle_view, name='sucursal_toggle'),

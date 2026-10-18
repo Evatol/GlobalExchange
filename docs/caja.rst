@@ -1,6 +1,25 @@
 caja package
 ============
 
+Terminales de autoservicio
+--------------------------
+
+La administración de terminales se encuentra en ``/api/caja/gestion/terminales/``
+y está disponible para administradores. Al dar de alta una terminal se crea,
+en una transacción, su caja propia y el stock inicial por denominación. Las
+cantidades omitidas comienzan en cero. Las denominaciones deben estar activas
+y la sucursal debe estar activa.
+
+Los estados posibles son ``ACTIVA``, ``INACTIVA`` y ``MANTENIMIENTO``. La baja
+es lógica y conserva la caja y sus movimientos. Una terminal en estado no
+operativo, o ubicada en una sucursal inactiva, no puede iniciar operaciones.
+La simulación visible para la demo está en ``/api/caja/autoservicio/<id>/``; la
+acción ``POST /api/caja/terminales/<id>/iniciar-operacion/`` aplica la misma
+validación del lado del servidor.
+
+Las cajas vinculadas a terminales no aparecen en la administración de cajas
+de cajero: su inventario y su estado operativo se gestionan desde la terminal.
+
 Subpackages
 -----------
 
