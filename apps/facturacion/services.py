@@ -90,7 +90,8 @@ def _fecha(valor):
 
 
 def _id_desde_numero(texto):
-    """Id de la factura a partir de su número (``001-001-0000042`` o ``42``)."""
+    """Número de la factura a partir de lo escrito (``001-001-0000042`` o ``42``): es el
+    correlativo, o el id en las facturas que no tienen correlativo."""
     return _entero((texto or '').strip().split('-')[-1])
 
 
@@ -123,7 +124,9 @@ def filtrar_facturas(queryset, params):
         if factura_id is None:
             errores.append('El número de factura no es válido.')
         else:
-            queryset = queryset.filter(pk=factura_id)
+            queryset = queryset.filter(
+                Q(correlativo=factura_id) | Q(correlativo__isnull=True, pk=factura_id)
+            )
 
     moneda = params.get('moneda', '').strip()
     if moneda:
@@ -147,10 +150,20 @@ def filtrar_facturas(queryset, params):
 # PDF
 # ---------------------------------------------------------------------------
 
-def _emisor():
-    """Datos fiscales del emisor. Los valores por defecto son de demostración;
-    se cambian definiendo ``EMPRESA_RAZON_SOCIAL``, ``EMPRESA_RUC``,
+def _emisor(factura=None):
+    """Datos fiscales del emisor. En una factura que emitió el sistema salen del
+    documento que se envió (``payload``), para que el PDF coincida con lo que recibió
+    SIFEN. Si no (los datos de demostración), los valores por defecto son de
+    demostración y se cambian definiendo ``EMPRESA_RAZON_SOCIAL``, ``EMPRESA_RUC``,
     ``EMPRESA_DIRECCION`` y ``EMPRESA_TIMBRADO`` en la configuración."""
+    datos = factura.payload if factura is not None else {}
+    if datos.get('dRucEm'):
+        return {
+            'razon_social': datos['dNomEmi'],
+            'ruc': f"{datos['dRucEm']}-{datos['dDVEmi']}",
+            'direccion': f"{datos['dDirEmi']} {datos['dNumCas']}, {datos['dDesCiuEmi']}",
+            'timbrado': datos['dNumTim'],
+        }
     return {
         'razon_social': getattr(settings, 'EMPRESA_RAZON_SOCIAL', 'GlobalExchange S.A.'),
         'ruc': getattr(settings, 'EMPRESA_RUC', '80000000-1'),
@@ -182,7 +195,7 @@ def generar_pdf(factura):
 
     t = factura.transaccion
     cliente = t.cliente
-    emisor = _emisor()
+    emisor = _emisor(factura)
     estilos = getSampleStyleSheet()
     normal = estilos['Normal']
 
@@ -209,6 +222,10 @@ def generar_pdf(factura):
         ('Estado', factura.estado),
         ('Transacción asociada', f'#{t.id} - {t.get_tipo_display()} ({t.modalidad})'),
     ]
+    if factura.cdc:
+        factura_filas.append(('CDC', factura.cdc))
+    if factura.estado_sifen:
+        factura_filas.append(('Estado en SIFEN', factura.estado_sifen))
     cliente_filas = [
         ('Nombre / razón social', cliente.razon_social or cliente.nombre),
         ('Documento / RUC', cliente.documento),
@@ -235,6 +252,13 @@ def generar_pdf(factura):
         parrafo(emisor['razon_social'], estilos['Title']),
         parrafo(f"RUC: {emisor['ruc']}  |  Timbrado N° {emisor['timbrado']}"),
         parrafo(emisor['direccion']),
+        *(
+            [parrafo(
+                'DOCUMENTO DE PRUEBA generado por el simulador: sin validez tributaria.',
+                estilos['Italic'],
+            )]
+            if factura.proveedor == 'SIMULADO' else []
+        ),
         Spacer(1, 0.5 * cm),
         parrafo('Factura', estilos['Heading2']),
         tabla(factura_filas),

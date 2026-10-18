@@ -94,6 +94,22 @@ services:
       # el pago externo. Con un proveedor real (o plata de verdad) debe ir en "false":
       # deja "pagar" sin pagar.
       PASARELA_SIMULADA_ACTIVA: ${PASARELA_SIMULADA_ACTIVA:-true}
+      # Stripe (apps.pasarela.stripe_pago), con claves de PRUEBA. Salen del .env de
+      # quien levanta el compose (git lo ignora y .dockerignore no lo mete en la
+      # imagen): nunca van en el repositorio. Sin STRIPE_SECRET_KEY no hay Stripe y
+      # las compras siguen con la pasarela simulada.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+
+      # Facturación electrónica (apps.facturacion). Por defecto el proveedor simulado,
+      # que no necesita nada. Con Factura Segura, el token sale del .env de quien
+      # levanta el compose (nunca va en el repositorio). Ver docs/facturacion.md.
+      FACTURACION_PROVEEDOR: ${FACTURACION_PROVEEDOR:-simulado}
+      FACTURA_SEGURA_TOKEN: ${FACTURA_SEGURA_TOKEN:-}
+      FACTURA_SEGURA_URL: ${FACTURA_SEGURA_URL:-https://apitest.facturasegura.com.py/misife00/v1/esi}
+      FACTURACION_SIMULADOR_DISPONIBLE: ${FACTURACION_SIMULADOR_DISPONIBLE:-true}
+      FACTURACION_ENVIAR_CORREO: ${FACTURACION_ENVIAR_CORREO:-true}
 
       # Sin TLS real en este ambiente (ver nota arriba del archivo).
       SECURE_SSL_REDIRECT: "False"

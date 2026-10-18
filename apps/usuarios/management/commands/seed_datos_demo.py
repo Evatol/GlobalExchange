@@ -338,9 +338,11 @@ class Command(BaseCommand):
                 transaccion.calcular_tasas_y_comisiones()
                 transaccion.estado = 'EXITOSA'
                 transaccion.save()
-            factura, factura_creada = Factura.objects.get_or_create(
-                transaccion=transaccion, defaults={'monto': transaccion.monto_total},
-            )
+            factura = Factura.objects.filter(transaccion=transaccion).first()
+            factura_creada = factura is None
+            if factura_creada:
+                factura = Factura(transaccion=transaccion)
+                factura.generar()  # con su número correlativo, como las que emite el sistema
             self.stdout.write(
                 f'  {tipo} {cantidad} {codigo}: operación '
                 f'{"creada" if creada else "ya existía"}, factura #{factura.pk} '
