@@ -83,6 +83,21 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+# Cierre de sesión por inactividad (E4-195, apps.usuarios.inactividad): cada página que ve
+# un usuario autenticado cuenta el tiempo sin actividad, avisa con una cuenta regresiva y,
+# al cumplirse el límite, cierra la sesión de Django y la de Keycloak. Aplica a todos los
+# roles. Con INACTIVIDAD_ACTIVA=false (por ejemplo, para una demostración larga) se apaga.
+INACTIVIDAD_ACTIVA = env.bool('INACTIVIDAD_ACTIVA', default=True)
+INACTIVIDAD_SEGUNDOS = env.int('INACTIVIDAD_SEGUNDOS', default=300)
+INACTIVIDAD_AVISO_SEGUNDOS = env.int('INACTIVIDAD_AVISO_SEGUNDOS', default=30)
+if INACTIVIDAD_ACTIVA:
+    # Va al final: al volver la respuesta, el CSRF de Django ya fijó su cookie.
+    MIDDLEWARE.append('apps.usuarios.inactividad.InactividadMiddleware')
+    # Respaldo del lado servidor: la sesión de Django también vence si el navegador no
+    # llegó a cerrarla (con un margen sobre el límite), y se renueva con cada pedido.
+    SESSION_COOKIE_AGE = INACTIVIDAD_SEGUNDOS + INACTIVIDAD_AVISO_SEGUNDOS + 60
+    SESSION_SAVE_EVERY_REQUEST = True
+
 ROOT_URLCONF = 'config.urls'
 
 TEMPLATES = [
