@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Levanta TODO el sistema (Postgres + Keycloak + Django) con Docker, espera a
-# que esté listo y carga los datos de demostración. Al terminar imprime las
-# URLs y los usuarios con los que entrar.
+# que esté listo, carga los datos de demostración (terminales con su caja y
+# stock, facturas de ejemplo) y verifica que facturación y terminales
+# respondan. Se puede correr cuantas veces haga falta: no duplica datos. Al
+# terminar imprime las URLs y los usuarios con los que entrar.
 #
 # Uso:
 #
@@ -10,6 +12,7 @@
 #   ./scripts/levantar_sistema.sh --limpio        # borra los datos y arranca de cero
 #   ./scripts/levantar_sistema.sh --sin-datos     # no carga los datos de demo
 #   ./scripts/levantar_sistema.sh --forzar        # sigue aunque haya puertos ocupados
+#   ./scripts/levantar_sistema.sh --sin-verificar # no corre la verificacion final
 #   ./scripts/levantar_sistema.sh --con-correo    # + verificacion por correo (necesita
 #                                                 #   KEYCLOAK_SMTP_PASSWORD en tu .env)
 #
@@ -21,6 +24,7 @@ AMBIENTE="desarrollo"
 LIMPIO="no"
 CARGAR_DATOS="si"
 FORZAR="no"
+VERIFICAR="si"
 CON_CORREO="no"
 
 for arg in "$@"; do
@@ -29,15 +33,16 @@ for arg in "$@"; do
         --limpio)    LIMPIO="si" ;;
         --sin-datos) CARGAR_DATOS="no" ;;
         --forzar)     FORZAR="si" ;;
+        --sin-verificar) VERIFICAR="no" ;;
         --con-correo) CON_CORREO="si" ;;
-        -h|--help)   sed -n '2,14p' "$0"; exit 0 ;;
+        -h|--help)   sed -n '2,17p' "$0"; exit 0 ;;
         *)           echo "Opcion desconocida: $arg (usa --help)"; exit 1 ;;
     esac
 done
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 
-echo "== 1/5 Verificando Docker =="
+echo "== 1/6 Verificando Docker =="
 if ! command -v docker >/dev/null 2>&1; then
     echo "ERROR: Docker no esta instalado." >&2
     exit 1
@@ -49,7 +54,7 @@ fi
 echo "   Docker OK."
 
 echo
-echo "== 2/5 Revisando puertos (8080, 8000) =="
+echo "== 2/6 Revisando puertos (8080, 8000) =="
 # El 5432 no se revisa: el stack no publica Postgres al host justamente para
 # poder convivir con el PostgreSQL local. Si los ocupa el propio stack no hay
 # problema: docker compose los reutiliza.
@@ -84,14 +89,16 @@ if [ "$LIMPIO" = "si" ]; then
 fi
 
 echo
-echo "== 3/5 Levantando el stack ($AMBIENTE) =="
+echo "== 3/6 Levantando el stack ($AMBIENTE) =="
+# Es idempotente: si ya esta levantado, compose solo recrea lo que cambio.
 compose up --build -d
 
 echo
-echo "== 4/5 Esperando a que el sistema responda =="
+echo "== 4/6 Esperando a que el sistema responda (Django y Keycloak) =="
 printf "   "
 for _ in $(seq 1 90); do
-    if curl -fsS -o /dev/null "http://localhost:8000/api/divisas/" 2>/dev/null; then
+    if curl -fsS -o /dev/null "http://localhost:8000/api/divisas/" 2>/dev/null \
+        && curl -fsS -o /dev/null "http://localhost:8080/realms/master" 2>/dev/null; then
         echo " listo."
         LISTO="si"
         break
@@ -101,17 +108,37 @@ for _ in $(seq 1 90); do
 done
 if [ "${LISTO:-no}" != "si" ]; then
     echo
-    echo "ERROR: el sistema no respondio a tiempo. Mira los logs con:" >&2
-    echo "    docker compose -f $COMPOSE_FILE logs web" >&2
+    echo "ERROR: el sistema no respondio a tiempo (Django en 8000 y Keycloak en 8080)." >&2
+    echo "Mira los logs con:" >&2
+    echo "    docker compose -f $COMPOSE_FILE logs web keycloak" >&2
+    echo "Como resolverlo: docs/produccion.md, seccion 'Si la verificacion falla'." >&2
     exit 1
 fi
 
 echo
-echo "== 5/5 Datos de demostracion =="
+echo "== 5/6 Datos de demostracion =="
 if [ "$CARGAR_DATOS" = "si" ]; then
+    # Idempotente: crea las terminales con su caja abierta y su stock inicial,
+    # y las facturas de ejemplo, solo la primera vez.
     compose exec -T web python manage.py seed_datos_demo
 else
     echo "   Omitidos (--sin-datos)."
+fi
+
+echo
+echo "== 6/6 Verificando facturacion y terminales =="
+if [ "$VERIFICAR" = "si" ]; then
+    ARGS_VERIFICACION=""
+    [ "$CARGAR_DATOS" = "si" ] || ARGS_VERIFICACION="--sin-datos"
+    if ! compose exec -T web python manage.py verificar_despliegue $ARGS_VERIFICACION; then
+        echo >&2
+        echo "ERROR: la verificacion detecto fallas (las lineas FALLA de arriba)." >&2
+        echo "El sistema quedo levantado, pero no completamente operativo." >&2
+        echo "Como resolverlo: docs/produccion.md, seccion 'Si la verificacion falla'." >&2
+        exit 1
+    fi
+else
+    echo "   Omitida (--sin-verificar)."
 fi
 
 if [ "$CON_CORREO" = "si" ]; then
@@ -140,15 +167,20 @@ cat <<'FIN'
 
   Aplicacion .... http://localhost:8000/
   Keycloak ...... http://localhost:8080/   (admin / admin)
+  Facturas ...... http://localhost:8000/api/facturacion/gestion/facturas/
 
   Usuarios (misma contrasena para todos: Demo1234!)
 
     admin_demo      administrador   ve y administra todo
     analista_demo   analista        monedas y cotizaciones, sin roles
-    cliente_demo    usuario final   opera sobre "Comercial Uno"
+    cliente_demo    usuario final   opera sobre "Comercial Uno" y ve sus facturas
     cajero_demo     cajero          atiende en el mostrador (Caja #1, solo el modulo de caja)
     angel           (sin rol)       para asignarle un rol en la demo
 
+  Terminal de autoservicio: "Terminal Autoservicio Centro", con su caja
+  abierta y billetes (la administra admin_demo desde Sucursales y Cajas).
+
+  Para volver a verificar:  ./scripts/verificar_produccion.sh   (con --prod)
   Para apagar:   docker compose down
   Ver los logs:  docker compose logs -f web
 
