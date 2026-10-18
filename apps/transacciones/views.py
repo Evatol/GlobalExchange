@@ -450,7 +450,12 @@ def _crear_transaccion_digital(request, tipo_operacion, moneda_codigo, cantidad,
 
     error_limite = transaccion.validar_limite_cliente()
     if error_limite:
-        return None, error_limite
+        # E4-194/E4-197: conservar también los intentos que no superan los
+        # límites, para que queden trazables en el historial.
+        transaccion.estado = 'FALLIDA'
+        transaccion.observacion = error_limite
+        transaccion.save()
+        return transaccion, error_limite
 
     transaccion.save()
     return transaccion, None
@@ -494,7 +499,10 @@ class OperarDivisaAPIView(APIView):
             moneda_destino_codigo=request.data.get('moneda_destino_codigo'),
         )
         if error:
-            return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
+            respuesta = {'error': error}
+            if transaccion is not None:
+                respuesta.update(_desglose(transaccion))
+            return Response(respuesta, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({
             'detail': 'Operación registrada: queda pendiente hasta que se confirme el pago.',
@@ -542,6 +550,9 @@ def operar_divisa_view(request):
             moneda_destino_codigo=request.POST.get('moneda_destino_codigo'),
         )
         if error is None:
+            return redirect('operacion_detalle', pk=transaccion.pk)
+        if transaccion is not None and transaccion.estado == 'FALLIDA':
+            messages.error(request, error)
             return redirect('operacion_detalle', pk=transaccion.pk)
 
     context = {
@@ -595,7 +606,12 @@ def operacion_confirmar_view(request, pk):
             f'Pago confirmado. La operación #{transaccion.pk} se realizó con éxito.',
         )
     except ValidationError as exc:
-        messages.error(request, exc.messages[0])
+        error = exc.messages[0]
+        if transaccion.estado in ('PENDIENTE', 'PAGADO'):
+            transaccion.estado = 'FALLIDA'
+            transaccion.observacion = error
+            transaccion.save()
+        messages.error(request, error)
     return redirect('operacion_detalle', pk=transaccion.pk)
 
 
@@ -637,6 +653,19 @@ def operacion_cancelar_view(request, pk):
     try:
         transaccion.cancelar()
         messages.info(request, f'Cancelaste la operación #{transaccion.pk}.')
+    except ValidationError as exc:
+        messages.error(request, exc.messages[0])
+    return redirect('operacion_detalle', pk=transaccion.pk)
+
+
+@login_required
+@require_POST
+def operacion_anular_view(request, pk):
+    """Anula una operación exitosa en efectivo y revierte el stock de caja."""
+    transaccion = _transaccion_del_cliente_activo(request, pk)
+    try:
+        transaccion.anular_operacion()
+        messages.success(request, f'La operación #{transaccion.pk} fue anulada.')
     except ValidationError as exc:
         messages.error(request, exc.messages[0])
     return redirect('operacion_detalle', pk=transaccion.pk)
@@ -708,12 +737,30 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
         try:
             transaccion.confirmar()
         except ValidationError as exc:
+            error = exc.messages[0]
+            if transaccion.estado in ('PENDIENTE', 'PAGADO'):
+                transaccion.estado = 'FALLIDA'
+                transaccion.observacion = error
+                transaccion.save()
             transaccion.refresh_from_db()
+            return Response(
+                {'detail': error, **_desglose(transaccion)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response({'detail': 'Pago confirmado.', **_desglose(transaccion)})
+
+    @action(detail=True, methods=['post'])
+    def anular(self, request, pk=None):
+        """Anula una transacción en efectivo (E4-196)."""
+        transaccion = _transaccion_del_cliente_activo(request, pk)
+        try:
+            transaccion.anular_operacion()
+        except ValidationError as exc:
             return Response(
                 {'detail': exc.messages[0], **_desglose(transaccion)},
                 status=status.HTTP_409_CONFLICT,
             )
-        return Response({'detail': 'Pago confirmado.', **_desglose(transaccion)})
+        return Response({'detail': 'Operación anulada.', **_desglose(transaccion)})
 
     @action(detail=True, methods=['post'], url_path='iniciar-pago-externo')
     def iniciar_pago_externo(self, request, pk=None):

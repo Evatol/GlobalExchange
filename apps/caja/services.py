@@ -325,10 +325,35 @@ def validar_billetes_de_operacion(transaccion, recibidos, entregados):
             )
 
 
-@transaction.atomic
 def registrar_operacion_presencial(
     *, caja, usuario, cliente, tipo, moneda_codigo, cantidad,
     recibidos=None, entregados=None, moneda_destino_codigo=None,
+):
+    """Registra la operación y conserva como FALLIDA cualquier intento que
+    falle al procesar caja. Los movimientos fallidos se revierten primero.
+    """
+    referencia = {}
+    try:
+        return _registrar_operacion_presencial_atomica(
+            caja=caja, usuario=usuario, cliente=cliente, tipo=tipo,
+            moneda_codigo=moneda_codigo, cantidad=cantidad,
+            recibidos=recibidos, entregados=entregados,
+            moneda_destino_codigo=moneda_destino_codigo,
+            referencia=referencia,
+        )
+    except ValidationError as exc:
+        transaccion = referencia.get('transaccion')
+        if transaccion is not None:
+            transaccion.estado = 'FALLIDA'
+            transaccion.observacion = ' '.join(exc.messages)
+            transaccion.save()
+        raise
+
+
+@transaction.atomic
+def _registrar_operacion_presencial_atomica(
+    *, caja, usuario, cliente, tipo, moneda_codigo, cantidad,
+    recibidos=None, entregados=None, moneda_destino_codigo=None, referencia=None,
 ):
     """Compra, venta o cambio de divisas en el mostrador, pagado en efectivo.
 
@@ -357,6 +382,8 @@ def registrar_operacion_presencial(
     transaccion, error = _preparar_transaccion(
         cliente, str(tipo).upper(), moneda_codigo, cantidad, moneda_destino_codigo,
     )
+    if referencia is not None:
+        referencia['transaccion'] = transaccion
     if error:
         raise ValidationError(error)
 

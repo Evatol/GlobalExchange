@@ -810,13 +810,15 @@ class LimitesPorCategoriaTests(TestCase):
         # 14 x 7400 = 103.600 + 1,5% = 105.154 > 100.000
         resp = self._operar(cantidad='14')
         self.assertContains(resp, 'supera el límite por operación de la categoría Minorista')
-        self.assertFalse(Transaccion.objects.exists())  # no queda registrada
+        transaccion = Transaccion.objects.get()
+        self.assertEqual(transaccion.estado, 'FALLIDA')
 
     def test_el_limite_tambien_aplica_a_la_venta(self):
         # 14 x 7300 = 102.200 - 1,5% = 100.667 > 100.000
         resp = self._operar(tipo='VENTA', cantidad='14')
         self.assertContains(resp, 'supera el límite por operación')
-        self.assertFalse(Transaccion.objects.exists())
+        transaccion = Transaccion.objects.get()
+        self.assertEqual(transaccion.estado, 'FALLIDA')
 
     def test_mayorista_puede_hasta_un_millon(self):
         self._categoria(Cliente.CATEGORIA_MAYORISTA)
@@ -825,7 +827,9 @@ class LimitesPorCategoriaTests(TestCase):
         # ...pero 134 x 7400 = 991.600 + 1,5% = 1.006.474 sí.
         resp = self._operar(cantidad='134')
         self.assertContains(resp, 'supera el límite por operación de la categoría Mayorista')
-        self.assertEqual(Transaccion.objects.count(), 1)
+        self.assertEqual(Transaccion.objects.count(), 2)
+        transaccion = Transaccion.objects.order_by('-pk').first()
+        self.assertEqual(transaccion.estado, 'FALLIDA')
 
     def test_vip_no_tiene_limite(self):
         self._categoria(Cliente.CATEGORIA_VIP)
@@ -846,7 +850,8 @@ class LimitesPorCategoriaTests(TestCase):
         })
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('supera el límite', resp.data['error'])
-        self.assertFalse(Transaccion.objects.exists())
+        transaccion = Transaccion.objects.get()
+        self.assertEqual(transaccion.estado, 'FALLIDA')
 
 
 class ConfirmacionDePagoTests(TestCase):
