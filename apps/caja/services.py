@@ -13,7 +13,7 @@ from django.db.models import Min
 from django.utils import timezone
 
 from apps.divisas.models import Moneda
-from apps.transacciones.models import MetodoPago
+from apps.transacciones.models import MetodoPago, Transaccion
 
 from apps.notificaciones.models import Notificaciones
 from apps.usuarios.models import Usuario
@@ -323,6 +323,33 @@ def validar_billetes_de_operacion(transaccion, recibidos, entregados):
                 f'Los billetes de {codigo} no coinciden con la operación: '
                 f'neto esperado (recibido - entregado) {exp}, cargado {got}.'
             )
+
+
+def operaciones_de_la_caja(caja, limite=15):
+    """Las últimas operaciones que movieron billetes en esta caja (las que se
+    atendieron en ella), la más reciente primero."""
+    return list(
+        Transaccion.objects.filter(movimientos_billetes__caja=caja)
+        .select_related('cliente', 'moneda', 'moneda_destino', 'metodo_pago')
+        .distinct().order_by('-fecha_hora', '-id')[:limite]
+    )
+
+
+def anular_operacion_en_efectivo(caja, transaccion_id):
+    """Anula una operación en efectivo atendida en ``caja`` (E4-196) y devuelve
+    la transacción. Solo se pueden anular las operaciones de la propia caja
+    abierta del cajero: una operación de otra caja (o inexistente) responde
+    igual, para no revelar su existencia. Ver ``Transaccion.anular_operacion``
+    para qué se revierte y cuándo se rechaza.
+    """
+    transaccion = (
+        Transaccion.objects.select_related('metodo_pago')
+        .filter(pk=transaccion_id, movimientos_billetes__caja=caja).distinct().first()
+    )
+    if transaccion is None:
+        raise ValidationError('No existe esa operación en tu caja.')
+    transaccion.anular_operacion()
+    return transaccion
 
 
 def registrar_operacion_presencial(

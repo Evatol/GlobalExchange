@@ -658,19 +658,6 @@ def operacion_cancelar_view(request, pk):
     return redirect('operacion_detalle', pk=transaccion.pk)
 
 
-@login_required
-@require_POST
-def operacion_anular_view(request, pk):
-    """Anula una operación exitosa en efectivo y revierte el stock de caja."""
-    transaccion = _transaccion_del_cliente_activo(request, pk)
-    try:
-        transaccion.anular_operacion()
-        messages.success(request, f'La operación #{transaccion.pk} fue anulada.')
-    except ValidationError as exc:
-        messages.error(request, exc.messages[0])
-    return redirect('operacion_detalle', pk=transaccion.pk)
-
-
 class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
     """Historial de transacciones, de solo consulta (RF111 / E4-104 y E4-36).
         ``administrador``/``analista`` ven el historial de cualquier cliente.
@@ -748,19 +735,6 @@ class TransaccionViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_409_CONFLICT,
             )
         return Response({'detail': 'Pago confirmado.', **_desglose(transaccion)})
-
-    @action(detail=True, methods=['post'])
-    def anular(self, request, pk=None):
-        """Anula una transacción en efectivo (E4-196)."""
-        transaccion = _transaccion_del_cliente_activo(request, pk)
-        try:
-            transaccion.anular_operacion()
-        except ValidationError as exc:
-            return Response(
-                {'detail': exc.messages[0], **_desglose(transaccion)},
-                status=status.HTTP_409_CONFLICT,
-            )
-        return Response({'detail': 'Operación anulada.', **_desglose(transaccion)})
 
     @action(detail=True, methods=['post'], url_path='iniciar-pago-externo')
     def iniciar_pago_externo(self, request, pk=None):

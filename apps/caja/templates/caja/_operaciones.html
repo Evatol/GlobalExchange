@@ -1,0 +1,36 @@
+{# Últimas operaciones atendidas en la caja, con la opción de anular las exitosas en efectivo (E4-196). Espera ``operaciones``. #}
+<div class="table-responsive">
+    <table class="table align-middle mb-0">
+        <thead>
+            <tr class="text-muted">
+                <th>Fecha</th><th>Operación</th><th>Cliente</th><th class="text-end">Monto</th><th>Estado</th><th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for o in operaciones %}
+            <tr>
+                <td class="text-nowrap">{{ o.fecha_hora|date:"d/m/Y H:i" }}</td>
+                <td>#{{ o.id }} · {{ o.get_tipo_display }} {{ o.moneda.codigo }}{% if o.moneda_destino %} a {{ o.moneda_destino.codigo }}{% endif %}</td>
+                <td>{{ o.cliente.nombre }}</td>
+                <td class="text-end">{{ o.monto_total|floatformat:"0g" }} Gs</td>
+                <td>
+                    {% if o.estado == 'EXITOSA' %}<span class="badge bg-success">{{ o.get_estado_display }}</span>
+                    {% elif o.estado == 'ANULADA' %}<span class="badge bg-secondary">{{ o.get_estado_display }}</span>
+                    {% else %}<span class="badge bg-warning text-dark">{{ o.get_estado_display }}</span>{% endif %}
+                </td>
+                <td class="text-end">
+                    {% if o.estado == 'EXITOSA' and o.metodo_pago.tipo == 'EFECTIVO' %}
+                    <form method="post" action="{% url 'caja_operacion_anular' o.id %}" class="m-0"
+                          onsubmit="return confirm('¿Anular la operación #{{ o.id }}? Se revierten los billetes y el stock de tu caja.');">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-danger btn-sm">Anular</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="6" class="text-center text-muted">Todavía no atendiste operaciones en esta caja.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
