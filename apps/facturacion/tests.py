@@ -144,9 +144,9 @@ class DetalleFacturaTests(BaseFacturasTests):
         self.assertContains(r, 'pertenece a otro cliente', status_code=403)
 
     def test_factura_no_emitida_se_deniega_con_mensaje(self):
-        anulada = self._factura(self.perfil1, self.cliente1, self.usd, estado='ANULADA')
+        pendiente = self._factura(self.perfil1, self.cliente1, self.usd, estado='PENDIENTE')
         self.client.force_login(self.login1)
-        r = self.client.get(reverse('detalle_factura', args=[anulada.id]))
+        r = self.client.get(reverse('detalle_factura', args=[pendiente.id]))
         self.assertContains(r, 'no fue emitida', status_code=403)
 
     def test_el_analista_consulta_la_factura_de_cualquier_cliente(self):
@@ -178,17 +178,17 @@ class DescargaFacturaTests(BaseFacturasTests):
         self.assertContains(r, 'pertenece a otro cliente', status_code=403)
 
     def test_pdf_de_factura_no_emitida_se_deniega(self):
-        anulada = self._factura(self.perfil1, self.cliente1, self.usd, estado='ANULADA')
+        pendiente = self._factura(self.perfil1, self.cliente1, self.usd, estado='PENDIENTE')
         self.client.force_login(self.login1)
-        r = self.client.get(reverse('descargar_factura_pdf', args=[anulada.id]))
+        r = self.client.get(reverse('descargar_factura_pdf', args=[pendiente.id]))
         self.assertContains(r, 'no fue emitida', status_code=403)
 
     def test_el_analista_descarga_emitidas_pero_no_las_no_emitidas(self):
-        anulada = self._factura(self.perfil2, self.cliente2, self.eur, estado='ANULADA')
+        pendiente = self._factura(self.perfil2, self.cliente2, self.eur, estado='PENDIENTE')
         self.client.force_login(_login_con_rol('analista1', 'analista'))
         r = self.client.get(reverse('descargar_factura_pdf', args=[self.f2.id]))
         self.assertEqual(r.status_code, 200)
-        r = self.client.get(reverse('descargar_factura_pdf', args=[anulada.id]))
+        r = self.client.get(reverse('descargar_factura_pdf', args=[pendiente.id]))
         self.assertContains(r, 'Solo se pueden descargar facturas emitidas', status_code=403)
 
     def test_pdf_de_un_cambio_entre_divisas(self):

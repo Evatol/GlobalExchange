@@ -13,7 +13,7 @@ from django.utils.dateparse import parse_date
 from apps.usuarios import sesion
 from apps.usuarios.permissions import ADMINISTRADOR, ANALISTA, tiene_rol
 
-from .models import Factura
+from .models import Factura, NotaCredito
 
 
 # ---------------------------------------------------------------------------
@@ -47,12 +47,13 @@ def motivo_de_denegacion(request, factura, descarga=False):
     """Devuelve ``None`` si el usuario puede ver (o descargar) la factura; si
     no, el mensaje de error que se le muestra.
 
-    Un usuario común solo accede a facturas emitidas de su cliente activo.
+    Un usuario común solo accede a facturas emitidas de su cliente activo (y a las
+    que después se anularon: siguen existiendo, con su nota de crédito).
     Administrador y analista consultan cualquiera, pero el PDF solo existe
-    para facturas emitidas.
+    para facturas emitidas o anuladas.
     """
     if puede_ver_todas(request.user):
-        if descarga and not factura.esta_emitida:
+        if descarga and not factura.es_consultable:
             return 'Solo se pueden descargar facturas emitidas.'
         return None
 
@@ -61,7 +62,7 @@ def motivo_de_denegacion(request, factura, descarga=False):
         return 'No tenés un cliente activo seleccionado.'
     if factura.transaccion.cliente_id != cliente.pk:
         return 'No tenés acceso a esta factura: pertenece a otro cliente.'
-    if not factura.esta_emitida:
+    if not factura.es_consultable:
         return (
             'Esta factura todavía no fue emitida, por lo que no se puede '
             'consultar ni descargar.'
@@ -196,6 +197,7 @@ def generar_pdf(factura):
     t = factura.transaccion
     cliente = t.cliente
     emisor = _emisor(factura)
+    nota = NotaCredito.objects.filter(factura=factura).first()
     estilos = getSampleStyleSheet()
     normal = estilos['Normal']
 
@@ -259,6 +261,15 @@ def generar_pdf(factura):
             )]
             if factura.proveedor == 'SIMULADO' else []
         ),
+        *(
+            [parrafo(
+                f'FACTURA ANULADA' + (
+                    f' por la nota de crédito N° {nota.numero}.' if nota is not None else '.'
+                ),
+                estilos['Heading3'],
+            )]
+            if factura.estado == Factura.ANULADA else []
+        ),
         Spacer(1, 0.5 * cm),
         parrafo('Factura', estilos['Heading2']),
         tabla(factura_filas),
@@ -288,4 +299,84 @@ def generar_pdf(factura):
         bottomMargin=2 * cm,
     )
     documento.build(elementos)
+    return buffer.getvalue()
+
+
+def generar_pdf_nota_credito(nota):
+    """Genera el PDF de una nota de crédito y devuelve su contenido en bytes: el
+    emisor y el cliente del documento enviado, su número y CDC, y la factura que anula."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    factura = nota.factura
+    cliente = factura.transaccion.cliente
+    emisor = _emisor(nota)
+    estilos = getSampleStyleSheet()
+    normal = estilos['Normal']
+
+    def parrafo(texto, estilo=normal):
+        return Paragraph(escape(str(texto)), estilo)
+
+    def tabla(filas):
+        celdas = [
+            [Paragraph(f'<b>{escape(etiqueta)}</b>', normal), parrafo(valor)]
+            for etiqueta, valor in filas
+        ]
+        resultado = Table(celdas, colWidths=[6 * cm, 11 * cm])
+        resultado.setStyle(TableStyle([
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('BACKGROUND', (0, 0), (0, -1), colors.whitesmoke),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ]))
+        return resultado
+
+    nota_filas = [
+        ('Nota de crédito N°', nota.numero),
+        ('Fecha de emisión', nota.fecha_emision.strftime('%d/%m/%Y') if nota.fecha_emision else ''),
+        ('Estado', nota.estado),
+        ('Motivo', nota.motivo),
+        ('Factura que anula', factura.numero),
+        ('Monto acreditado (Gs.)', _fmt(nota.monto)),
+    ]
+    if nota.cdc:
+        nota_filas.append(('CDC', nota.cdc))
+    if nota.estado_sifen:
+        nota_filas.append(('Estado en SIFEN', nota.estado_sifen))
+
+    elementos = [
+        parrafo(emisor['razon_social'], estilos['Title']),
+        parrafo(f"RUC: {emisor['ruc']}  |  Timbrado N° {emisor['timbrado']}"),
+        parrafo(emisor['direccion']),
+        *(
+            [parrafo(
+                'DOCUMENTO DE PRUEBA generado por el simulador: sin validez tributaria.',
+                estilos['Italic'],
+            )]
+            if nota.proveedor == 'SIMULADO' else []
+        ),
+        Spacer(1, 0.5 * cm),
+        parrafo('Nota de crédito', estilos['Heading2']),
+        tabla(nota_filas),
+        Spacer(1, 0.4 * cm),
+        parrafo('Cliente', estilos['Heading3']),
+        tabla([
+            ('Nombre / razón social', cliente.razon_social or cliente.nombre),
+            ('Documento / RUC', cliente.documento),
+        ]),
+        Spacer(1, 0.6 * cm),
+        parrafo(
+            'Documento generado por GlobalExchange. Sistema desarrollado con '
+            'fines académicos.',
+            estilos['Italic'],
+        ),
+    ]
+    buffer = io.BytesIO()
+    SimpleDocTemplate(
+        buffer, pagesize=A4, title=f'Nota de crédito {nota.numero}',
+        author=emisor['razon_social'], leftMargin=2 * cm, rightMargin=2 * cm,
+        topMargin=2 * cm, bottomMargin=2 * cm,
+    ).build(elementos)
     return buffer.getvalue()

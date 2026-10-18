@@ -14,7 +14,7 @@ from apps.divisas.models import Moneda
 from apps.usuarios import sesion
 
 from . import services
-from .models import Factura
+from .models import EventoFactura, Factura, NotaCredito
 
 
 def _denegar(request, mensaje):
@@ -74,12 +74,15 @@ def detalle_factura_view(request, pk):
     if motivo:
         return _denegar(request, motivo)
 
+    nota = NotaCredito.objects.filter(factura=factura).first()
     context = {
         'usuario': request.user,
         'factura': factura,
         'transaccion': factura.transaccion,
         'cliente': factura.transaccion.cliente,
-        'puede_descargar': factura.esta_emitida,
+        'puede_descargar': factura.es_consultable,
+        'nota': nota,
+        'puede_descargar_nota': nota is not None and nota.esta_emitida,
     }
     return render(request, 'facturacion/detalle_factura.html', context)
 
@@ -93,6 +96,34 @@ def descargar_factura_pdf_view(request, pk):
     if motivo:
         return _denegar(request, motivo)
 
+    EventoFactura.registrar(
+        factura, EventoFactura.DESCARGA, request.user.username,
+        f'PDF de la factura {factura.numero}',
+    )
     respuesta = HttpResponse(services.generar_pdf(factura), content_type='application/pdf')
     respuesta['Content-Disposition'] = f'attachment; filename="factura-{factura.numero}.pdf"'
+    return respuesta
+
+
+@login_required
+@require_GET
+def descargar_nota_credito_pdf_view(request, pk):
+    """Descarga el PDF de la nota de crédito de una factura anulada (``pk`` es el de la
+    factura), con las mismas reglas de acceso que la factura."""
+    factura = _factura_o_404(pk)
+    motivo = services.motivo_de_denegacion(request, factura, descarga=True)
+    if motivo:
+        return _denegar(request, motivo)
+    nota = NotaCredito.objects.filter(factura=factura).first()
+    if nota is None or not nota.esta_emitida:
+        return _denegar(request, 'Esta factura no tiene una nota de crédito emitida.')
+
+    EventoFactura.registrar(
+        factura, EventoFactura.DESCARGA, request.user.username,
+        f'PDF de la nota de crédito {nota.numero}',
+    )
+    respuesta = HttpResponse(
+        services.generar_pdf_nota_credito(nota), content_type='application/pdf'
+    )
+    respuesta['Content-Disposition'] = f'attachment; filename="nota-credito-{nota.numero}.pdf"'
     return respuesta

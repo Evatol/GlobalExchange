@@ -455,7 +455,7 @@ def anular_operacion_en_efectivo(caja, transaccion_id):
     )
     if transaccion is None:
         raise ValidationError('No existe esa operación en tu caja.')
-    transaccion.anular_operacion()
+    transaccion.anular_operacion(usuario=caja.cajero)
     return transaccion
 
 

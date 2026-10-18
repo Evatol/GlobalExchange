@@ -14,7 +14,11 @@ El recorrido de cada factura:
 3. En cuanto una factura queda ``EMITIDA``, ``enviar_por_correo`` se la manda al correo del
    cliente con el PDF adjunto. Si el correo falla, la factura sigue emitida con el motivo
    en ``correo_error`` y se reintenta.
-4. ``procesar_pendientes`` (el comando ``manage.py procesar_facturas``, para correr cada
+4. Cuando se anula una operación en efectivo que tenía factura, ``anular_factura`` anula
+   la factura y emite su ``NotaCredito`` por el total (E4-191), que sigue el mismo
+   recorrido de envío, reintento y consulta que la factura. Cada emisión, descarga y
+   anulación queda en el registro de auditoría (``EventoFactura``).
+5. ``procesar_pendientes`` (el comando ``manage.py procesar_facturas``, para correr cada
    pocos minutos) reintenta las pendientes, consulta a SIFEN las ``ENVIADA`` hasta que
    queden ``EMITIDA`` o ``RECHAZADA`` y reenvía los correos que no salieron. También crea
    la factura de las operaciones exitosas que no la tengan.
@@ -29,6 +33,7 @@ from datetime import timezone as zona
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.core.mail import EmailMessage
 from django.db import transaction
 from django.utils import timezone
@@ -36,7 +41,7 @@ from django.utils import timezone
 from apps.banco.services import formatear_guaranies
 from apps.transacciones.models import MetodoPago, Transaccion
 
-from .models import Factura, SecuenciaFactura
+from .models import EventoFactura, Factura, NotaCredito, SecuenciaFactura
 from .proveedores import NOMBRE_SIMULADO, ErrorFacturacion, obtener_proveedor
 
 logger = logging.getLogger(__name__)
@@ -235,22 +240,62 @@ def estado_desde_sifen(estado_sifen):
     return Factura.ENVIADA  # solicitada o enviada: SIFEN todavía no resolvió
 
 
-def _aplicar_respuesta(factura, respuesta, proveedor):
-    factura.proveedor = proveedor.nombre
-    factura.cdc = respuesta.cdc or factura.cdc
-    factura.estado = estado_desde_sifen(respuesta.estado_sifen)
-    factura.estado_sifen = (respuesta.descripcion or respuesta.estado_sifen)[:255]
-    factura.respuesta = respuesta.datos
-    factura.proximo_intento = None
-    factura.ultimo_error = (
-        factura.estado_sifen if factura.estado == Factura.RECHAZADA else ''
+def _aplicar_respuesta(documento, respuesta, proveedor):
+    """Aplica lo que contestó el proveedor a una factura o a una nota de crédito. La
+    primera vez que queda emitida, deja constancia en la auditoría."""
+    estaba_emitida = documento.estado == Factura.EMITIDA
+    documento.proveedor = proveedor.nombre
+    documento.cdc = respuesta.cdc or documento.cdc
+    documento.estado = estado_desde_sifen(respuesta.estado_sifen)
+    documento.estado_sifen = (respuesta.descripcion or respuesta.estado_sifen)[:255]
+    documento.respuesta = respuesta.datos
+    documento.proximo_intento = None
+    documento.ultimo_error = (
+        documento.estado_sifen if documento.estado == Factura.RECHAZADA else ''
     )
+    if documento.estado == Factura.EMITIDA and not estaba_emitida:
+        if isinstance(documento, NotaCredito):
+            EventoFactura.registrar(
+                documento.factura, EventoFactura.NOTA_CREDITO,
+                detalle=f'Nota de crédito {documento.numero} emitida (CDC {documento.cdc})',
+            )
+        else:
+            EventoFactura.registrar(
+                documento, EventoFactura.EMISION, detalle=f'Emitida (CDC {documento.cdc})',
+            )
 
 
-def _registrar_fallo(factura, motivo, ahora):
-    factura.intentos += 1
-    factura.ultimo_error = motivo[:255]
-    factura.proximo_intento = _siguiente_intento(factura.intentos, ahora)
+def _registrar_fallo(documento, motivo, ahora):
+    documento.intentos += 1
+    documento.ultimo_error = motivo[:255]
+    documento.proximo_intento = _siguiente_intento(documento.intentos, ahora)
+
+
+def _enviar(modelo, documento_id, ahora):
+    """Envía al proveedor una factura o una nota de crédito ``PENDIENTE``. Devuelve el
+    documento, o ``None`` si ya no estaba pendiente o lo está procesando otro proceso.
+    Nunca lanza: cualquier fallo queda anotado en el documento con la hora del próximo
+    reintento."""
+    with transaction.atomic():
+        documento = (
+            modelo.objects.select_for_update(skip_locked=True)
+            .filter(pk=documento_id, estado=Factura.PENDIENTE).first()
+        )
+        if documento is None:
+            return None
+        try:
+            proveedor = obtener_proveedor()
+            respuesta = proveedor.emitir(documento.payload)
+        except ErrorFacturacion as exc:
+            logger.warning('No se pudo enviar %s %s: %s', modelo.__name__, documento.pk, exc)
+            _registrar_fallo(documento, str(exc), ahora)
+        except Exception:  # un fallo del proveedor nunca puede romper el pago
+            logger.exception('Error inesperado al enviar %s %s', modelo.__name__, documento.pk)
+            _registrar_fallo(documento, 'Error inesperado al enviar el documento.', ahora)
+        else:
+            _aplicar_respuesta(documento, respuesta, proveedor)
+        documento.save()
+    return documento
 
 
 def enviar(factura_id, ahora=None, correo=True):
@@ -262,29 +307,121 @@ def enviar(factura_id, ahora=None, correo=True):
     correo salvo con ``correo=False`` (lo usa la carga de datos de demostración, para no
     escribirle a clientes de mentira).
     """
-    ahora = ahora or timezone.now()
-    with transaction.atomic():
-        factura = (
-            Factura.objects.select_for_update(skip_locked=True)
-            .filter(pk=factura_id, estado=Factura.PENDIENTE).first()
-        )
-        if factura is None:
-            return None
-        try:
-            proveedor = obtener_proveedor()
-            respuesta = proveedor.emitir(factura.payload)
-        except ErrorFacturacion as exc:
-            logger.warning('No se pudo enviar la factura %s: %s', factura.pk, exc)
-            _registrar_fallo(factura, str(exc), ahora)
-        except Exception:  # un fallo del proveedor nunca puede romper el pago
-            logger.exception('Error inesperado al enviar la factura %s', factura.pk)
-            _registrar_fallo(factura, 'Error inesperado al enviar la factura.', ahora)
-        else:
-            _aplicar_respuesta(factura, respuesta, proveedor)
-        factura.save()
-    if factura.estado == Factura.EMITIDA and correo:
+    factura = _enviar(Factura, factura_id, ahora or timezone.now())
+    if factura is not None and factura.estado == Factura.EMITIDA and correo:
         enviar_por_correo(factura.pk)
     return factura
+
+
+def enviar_nota(nota_id, ahora=None):
+    """Envía al proveedor una nota de crédito ``PENDIENTE``, con las mismas garantías que
+    ``enviar``: nunca lanza y se reintenta si falla."""
+    return _enviar(NotaCredito, nota_id, ahora or timezone.now())
+
+
+# Lo de una factura que no va en la nota de crédito que la anula: la condición de pago y
+# el indicador de presencia son de la venta, no de la devolución.
+CAMPOS_SOLO_DE_FACTURA = ('iIndPres', 'iCondOpe', 'gPaConEIni', 'iCondCred', 'dPlazoCre')
+#: Motivo de emisión de la nota de crédito en SIFEN: devolución.
+MOTIVO_DE_LA_NOTA = '2'
+
+
+def construir_nota_credito(factura, numero, emitida_en):
+    """El documento electrónico de la nota de crédito que anula ``factura``: el mismo
+    emisor, receptor e ítems que la factura (por el total), el tipo de documento 5, su
+    propio número y la referencia al CDC de la factura (``gCamDEAsoc``). Una factura sin
+    documento guardado (las de demostración) se reconstruye desde su operación."""
+    base = factura.payload or construir_documento(
+        factura.transaccion, factura.correlativo or factura.pk, factura.fecha_emision or emitida_en
+    )
+    documento = {k: v for k, v in base.items() if k not in CAMPOS_SOLO_DE_FACTURA}
+    documento.update({
+        'iTiDE': '5',
+        'dNumTim': settings.FACTURACION_TIMBRADO,
+        'dFeIniT': settings.FACTURACION_TIMBRADO_INICIO,
+        'dEst': settings.FACTURACION_ESTABLECIMIENTO,
+        'dPunExp': settings.FACTURACION_PUNTO_EXPEDICION,
+        'dNumDoc': f'{numero:07d}',
+        'dFeEmiDE': emitida_en.astimezone(HORA_DE_PARAGUAY).strftime('%Y-%m-%dT%H:%M:%S'),
+        'iMotEmi': MOTIVO_DE_LA_NOTA,
+        'gCamDEAsoc': [{
+            'iTipDocAso': '1',  # documento electrónico asociado
+            'dCdCDERef': factura.cdc,
+            'dNTimDI': '0', 'dEstDocAso': '0', 'dPExpDocAso': '0', 'dNumDocAso': '0',
+            'iTipoDocAso': '1',
+            'dFecEmiDI': str(base.get('dFeEmiDE', ''))[:10] or str(emitida_en.date()),
+            'dNumComRet': '0', 'dNumResCF': '0', 'iTipCons': '0', 'dNumCons': '0',
+            'dNumControl': '0',
+        }],
+        'CDC': '0',
+        'dCodSeg': '0',
+        'dDVId': '0',
+        'dInfAdic': (
+            f'Anula la factura {factura.numero} de la operación #{factura.transaccion_id}.'
+        ),
+    })
+    return documento
+
+
+def anular_factura(factura, usuario=None):
+    """Anula una factura y, si estaba emitida, emite su nota de crédito (E4-191).
+    Devuelve la ``NotaCredito`` creada, o ``None`` si no hizo falta.
+
+    * ``EMITIDA``: queda ``ANULADA`` y se crea una nota de crédito ``PENDIENTE`` por el
+      total, vinculada a ella, que se envía al proveedor cuando se confirma la
+      transacción de base de datos (con reintentos, como la factura).
+    * ``PENDIENTE`` o ``RECHAZADA``: nunca existió para SIFEN, así que queda ``ANULADA``
+      sin nota de crédito.
+    * ``ANULADA`` (ya se anuló) o ``ENVIADA`` (SIFEN todavía no la aprobó): se rechaza
+      con ``ValidationError`` y un mensaje claro, sin tocar nada.
+
+    La anulación queda en la auditoría con el ``usuario`` (o el sistema). Debe llamarse
+    dentro de la transacción que anula la operación: si algo falla, no se anula nada.
+    """
+    with transaction.atomic():
+        factura = Factura.objects.select_for_update().get(pk=factura.pk)
+        if factura.estado == Factura.ANULADA:
+            raise ValidationError(f'La factura {factura.numero} ya fue anulada.')
+        if factura.estado == Factura.ENVIADA:
+            raise ValidationError(
+                f'La factura {factura.numero} todavía espera la aprobación de SIFEN: '
+                f'se puede anular cuando quede emitida.'
+            )
+
+        nota = None
+        if factura.estado == Factura.EMITIDA:
+            ahora = timezone.now()
+            establecimiento = settings.FACTURACION_ESTABLECIMIENTO
+            punto = settings.FACTURACION_PUNTO_EXPEDICION
+            numero = SecuenciaFactura.siguiente(establecimiento, punto, SecuenciaFactura.NOTA_CREDITO)
+            nota = NotaCredito.objects.create(
+                factura=factura,
+                establecimiento=establecimiento,
+                punto_expedicion=punto,
+                correlativo=numero,
+                timbrado=settings.FACTURACION_TIMBRADO,
+                monto=factura.monto,
+                motivo='Anulación de la operación en efectivo',
+                fecha_emision=ahora,
+                payload=construir_nota_credito(factura, numero, ahora),
+            )
+            transaction.on_commit(lambda: enviar_nota(nota.pk))
+            detalle = f'Nota de crédito {nota.numero} por {factura.monto:.2f} Gs'
+        else:
+            detalle = 'Sin nota de crédito: la factura nunca se emitió'
+
+        factura.estado = Factura.ANULADA
+        factura.save(update_fields=['estado'])
+        EventoFactura.registrar(factura, EventoFactura.ANULACION, usuario, detalle)
+    return nota
+
+
+def anular_factura_de(transaccion, usuario=None):
+    """Anula la factura de una operación (si tiene). Ver ``anular_factura``."""
+    factura = Factura.objects.filter(transaccion=transaccion).first()
+    if factura is None:
+        return None
+    return anular_factura(factura, usuario)
 
 
 def _armar_correo(factura, destinatario):
@@ -351,44 +488,58 @@ def enviar_por_correo(factura_id):
     return True
 
 
-def consultar_estado(factura_id):
-    """Pregunta a SIFEN (por el proveedor) cómo quedó una factura ``ENVIADA``. Si no se
-    puede consultar, anota el motivo y la deja como está. Devuelve la factura o
-    ``None`` si ya no estaba enviada."""
+def _consultar(modelo, documento_id):
+    """Pregunta a SIFEN (por el proveedor) cómo quedó una factura o nota de crédito
+    ``ENVIADA``. Si no se puede consultar, anota el motivo y la deja como está."""
     with transaction.atomic():
-        factura = (
-            Factura.objects.select_for_update(skip_locked=True)
-            .filter(pk=factura_id, estado=Factura.ENVIADA).first()
+        documento = (
+            modelo.objects.select_for_update(skip_locked=True)
+            .filter(pk=documento_id, estado=Factura.ENVIADA).first()
         )
-        if factura is None:
+        if documento is None:
             return None
         try:
             proveedor = obtener_proveedor()
-            respuesta = proveedor.consultar(factura.cdc)
+            respuesta = proveedor.consultar(documento.cdc)
         except ErrorFacturacion as exc:
-            logger.warning('No se pudo consultar la factura %s: %s', factura.pk, exc)
-            factura.ultimo_error = str(exc)[:255]
+            logger.warning('No se pudo consultar %s %s: %s', modelo.__name__, documento.pk, exc)
+            documento.ultimo_error = str(exc)[:255]
         except Exception:
-            logger.exception('Error inesperado al consultar la factura %s', factura.pk)
-            factura.ultimo_error = 'Error inesperado al consultar la factura.'
+            logger.exception('Error inesperado al consultar %s %s', modelo.__name__, documento.pk)
+            documento.ultimo_error = 'Error inesperado al consultar el documento.'
         else:
-            _aplicar_respuesta(factura, respuesta, proveedor)
-        factura.save()
-    if factura.estado == Factura.EMITIDA:
+            _aplicar_respuesta(documento, respuesta, proveedor)
+        documento.save()
+    return documento
+
+
+def consultar_estado(factura_id):
+    """Pregunta a SIFEN cómo quedó una factura ``ENVIADA`` y, si quedó emitida, la manda
+    por correo. Devuelve la factura o ``None`` si ya no estaba enviada."""
+    factura = _consultar(Factura, factura_id)
+    if factura is not None and factura.estado == Factura.EMITIDA:
         enviar_por_correo(factura.pk)
     return factura
 
 
+def consultar_estado_nota(nota_id):
+    """Lo mismo que ``consultar_estado`` para una nota de crédito (sin correo)."""
+    return _consultar(NotaCredito, nota_id)
+
+
 def procesar_pendientes(ahora=None):
-    """Pone al día todas las facturas. Devuelve cuántas hizo de cada cosa::
+    """Pone al día todas las facturas y notas de crédito. Devuelve cuántas hizo de cada
+    cosa::
 
         {'registradas': ..., 'enviadas': ..., 'consultadas': ..., 'correos': ...}
 
     1. Crea la factura de las operaciones exitosas que no la tengan.
-    2. Reintenta las ``PENDIENTE`` cuya hora de reintento ya llegó.
-    3. Consulta a SIFEN las ``ENVIADA``.
-    4. Manda por correo las ``EMITIDA`` cuyo correo todavía no salió (``correos`` cuenta
-       solo estos reenvíos: los correos que salen en los pasos anteriores no se suman).
+    2. Reintenta las ``PENDIENTE`` (facturas y notas de crédito) cuya hora de reintento
+       ya llegó.
+    3. Consulta a SIFEN las ``ENVIADA`` (facturas y notas de crédito).
+    4. Manda por correo las facturas ``EMITIDA`` cuyo correo todavía no salió (``correos``
+       cuenta solo estos reenvíos: los correos que salen en los pasos anteriores no se
+       suman).
     """
     ahora = ahora or timezone.now()
     resumen = {'registradas': 0, 'enviadas': 0, 'consultadas': 0, 'correos': 0}
@@ -398,15 +549,19 @@ def procesar_pendientes(ahora=None):
             _, creada = registrar_factura(operacion)
         resumen['registradas'] += creada
 
-    pendientes = Factura.objects.filter(estado=Factura.PENDIENTE).exclude(
-        proximo_intento__gt=ahora
-    ).values_list('pk', flat=True)
-    for pk in list(pendientes):
-        factura = enviar(pk, ahora)
-        resumen['enviadas'] += factura is not None and factura.estado != Factura.PENDIENTE
+    for modelo, enviar_documento, consultar_documento in (
+        (Factura, enviar, consultar_estado),
+        (NotaCredito, enviar_nota, consultar_estado_nota),
+    ):
+        pendientes = modelo.objects.filter(estado=Factura.PENDIENTE).exclude(
+            proximo_intento__gt=ahora
+        ).values_list('pk', flat=True)
+        for pk in list(pendientes):
+            documento = enviar_documento(pk, ahora)
+            resumen['enviadas'] += documento is not None and documento.estado != Factura.PENDIENTE
 
-    for pk in list(Factura.objects.filter(estado=Factura.ENVIADA).values_list('pk', flat=True)):
-        resumen['consultadas'] += consultar_estado(pk) is not None
+        for pk in list(modelo.objects.filter(estado=Factura.ENVIADA).values_list('pk', flat=True)):
+            resumen['consultadas'] += consultar_documento(pk) is not None
 
     if settings.FACTURACION_ENVIAR_CORREO:
         sin_correo = Factura.objects.filter(

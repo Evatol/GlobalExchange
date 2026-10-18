@@ -2,6 +2,7 @@ from django.urls import path
 
 from .views import (
     descargar_factura_pdf_view,
+    descargar_nota_credito_pdf_view,
     detalle_factura_view,
     lista_facturas_view,
 )
@@ -14,5 +15,10 @@ urlpatterns = [
         'gestion/facturas/<int:pk>/pdf/',
         descargar_factura_pdf_view,
         name='descargar_factura_pdf',
+    ),
+    path(
+        'gestion/facturas/<int:pk>/nota-credito/pdf/',
+        descargar_nota_credito_pdf_view,
+        name='descargar_nota_credito_pdf',
     ),
 ]

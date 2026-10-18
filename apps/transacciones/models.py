@@ -344,7 +344,7 @@ class Transaccion(models.Model):
         self.observacion = motivo[:255]
         self.save()
 
-    def anular_operacion(self):
+    def anular_operacion(self, usuario=None):
         """Ticket E4-196: anula una transacción en efectivo ``EXITOSA``.
 
         Revierte los billetes de la operación: los que entraron a la caja se
@@ -354,9 +354,13 @@ class Transaccion(models.Model):
         ``ValidationError`` con el motivo.
 
         La anula quien atendió la operación, desde su caja abierta (ver
-        ``apps.caja.services.anular_operacion_en_efectivo``). La fila queda
-        bloqueada mientras se procesa, para que dos anulaciones simultáneas no
-        devuelvan el stock dos veces.
+        ``apps.caja.services.anular_operacion_en_efectivo``); ``usuario`` queda en la
+        auditoría de la factura. La fila queda bloqueada mientras se procesa, para que dos
+        anulaciones simultáneas no devuelvan el stock dos veces.
+
+        Si la operación tenía factura, también se anula con su nota de crédito (E4-191,
+        ``apps.facturacion.emision.anular_factura``); si no se puede (la factura todavía
+        espera la aprobación de SIFEN) se rechaza la anulación entera.
         """
         with transaction.atomic():
             self.estado = (
@@ -386,6 +390,11 @@ class Transaccion(models.Model):
                     stock.descontar(movimiento.cantidad)  # los billetes recibidos se devuelven
                 else:
                     stock.incrementar(movimiento.cantidad)  # los entregados vuelven a la caja
+
+            # Antes de marcar la operación: si la factura no se puede anular, no queda
+            # anulada ni siquiera en memoria.
+            from apps.facturacion import emision  # import diferido: facturación depende de esta app
+            emision.anular_factura_de(self, usuario)
 
             self.estado = 'ANULADA'
             self.observacion = 'Operación anulada por el cajero. Billetes reversados y stock restaurado.'

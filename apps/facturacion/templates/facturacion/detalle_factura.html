@@ -39,6 +39,8 @@
                                 <td>
                                     {% if factura.esta_emitida %}
                                         <span class="badge bg-success">{{ factura.estado }}</span>
+                                    {% elif factura.estado == 'ANULADA' %}
+                                        <span class="badge bg-danger">{{ factura.estado }}</span>
                                     {% else %}
                                         <span class="badge bg-secondary">{{ factura.estado }}</span>
                                     {% endif %}
@@ -48,6 +50,24 @@
                         </table>
                     </div>
                 </div>
+
+                {% if nota %}
+                <div class="card shadow-sm border-0 mb-4 border-danger">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Nota de crédito</h5>
+                        <p class="small text-muted">Esta factura fue anulada con una nota de crédito por el monto total.</p>
+                        <table class="table table-sm mb-0">
+                            <tr><th>Número</th><td>{{ nota.numero }}</td></tr>
+                            <tr><th>Estado</th><td>
+                                {% if nota.esta_emitida %}<span class="badge bg-success">{{ nota.estado }}</span>
+                                {% else %}<span class="badge bg-warning text-dark">{{ nota.estado }}</span>{% endif %}
+                            </td></tr>
+                            <tr><th>Monto acreditado (Gs.)</th><td>{{ nota.monto|floatformat:2 }}</td></tr>
+                            <tr><th>Motivo</th><td>{{ nota.motivo }}</td></tr>
+                        </table>
+                    </div>
+                </div>
+                {% endif %}
 
                 <div class="card shadow-sm border-0">
                     <div class="card-body">
@@ -89,6 +109,9 @@
         <div class="text-center mt-4">
             {% if puede_descargar %}
                 <a href="{% url 'descargar_factura_pdf' factura.id %}" class="btn btn-success">Descargar PDF</a>
+            {% endif %}
+            {% if puede_descargar_nota %}
+                <a href="{% url 'descargar_nota_credito_pdf' factura.id %}" class="btn btn-outline-danger">Descargar nota de crédito</a>
             {% endif %}
             <a href="{% url 'lista_facturas' %}" class="btn btn-outline-secondary">Volver al listado</a>
         </div>

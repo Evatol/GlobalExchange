@@ -197,7 +197,7 @@ class ProveedorCaidoYReintentosTests(BaseFacturacionTests):
         self.assertEqual(operacion.estado, 'EXITOSA')
         factura = Factura.objects.get()
         self.assertEqual(factura.estado, Factura.PENDIENTE)
-        self.assertEqual(factura.ultimo_error, 'Error inesperado al enviar la factura.')
+        self.assertEqual(factura.ultimo_error, 'Error inesperado al enviar el documento.')
 
     def test_se_reintenta_cuando_llega_la_hora_y_se_emite_al_volver_el_proveedor(self):
         with self._con_proveedor_caido(), self.assertLogs('apps.facturacion.emision', level='WARNING'):

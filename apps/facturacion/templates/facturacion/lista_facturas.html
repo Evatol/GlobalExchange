@@ -111,15 +111,17 @@
                                         <td>
                                             {% if f.esta_emitida %}
                                                 <span class="badge bg-success">{{ f.estado }}</span>
+                                            {% elif f.estado == 'ANULADA' %}
+                                                <span class="badge bg-danger">{{ f.estado }}</span>
                                             {% else %}
                                                 <span class="badge bg-secondary">{{ f.estado }}</span>
                                             {% endif %}
                                         </td>
                                         <td class="text-end">
-                                            {% if f.esta_emitida or ve_todas %}
+                                            {% if f.es_consultable or ve_todas %}
                                                 <a href="{% url 'detalle_factura' f.id %}" class="btn btn-sm btn-outline-primary">Ver</a>
                                             {% endif %}
-                                            {% if f.esta_emitida %}
+                                            {% if f.es_consultable %}
                                                 <a href="{% url 'descargar_factura_pdf' f.id %}" class="btn btn-sm btn-outline-success">PDF</a>
                                             {% endif %}
                                         </td>
