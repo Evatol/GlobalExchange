@@ -66,9 +66,24 @@ def caja_abierta_de(usuario):
     return caja
 
 
+def _sincronizar_caja_de_la_terminal(terminal):
+    """La caja de una terminal está abierta mientras la terminal esté activa y cerrada si
+    no: así su stock cuenta como disponible solo cuando la terminal puede operar (las
+    comprobaciones de stock y la anulación trabajan sobre cajas abiertas)."""
+    caja = terminal.caja
+    ahora = timezone.now()
+    if terminal.estado == Terminal.ACTIVA and caja.estado != 'ABIERTA':
+        caja.estado, caja.fecha_apertura, caja.fecha_cierre = 'ABIERTA', ahora, None
+        caja.save(update_fields=['estado', 'fecha_apertura', 'fecha_cierre'])
+    elif terminal.estado != Terminal.ACTIVA and caja.estado == 'ABIERTA':
+        caja.estado, caja.fecha_cierre = 'CERRADA', ahora
+        caja.save(update_fields=['estado', 'fecha_cierre'])
+
+
 @transaction.atomic
 def crear_terminal(nombre, sucursal, estado, stock_inicial=None):
-    """Crea una terminal, su caja y el inventario inicial como una unidad."""
+    """Crea una terminal, su caja y el inventario inicial como una unidad. La caja nace
+    abierta si la terminal está activa (ver ``_sincronizar_caja_de_la_terminal``)."""
     if not sucursal.estado:
         raise ValidationError({'sucursal': 'La sucursal debe estar activa.'})
 
@@ -92,6 +107,7 @@ def crear_terminal(nombre, sucursal, estado, stock_inicial=None):
     terminal = Terminal.objects.create(
         nombre=nombre, sucursal=sucursal, estado=estado, caja=caja
     )
+    _sincronizar_caja_de_la_terminal(terminal)
 
     denominaciones_activas = list(Billete.objects.filter(estado=True))
     StockBillete.objects.bulk_create([
@@ -141,6 +157,7 @@ def actualizar_terminal(terminal, cambios):
     if terminal.caja.sucursal_id != sucursal.pk:
         terminal.caja.sucursal = sucursal
         terminal.caja.save(update_fields=['sucursal'])
+    _sincronizar_caja_de_la_terminal(terminal)
     return terminal
 
 

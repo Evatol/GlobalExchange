@@ -7,6 +7,7 @@ from rest_framework.test import APITestCase
 
 from apps.divisas.models import Moneda
 
+from . import services
 from .models import Billete, Caja, MovimientoBillete, Sucursal, StockBillete, Terminal
 from .test_sucursales import _login_con_rol
 
@@ -206,6 +207,23 @@ class PantallaAdministrarTerminalesTests(TerminalTestSetUp, APITestCase):
             0,
         )
 
+    def test_desactivar_desde_la_pantalla_cierra_la_caja_y_conserva_el_stock(self):
+        terminal = self._terminal_creada()
+        self.assertEqual(terminal.caja.estado, 'ABIERTA')
+
+        respuesta = self.client.post(reverse('terminal_desactivar', args=[terminal.pk]))
+
+        self.assertRedirects(respuesta, reverse('gestion_terminales'))
+        terminal.refresh_from_db()
+        terminal.caja.refresh_from_db()
+        self.assertEqual(terminal.estado, Terminal.INACTIVA)
+        self.assertEqual(terminal.caja.estado, 'CERRADA')
+        self.assertEqual(terminal.caja.stock_billetes.count(), 2)
+
+    def test_desactivar_una_terminal_que_no_existe_no_rompe(self):
+        respuesta = self.client.post(reverse('terminal_desactivar', args=[9999]))
+        self.assertRedirects(respuesta, reverse('gestion_terminales'))
+
     def test_pantalla_muestra_error_si_denominacion_inicial_no_esta_activa(self):
         self.billete_100.desactivar()
 
@@ -230,3 +248,53 @@ class PantallaAdministrarTerminalesTests(TerminalTestSetUp, APITestCase):
 
         self.assertEqual(respuesta.status_code, status.HTTP_200_OK)
         self.assertContains(respuesta, 'La simulación está lista para iniciar')
+
+
+class CajaDeLaTerminalTests(TerminalTestSetUp, APITestCase):
+    """La caja de una terminal está abierta mientras la terminal esté activa: así su
+    stock cuenta como disponible para entregar billetes solo cuando puede operar."""
+
+    def test_la_caja_de_una_terminal_activa_nace_abierta(self):
+        terminal = self._terminal_creada()
+        self.assertEqual(terminal.caja.estado, 'ABIERTA')
+        self.assertIsNotNone(terminal.caja.fecha_apertura)
+
+    def test_la_caja_de_una_terminal_que_no_esta_activa_nace_cerrada(self):
+        for estado in (Terminal.INACTIVA, Terminal.MANTENIMIENTO):
+            with self.subTest(estado=estado):
+                respuesta = self.crear_terminal(estado=estado)
+                caja = Terminal.objects.get(pk=respuesta.data['id']).caja
+                self.assertEqual(caja.estado, 'CERRADA')
+
+    def test_cambiar_el_estado_de_la_terminal_cierra_y_vuelve_a_abrir_su_caja(self):
+        terminal = self._terminal_creada()
+        url = reverse('terminal-detail', args=[terminal.pk])
+
+        self.client.patch(url, {'estado': Terminal.MANTENIMIENTO}, format='json')
+        terminal.caja.refresh_from_db()
+        self.assertEqual(terminal.caja.estado, 'CERRADA')
+        self.assertIsNotNone(terminal.caja.fecha_cierre)
+
+        self.client.patch(url, {'estado': Terminal.ACTIVA}, format='json')
+        terminal.caja.refresh_from_db()
+        self.assertEqual(terminal.caja.estado, 'ABIERTA')
+        self.assertIsNone(terminal.caja.fecha_cierre)
+
+    def test_dar_de_baja_la_terminal_cierra_su_caja_sin_perder_el_stock(self):
+        terminal = self._terminal_creada()
+        self.client.delete(reverse('terminal-detail', args=[terminal.pk]))
+        terminal.caja.refresh_from_db()
+        self.assertEqual(terminal.caja.estado, 'CERRADA')
+        self.assertEqual(terminal.caja.stock_billetes.count(), 2)
+
+    def test_el_stock_de_una_terminal_activa_cuenta_como_disponible_y_el_de_una_inactiva_no(self):
+        terminal = self._terminal_creada()
+        self.assertEqual(
+            services._stock_en_cajas_abiertas(self.usd.pk),
+            {self.billete_100.pk: 3, self.billete_50.pk: 2},
+        )
+        self.client.patch(
+            reverse('terminal-detail', args=[terminal.pk]),
+            {'estado': Terminal.INACTIVA}, format='json',
+        )
+        self.assertEqual(services._stock_en_cajas_abiertas(self.usd.pk), {})

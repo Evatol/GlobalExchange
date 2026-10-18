@@ -26,7 +26,7 @@ from django.db import connection, transaction
 from django.test import Client
 from django.urls import reverse
 
-from apps.caja.models import Caja, StockBillete
+from apps.caja.models import StockBillete, Terminal
 from apps.facturacion.models import Factura
 from apps.usuarios.management.commands.seed_datos_demo import TERMINALES
 
@@ -112,7 +112,11 @@ class Command(BaseCommand):
             def terminales():
                 sin_billetes = []
                 for nombre, _direccion, _usuario in TERMINALES:
-                    caja = Caja.objects.filter(sucursal__nombre=nombre, estado='ABIERTA').first()
+                    terminal = Terminal.objects.select_related('caja').filter(nombre=nombre).first()
+                    caja = (
+                        terminal.caja
+                        if terminal is not None and terminal.caja.estado == 'ABIERTA' else None
+                    )
                     if caja is None or not StockBillete.objects.filter(
                         caja=caja, cantidad__gt=0
                     ).exists():

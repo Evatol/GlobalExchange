@@ -36,7 +36,7 @@ from django.contrib.auth.models import Group, User
 from apps.banco import services as banco
 from apps.banco.models import CuentaBancaria
 from apps.caja import services as caja_services
-from apps.caja.models import AsignacionCajero, Billete, Caja, LimiteStock, Sucursal
+from apps.caja.models import AsignacionCajero, Billete, Caja, LimiteStock, Sucursal, Terminal
 from apps.divisas.models import Moneda, TasaCambio
 from apps.facturacion.models import Factura
 from apps.transacciones.models import MedioPagoCliente, MetodoPago, Transaccion
@@ -298,14 +298,45 @@ class Command(BaseCommand):
         return caja, detalle
 
     def _cargar_terminales(self):
-        """Terminales de autoservicio: una sucursal con su caja y su stock."""
+        """Terminales de autoservicio (``Terminal``): cada una con su sucursal, su caja
+        abierta y su stock de billetes.
+
+        Idempotente: una terminal se identifica por su nombre y no se vuelve a cargar su
+        stock. Si la base ya tenía la terminal como una caja suelta de una sucursal (la
+        carga de demostración anterior al modelo ``Terminal``), se adopta esa misma caja
+        con su stock, sin duplicarla.
+        """
         self.stdout.write(self.style.MIGRATE_HEADING('Terminales de autoservicio:'))
         for nombre, direccion, username in TERMINALES:
             sucursal, _ = Sucursal.objects.get_or_create(
                 nombre=nombre, defaults={'direccion': direccion},
             )
-            caja, detalle = self._cajero_y_caja(sucursal, username)
-            self.stdout.write(f'  {nombre}: caja #{caja.pk} {detalle}')
+            terminal = Terminal.objects.filter(nombre=nombre).first()
+            if terminal is not None:
+                detalle = f'ya existía (caja #{terminal.caja_id} {terminal.caja.estado.lower()})'
+            else:
+                heredada = Caja.objects.filter(
+                    sucursal=sucursal, cajero__username=username, terminal__isnull=True,
+                    estado='ABIERTA',
+                ).first()
+                if heredada is not None:
+                    terminal = Terminal.objects.create(
+                        nombre=nombre, sucursal=sucursal, estado=Terminal.ACTIVA, caja=heredada,
+                    )
+                    detalle = f'adoptó la caja #{heredada.pk} que ya tenía su stock'
+                else:
+                    terminal = caja_services.crear_terminal(
+                        nombre, sucursal, Terminal.ACTIVA,
+                        stock_inicial={
+                            b.id: BILLETES_POR_DENOMINACION
+                            for b in Billete.objects.filter(estado=True)
+                        },
+                    )
+                    detalle = (
+                        f'caja #{terminal.caja_id} abierta con {BILLETES_POR_DENOMINACION} '
+                        f'billetes de cada denominación'
+                    )
+            self.stdout.write(f'  {nombre}: {detalle}')
 
     def _cargar_facturas_demo(self, usuario, cliente, metodo):
         """Operaciones exitosas de ejemplo, cada una con su factura emitida.

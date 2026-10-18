@@ -9,7 +9,7 @@ from django.db.models import Sum
 from django.test import TestCase
 
 from apps.caja.models import (
-    AsignacionCajero, Billete, Caja, MovimientoBillete, StockBillete, Sucursal,
+    AsignacionCajero, Billete, Caja, MovimientoBillete, StockBillete, Sucursal, Terminal,
 )
 from apps.facturacion.models import Factura
 from apps.transacciones.models import Transaccion
@@ -30,6 +30,7 @@ def _estado_de_los_datos():
     return {
         'sucursales': Sucursal.objects.count(),
         'cajas': Caja.objects.count(),
+        'terminales': Terminal.objects.count(),
         'asignaciones': AsignacionCajero.objects.count(),
         'cajeros': Usuario.objects.count(),
         'billetes': Billete.objects.count(),
@@ -57,17 +58,44 @@ class SeedIdempotenteTests(TestCase):
 
     def test_crea_las_terminales_con_su_caja_abierta_y_stock_inicial(self):
         _sembrar()
-        for nombre, _direccion, username in TERMINALES:
-            sucursal = Sucursal.objects.get(nombre=nombre)
-            caja = Caja.objects.get(sucursal=sucursal)
-            self.assertEqual(caja.estado, 'ABIERTA')
-            self.assertEqual(caja.cajero.username, username)
-            self.assertTrue(
-                AsignacionCajero.objects.filter(
-                    sucursal=sucursal, usuario=caja.cajero, estado=True
-                ).exists()
-            )
-            self.assertTrue(StockBillete.objects.filter(caja=caja, cantidad__gt=0).exists())
+        for nombre, _direccion, _usuario in TERMINALES:
+            terminal = Terminal.objects.get(nombre=nombre)
+            self.assertEqual(terminal.estado, Terminal.ACTIVA)
+            self.assertEqual(terminal.sucursal.nombre, nombre)
+            self.assertEqual(terminal.caja.estado, 'ABIERTA')
+            self.assertIsNone(terminal.caja.cajero)  # la caja es de la terminal, no de un cajero
+            self.assertTrue(StockBillete.objects.filter(caja=terminal.caja, cantidad__gt=0).exists())
+
+    def test_la_terminal_aparece_en_la_pantalla_de_administracion(self):
+        """Antes la terminal del demo era una sucursal con un cajero y la pantalla de
+        terminales salía vacía."""
+        _sembrar()
+        self.assertEqual(Terminal.objects.count(), len(TERMINALES))
+        self.assertEqual(Terminal.objects.first().caja.terminal, Terminal.objects.first())
+
+    def test_una_terminal_cargada_antes_del_modelo_se_adopta_sin_duplicar_su_caja(self):
+        """Las bases que ya tenían la terminal como una caja suelta de su sucursal (con
+        un cajero) la conservan, con su stock, como la caja de la ``Terminal``."""
+        _sembrar()
+        nombre, _direccion, username = TERMINALES[0]
+        terminal = Terminal.objects.get(nombre=nombre)
+        caja = terminal.caja
+        cajero = Usuario.objects.create(
+            username=username, email=f'{username}@example.com', nombres='T', apellidos='C',
+        )
+        Caja.objects.filter(pk=caja.pk).update(cajero=cajero)
+        terminal.delete()  # como estaba antes del modelo Terminal
+        antes = _estado_de_los_datos()
+        antes['terminales'] = 0
+
+        salida = _sembrar()
+
+        self.assertIn('adoptó la caja', salida)
+        adoptada = Terminal.objects.get(nombre=nombre)
+        self.assertEqual(adoptada.caja_id, caja.pk)
+        despues = _estado_de_los_datos()
+        despues['terminales'] = 0
+        self.assertEqual(despues, antes)  # ni una caja ni un billete de más
 
     def test_cada_terminal_tiene_su_propio_stock(self):
         _sembrar()

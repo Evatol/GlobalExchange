@@ -64,9 +64,9 @@ class TerminalViewSet(viewsets.ModelViewSet):
     permission_classes = [SoloAdministrador]
 
     def destroy(self, request, *args, **kwargs):
-        terminal = self.get_object()
-        terminal.estado = Terminal.INACTIVA
-        terminal.save(update_fields=['estado'])
+        terminal = services.actualizar_terminal(
+            self.get_object(), {'estado': Terminal.INACTIVA}
+        )  # también cierra su caja, conservando el stock
         return Response({
             'detail': f'Terminal {terminal.nombre} desactivada correctamente.'
         })
@@ -248,9 +248,11 @@ def terminal_editar_view(request, pk):
 @login_required
 @require_POST
 def terminal_desactivar_view(request, pk):
-    """Da de baja lógica una terminal y conserva su caja e historial."""
+    """Da de baja lógica una terminal: cierra su caja y conserva su stock e historial."""
     _solo_administrador(request)
-    Terminal.objects.filter(pk=pk).update(estado=Terminal.INACTIVA)
+    terminal = Terminal.objects.filter(pk=pk).first()
+    if terminal is not None:
+        services.actualizar_terminal(terminal, {'estado': Terminal.INACTIVA})  # cierra su caja
     return redirect('gestion_terminales')
 
 

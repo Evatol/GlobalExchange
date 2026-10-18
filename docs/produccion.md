@@ -77,9 +77,12 @@ avisa que ese tag no incluye los comandos y sigue.
 - monedas con cotización, métodos de pago, clientes y los medios de pago del
   cliente demo;
 - la sucursal *Casa Central* con `cajero_demo` y su caja abierta;
-- las **terminales de autoservicio** (hoy, *Terminal Autoservicio Centro*):
-  cada una es una sucursal con su propio cajero técnico, su caja abierta y su
-  **stock inicial** de billetes, repartido por denominación;
+- las **terminales de autoservicio** (hoy, *Terminal Autoservicio Centro*): cada
+  una es una `Terminal` (se administra desde *Terminales*) con su sucursal, su
+  propia caja, que está abierta mientras la terminal esté activa, y su **stock
+  inicial** de billetes, repartido por denominación. Una base que ya tenía la
+  terminal cargada como una caja suelta de su sucursal (antes de existir el
+  modelo `Terminal`) la conserva: el seed adopta esa caja con su stock;
 - operaciones exitosas de `cliente_demo` con su **factura emitida**.
 
 Cómo evita duplicar: cada dato se busca antes de crearlo (por nombre,
@@ -138,7 +141,7 @@ cada una:
 | **Facturación, listado** o **Caja**: error o código distinto de 200 | Falta aplicar migraciones o hay un error en la pantalla | `docker compose -f docker-compose.prod.yml exec web python manage.py migrate` y mirar `logs web` |
 | **Facturación, datos**: no hay facturas emitidas | No se cargó la demo | `docker compose -f docker-compose.prod.yml exec web python manage.py seed_datos_demo` |
 | **Facturación, PDF**: no se generó | Falta `reportlab` en la imagen o hay un dato inconsistente | Reconstruir con `up --build` y revisar `requirements.txt` |
-| **Terminal, stock**: sin caja abierta con billetes | No se cargó la demo, o el administrador cerró la caja | Correr `seed_datos_demo`; si la caja estaba cerrada, abrirla desde *Cajas* con su carga inicial |
+| **Terminal, stock**: sin caja abierta con billetes | No se cargó la demo, o la terminal no está activa | Correr `seed_datos_demo`; si la terminal estaba inactiva o en mantenimiento, activarla desde *Terminales* (eso vuelve a abrir su caja) |
 
 Después de resolverlo, volver a correr `./scripts/verificar_produccion.sh`
 hasta que termine en verde.
