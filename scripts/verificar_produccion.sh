@@ -18,14 +18,15 @@
 #   6. El código corre desde la imagen, no montado desde el disco.
 #   7. La base de datos es la de producción (volumen propio).
 #   8. El login redirige a Keycloak y Keycloak responde.
-#
+#   9. Facturación: el listado responde y se genera el PDF de una factura emitida.
+#   10. Terminales: cada una tiene su caja abierta con billetes.
 # Termina con código 0 si todo pasó, 1 si algo falló.
 #
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
 case "${1:-}" in
-    -h|--help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 
 URL="http://localhost:8000"
@@ -34,8 +35,9 @@ prod() { docker compose -f "$PROD" "$@"; }
 
 PASARON=0
 FALLARON=0
+FALLAS=()
 ok()    { printf "   ✅ %s\n" "$1"; PASARON=$((PASARON + 1)); }
-falla() { printf "   ❌ %s\n" "$1"; FALLARON=$((FALLARON + 1)); }
+falla() { printf "   ❌ %s\n" "$1"; FALLARON=$((FALLARON + 1)); FALLAS+=("$1"); }
 info()  { printf "      %s\n" "$1"; }
 titulo() { printf "\n%s\n" "$1"; }
 
@@ -155,12 +157,43 @@ else
 fi
 
 # ----------------------------------------------------------------------
+
+titulo "9. Facturación y terminales (comprobación funcional)"
+# Las pantallas piden iniciar sesión, así que esta comprobación corre dentro
+# del contenedor, con un usuario temporal que no deja rastros
+# (manage.py verificar_despliegue). Devuelve una línea por comprobación:
+# "OK ..." o "FALLA ...".
+SALIDA="$(prod exec -T web python manage.py verificar_despliegue 2>&1)"
+CODIGO=$?
+COMPROBACIONES=0
+while IFS= read -r linea; do
+    case "$linea" in
+        "OK "*)    ok "${linea#OK }"; COMPROBACIONES=$((COMPROBACIONES + 1)) ;;
+        "FALLA "*) falla "${linea#FALLA }"; COMPROBACIONES=$((COMPROBACIONES + 1)) ;;
+    esac
+done <<<"$SALIDA"
+if [ "$COMPROBACIONES" -eq 0 ]; then
+    falla "La comprobación funcional no devolvió resultados (¿el contenedor web está sano?)"
+    info "$(tail -n 3 <<<"$SALIDA" | tr '\n' ' ')"
+elif [ "$CODIGO" -ne 0 ] && ! grep -q '^FALLA ' <<<"$SALIDA"; then
+    falla "La comprobación funcional terminó con error (código $CODIGO)"
+    info "$(tail -n 3 <<<"$SALIDA" | tr '\n' ' ')"
+fi
+
+# ----------------------------------------------------------------------
+
 echo
 echo "========================================================================"
 if [ "$FALLARON" -eq 0 ]; then
     echo " ✅ AMBIENTE DE PRODUCCIÓN OK: $PASARON verificaciones pasaron"
 else
-    echo " ❌ $FALLARON verificaciones fallaron ($PASARON pasaron)"
+    echo " ❌ REPORTE DE FALLO: $FALLARON verificaciones fallaron ($PASARON pasaron)"
+    echo
+    for detalle in "${FALLAS[@]}"; do
+        echo "   - $detalle"
+    done
+    echo
+    echo " Cómo resolverlo: docs/produccion.md, sección 'Si la verificación falla'."
 fi
 echo "========================================================================"
 [ "$FALLARON" -eq 0 ]
