@@ -486,6 +486,21 @@ class Transaccion(models.Model):
             )
 
         self.calcular_monto_total()
+        error_stock = self._sin_billetes_para_entregar()
+        if error_stock:
+            self.estado = 'FALLIDA'
+            self.observacion = error_stock
+            if self.referencia_pago_externo:
+                self.observacion = (
+                    f'{error_stock} El pago externo {self.referencia_pago_externo} '
+                    f'debe devolverse al cliente.'
+                )
+            self.observacion = self.observacion[:255]
+            self.save()
+            return (
+                f'No se pudo completar la operación. {error_stock} '
+                f'La operación quedó registrada como fallida.'
+            )
         error_pago = self._mover_fondos()
         if error_pago:
             self.estado = 'FALLIDA'
@@ -496,6 +511,22 @@ class Transaccion(models.Model):
         self.estado = 'EXITOSA'
         self.save()
         return None
+
+    def _sin_billetes_para_entregar(self):
+        """E4-195: en el flujo digital (la terminal), verifica que haya billetes
+        para entregar lo que la operación requiere. Devuelve el motivo si no
+        alcanzan (y avisa a administradores y cajeros), o ``None``. Las
+        operaciones presenciales no pasan por acá: el cajero ya movió sus
+        propios billetes."""
+        if self.modalidad != 'DIGITAL':
+            return None
+        from apps.caja import services as caja  # import diferido: caja importa transacciones
+        faltante = caja.evaluar_entrega_de_billetes(self)
+        if faltante is None:
+            return None
+        moneda_id, mensaje = faltante
+        caja.notificar_falla_por_stock(self, moneda_id)
+        return mensaje
 
     def _cambios_de_cotizacion(self):
         """Compara las tasas guardadas con las vigentes. Devuelve
@@ -551,19 +582,29 @@ class Transaccion(models.Model):
         return None
 
     def cancelar(self):
-        """Cancela a pedido del usuario una transacción todavía no pagada (RF23).
+        """Cancela a pedido del usuario una transacción todavía no pagada (RF23 / E4-195).
 
         Aplica a transacciones ``PENDIENTE`` y a las que esperan la pasarela
         (``PENDIENTE_PAGO``): una exitosa ya se pagó y una cancelada ya terminó.
         Si la pasarela cobra después de cancelar, el webhook la rechaza (409).
+
+        El estado se vuelve a leer con la fila bloqueada, igual que en
+        ``_procesar_pago``: si mientras el usuario miraba la pantalla el webhook
+        confirmó el pago, cancelar no puede pisar ese resultado con un estado
+        desactualizado (quedaría "cancelada" una operación ya cobrada).
         """
-        if self.estado not in ['PENDIENTE', 'PENDIENTE_PAGO']:
-            raise ValidationError(
-                f'Solo se puede cancelar una transacción pendiente '
-                f'(esta está {self.get_estado_display().lower()}).'
+        with transaction.atomic():
+            self.estado = (
+                Transaccion.objects.select_for_update()
+                .filter(pk=self.pk).values_list('estado', flat=True).get()
             )
-        self.estado = 'CANCELADA'
-        self.save()
+            if self.estado not in ['PENDIENTE', 'PENDIENTE_PAGO']:
+                raise ValidationError(
+                    f'Solo se puede cancelar una transacción pendiente '
+                    f'(esta está {self.get_estado_display().lower()}).'
+                )
+            self.estado = 'CANCELADA'
+            self.save(update_fields=['estado'])
 
     def cambiar_estado(self, estado):
         if estado not in dict(self.ESTADOS):

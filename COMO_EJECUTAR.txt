@@ -331,7 +331,7 @@ G.3 - Entrar al sistema:
         admin_demo      (administrador)
         analista_demo   (analista)
         cliente_demo    (usuario_final)
-
+        cajero_demo     (cajero)
     Sirven para probar el menú y los permisos según el rol (ver PARTE E2
     más arriba: la lógica es la misma, solo que acá los usuarios ya están
     creados de entrada).
