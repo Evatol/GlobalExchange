@@ -33,6 +33,7 @@ from .views_pantallas import (
     gestion_limites_stock_view,
     mi_caja_view,
     mostrador_view,
+    operacion_anular_view,
 )
 
 router = DefaultRouter()
@@ -72,6 +73,11 @@ urlpatterns = [
     path('mi-caja/', mi_caja_view, name='mi_caja'),
     path('mi-caja/cerrar/', caja_cerrar_view, name='caja_cerrar'),
     path('mostrador/', mostrador_view, name='mostrador'),
+    path(
+        'mi-caja/operaciones/<int:pk>/anular/',
+        operacion_anular_view,
+        name='caja_operacion_anular',
+    ),
 
     # RF106: API del cajero.
     path('mi-inventario/', MiInventarioAPIView.as_view(), name='mi_inventario'),

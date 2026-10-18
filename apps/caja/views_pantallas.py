@@ -384,6 +384,28 @@ def caja_cerrar_view(request):
     })
 
 @login_required
+@require_POST
+def operacion_anular_view(request, pk):
+    """Anula una operación en efectivo que el cajero atendió en su caja abierta
+    (E4-196): revierte los billetes y devuelve el stock. Solo el rol cajero."""
+    _, caja = _cajero_y_caja(request)
+    if caja is None:
+        messages.error(request, 'No tenés una caja abierta.')
+        return redirect('mi_caja')
+    try:
+        transaccion = services.anular_operacion_en_efectivo(caja, pk)
+    except DjangoValidationError as exc:
+        messages.error(request, ' '.join(exc.messages))
+    else:
+        messages.success(
+            request,
+            f'Operación #{transaccion.pk} anulada: los billetes se revirtieron y el '
+            f'stock de tu caja quedó como antes.',
+        )
+    return redirect('mi_caja')
+
+
+@login_required
 def mi_caja_view(request):
     """Inventario de la caja abierta del cajero, por moneda y denominación con
     el total, y el arqueo: el cajero ingresa lo contado y el sistema registra
@@ -446,6 +468,7 @@ def mi_caja_view(request):
             MovimientoBillete.objects.filter(caja=caja).select_related('billete__moneda', 'transaccion')
             .order_by('-fecha_hora', '-id')[:10] if caja is not None else []
         ),
+        'operaciones': services.operaciones_de_la_caja(caja) if caja is not None else [],
         'ultimo_cierre': ultimo_cierre,
         'ultimo_cierre_lista': [ultimo_cierre] if ultimo_cierre else [],
         'arqueos': Arqueo.objects.filter(cajero=usuario).select_related('moneda')[:5],

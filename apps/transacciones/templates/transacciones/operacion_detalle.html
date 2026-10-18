@@ -34,6 +34,8 @@
                         <span class="badge bg-success">Exitosa</span>
                     {% elif transaccion.estado == 'CANCELADA' %}
                         <span class="badge bg-secondary">Cancelada</span>
+                    {% elif transaccion.estado == 'ANULADA' %}
+                        <span class="badge bg-secondary">Anulada</span>
                     {% else %}
                         <span class="badge bg-danger">{{ transaccion.get_estado_display }}</span>
                     {% endif %}
