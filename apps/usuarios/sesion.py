@@ -64,3 +64,34 @@ def set_cliente_activo(request, cliente_id):
         )
     request.session[SESSION_KEY] = cliente.pk
     return cliente
+
+
+# ---------------------------------------------------------------------------
+# Modo quiosco (E4-193)
+# ---------------------------------------------------------------------------
+
+SESSION_KEY_TERMINAL = "terminal_id"
+
+
+def terminal_activa(request):
+    """Id de la terminal de autoservicio en la que esta sesión se identificó, o ``None``
+    si no es una sesión de quiosco. Solo cuenta para usuarios autenticados."""
+    usuario = getattr(request, "user", None)
+    if usuario is None or not usuario.is_authenticated:
+        return None
+    return request.session.get(SESSION_KEY_TERMINAL)
+
+
+def entrar_modo_terminal(request, terminal_id):
+    """Marca la sesión como de quiosco: desde ahí, el middleware solo deja usar las
+    pantallas del autoservicio. Si la sesión era de otra terminal, también se limpia el
+    cliente que se había elegido."""
+    if request.session.get(SESSION_KEY_TERMINAL) != terminal_id:
+        request.session.pop(SESSION_KEY, None)
+    request.session[SESSION_KEY_TERMINAL] = terminal_id
+
+
+def salir_modo_terminal(request):
+    """Quita la marca de quiosco y el cliente elegido de la sesión."""
+    request.session.pop(SESSION_KEY_TERMINAL, None)
+    request.session.pop(SESSION_KEY, None)

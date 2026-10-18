@@ -172,7 +172,7 @@ class OperatividadTerminalTests(TerminalTestSetUp, APITestCase):
         terminal.estado = Terminal.MANTENIMIENTO
         terminal.save(update_fields=['estado'])
 
-        respuesta = self.client.get(reverse('terminal_demo', args=[terminal.pk]))
+        respuesta = self.client.get(reverse('terminal_inicio', args=[terminal.pk]))
 
         self.assertEqual(respuesta.status_code, status.HTTP_409_CONFLICT)
         self.assertContains(respuesta, 'Terminal no operativa', status_code=409)
@@ -241,13 +241,13 @@ class PantallaAdministrarTerminalesTests(TerminalTestSetUp, APITestCase):
         self.assertContains(respuesta, 'denominaciones activas')
         self.assertEqual(Terminal.objects.count(), 0)
 
-    def test_demo_de_terminal_activa_permite_iniciar(self):
+    def test_la_pantalla_de_una_terminal_activa_permite_identificarse(self):
         terminal = self._terminal_creada()
 
-        respuesta = self.client.post(reverse('terminal_demo', args=[terminal.pk]))
+        respuesta = self.client.get(reverse('terminal_inicio', args=[terminal.pk]))
 
         self.assertEqual(respuesta.status_code, status.HTTP_200_OK)
-        self.assertContains(respuesta, 'La simulación está lista para iniciar')
+        self.assertContains(respuesta, 'Identificarme para operar')
 
 
 class CajaDeLaTerminalTests(TerminalTestSetUp, APITestCase):

@@ -11,7 +11,6 @@ from .views import (
     sucursal_editar_view,
     sucursal_toggle_view,
     terminal_desactivar_view,
-    terminal_demo_view,
     terminal_editar_view,
 )
 from .views_billetes import (
@@ -26,6 +25,13 @@ from .views_billetes import (
     MovimientoBilleteViewSet,
     OperarPresencialAPIView,
     PrevisualizarOperacionAPIView,
+)
+from .views_terminal import (
+    terminal_cliente_view,
+    terminal_comprobante_view,
+    terminal_ingreso_view,
+    terminal_inicio_view,
+    terminal_operar_view,
 )
 from .views_pantallas import (
     billete_toggle_view,
@@ -70,7 +76,17 @@ urlpatterns = [
         terminal_desactivar_view,
         name='terminal_desactivar',
     ),
-    path('autoservicio/<int:pk>/', terminal_demo_view, name='terminal_demo'),
+    # Terminal de autoservicio (E4-193, E4-194): el inicio es público; el resto exige la
+    # identificación con Keycloak.
+    path('autoservicio/<int:pk>/', terminal_inicio_view, name='terminal_inicio'),
+    path('autoservicio/<int:pk>/ingreso/', terminal_ingreso_view, name='terminal_ingreso'),
+    path('autoservicio/<int:pk>/cliente/', terminal_cliente_view, name='terminal_cliente'),
+    path('autoservicio/<int:pk>/operar/', terminal_operar_view, name='terminal_operar'),
+    path(
+        'autoservicio/<int:pk>/comprobante/<int:transaccion_id>/',
+        terminal_comprobante_view,
+        name='terminal_comprobante',
+    ),
     path('gestion/sucursales/', gestion_sucursales_view, name='gestion_sucursales'),
     path('gestion/sucursales/<int:pk>/editar/', sucursal_editar_view, name='sucursal_editar'),
     path('gestion/sucursales/<int:pk>/toggle/', sucursal_toggle_view, name='sucursal_toggle'),

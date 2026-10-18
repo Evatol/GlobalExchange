@@ -46,7 +46,7 @@
                                     </td>
                                     <td class="text-nowrap">
                                         <a class="btn btn-sm btn-outline-primary" href="{% url 'terminal_editar' terminal.id %}">Editar</a>
-                                        <a class="btn btn-sm btn-outline-secondary" href="{% url 'terminal_demo' terminal.id %}">Probar</a>
+                                        <a class="btn btn-sm btn-outline-secondary" href="{% url 'terminal_inicio' terminal.id %}">Abrir</a>
                                         {% if terminal.estado != 'INACTIVA' %}
                                         <form method="post" action="{% url 'terminal_desactivar' terminal.id %}" class="d-inline">
                                             {% csrf_token %}

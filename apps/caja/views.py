@@ -4,7 +4,6 @@ from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
-from django.views.decorators.http import require_http_methods
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -254,30 +253,6 @@ def terminal_desactivar_view(request, pk):
     if terminal is not None:
         services.actualizar_terminal(terminal, {'estado': Terminal.INACTIVA})  # cierra su caja
     return redirect('gestion_terminales')
-
-
-@require_http_methods(['GET', 'POST'])
-def terminal_demo_view(request, pk):
-    """Pantalla pública simulada que valida el estado antes de iniciar."""
-    terminal = get_object_or_404(
-        Terminal.objects.select_related('sucursal'), pk=pk
-    )
-    mensaje = None
-    error = None
-    response_status = status.HTTP_200_OK
-    try:
-        services.validar_terminal_operativa(terminal)
-        if request.method == 'POST':
-            mensaje = 'Terminal operativa. La simulación está lista para iniciar una operación.'
-    except DjangoValidationError as exc:
-        error = _errores_validacion(exc)
-        response_status = status.HTTP_409_CONFLICT
-    return render(
-        request,
-        'caja/terminal_demo.html',
-        {'terminal': terminal, 'mensaje': mensaje, 'error': error},
-        status=response_status,
-    )
 
 
 @login_required

@@ -178,7 +178,8 @@ cat <<'FIN'
     angel           (sin rol)       para asignarle un rol en la demo
 
   Terminal de autoservicio: "Terminal Autoservicio Centro", con su caja
-  abierta y billetes (la administra admin_demo desde Terminales).
+  abierta y billetes (la administra admin_demo desde Terminales, boton Abrir).
+  Ahi cliente_demo se identifica y opera en efectivo.
 
   Para volver a verificar:  ./scripts/verificar_produccion.sh   (con --prod)
   Para apagar:   docker compose down

@@ -459,9 +459,14 @@ def anular_operacion_en_efectivo(caja, transaccion_id):
     return transaccion
 
 
+MODALIDAD_PRESENCIAL = 'PRESENCIAL'  # atendida por un cajero en el mostrador
+MODALIDAD_TERMINAL = 'TERMINAL'  # autoservicio: la hace el propio cliente en una terminal
+
+
 def registrar_operacion_presencial(
     *, caja, usuario, cliente, tipo, moneda_codigo, cantidad,
     recibidos=None, entregados=None, moneda_destino_codigo=None,
+    modalidad=MODALIDAD_PRESENCIAL,
 ):
     """Registra la operación y conserva como FALLIDA cualquier intento que
     falle al procesar caja. Los movimientos fallidos se revierten primero.
@@ -473,7 +478,7 @@ def registrar_operacion_presencial(
             moneda_codigo=moneda_codigo, cantidad=cantidad,
             recibidos=recibidos, entregados=entregados,
             moneda_destino_codigo=moneda_destino_codigo,
-            referencia=referencia,
+            referencia=referencia, modalidad=modalidad,
         )
     except ValidationError as exc:
         transaccion = referencia.get('transaccion')
@@ -481,6 +486,7 @@ def registrar_operacion_presencial(
             transaccion.estado = 'FALLIDA'
             transaccion.observacion = ' '.join(exc.messages)
             transaccion.save()
+            exc.transaccion_fallida = transaccion  # para avisarle al cliente qué quedó registrado
         raise
 
 
@@ -488,6 +494,7 @@ def registrar_operacion_presencial(
 def _registrar_operacion_presencial_atomica(
     *, caja, usuario, cliente, tipo, moneda_codigo, cantidad,
     recibidos=None, entregados=None, moneda_destino_codigo=None, referencia=None,
+    modalidad=MODALIDAD_PRESENCIAL,
 ):
     """Compra, venta o cambio de divisas en el mostrador, pagado en efectivo.
 
@@ -508,7 +515,9 @@ def _registrar_operacion_presencial_atomica(
     # conviene moverlo a un services.py de esa app).
     from apps.transacciones.views import _preparar_transaccion
 
-    if caja.cajero_id != usuario.id:
+    # En el mostrador la caja es del cajero que atiende; la caja de una terminal no tiene
+    # cajero (la usa quien se identifica en ella), así que no se compara.
+    if modalidad == MODALIDAD_PRESENCIAL and caja.cajero_id != usuario.id:
         raise ValidationError('Esta caja no está asignada a este cajero.')
     if not cliente.estado:
         raise ValidationError('El cliente está inactivo.')
@@ -529,7 +538,7 @@ def _registrar_operacion_presencial_atomica(
 
     transaccion.usuario = usuario
     transaccion.metodo_pago = efectivo
-    transaccion.modalidad = 'PRESENCIAL'
+    transaccion.modalidad = modalidad
 
     error_limite = transaccion.validar_limite_cliente()
     if error_limite:
@@ -579,6 +588,76 @@ def previsualizar_operacion_presencial(
     esperado = _flujo_esperado(transaccion, _moneda_local())
     monedas = Moneda.objects.in_bulk(esperado.keys())
     return transaccion, {monedas[k].codigo: v for k, v in esperado.items()}
+
+
+# ---------------------------------------------------------------------------
+# Operar en efectivo en una terminal de autoservicio (E4-194)
+# ---------------------------------------------------------------------------
+
+def _validar_cliente_de_la_terminal(usuario, cliente):
+    """En el autoservicio opera el propio cliente: el cliente tiene que seguir activo y
+    asociado al usuario que se identificó."""
+    if not usuario.clientes.filter(pk=cliente.pk, estado=True).exists():
+        raise ValidationError('El cliente elegido no está asociado a tu usuario o está inactivo.')
+
+
+def previsualizar_operacion_en_terminal(
+    *, terminal, usuario, cliente, tipo, moneda_codigo, cantidad, moneda_destino_codigo=None,
+):
+    """Vista previa de una operación en la terminal, sin guardar nada: la operación armada
+    (tasa, comisión y total, con el límite de la categoría del cliente ya validado) y los
+    billetes que el cliente tiene que ingresar y los que la terminal le va a entregar.
+
+    Devuelve ``(transaccion, billetes)``; ``billetes['advertencia']`` trae el motivo si con
+    el stock de la terminal no se puede cubrir la operación (no se debe confirmar).
+    """
+    validar_terminal_operativa(terminal)
+    _validar_cliente_de_la_terminal(usuario, cliente)
+    transaccion, _ = previsualizar_operacion_presencial(
+        cliente=cliente, tipo=tipo, moneda_codigo=moneda_codigo, cantidad=cantidad,
+        moneda_destino_codigo=moneda_destino_codigo,
+    )
+    return transaccion, sugerir_billetes(terminal.caja, transaccion)
+
+
+def registrar_operacion_en_terminal(
+    *, terminal, usuario, cliente, tipo, moneda_codigo, cantidad, moneda_destino_codigo=None,
+):
+    """Compra, venta o cambio en efectivo hecho por el cliente en una terminal (E4-194).
+
+    Se confirma en el acto, con el desglose de billetes armado por el sistema, sobre la
+    caja de la terminal: la operación queda ``EXITOSA`` con sus movimientos de billetes
+    (los que ingresa el cliente y los que la terminal entrega). Si falla por stock de la
+    terminal, límite de la categoría del cliente o cotización que cambió, no se mueve
+    ningún billete y el intento queda registrado como ``FALLIDA``.
+    """
+    validar_terminal_operativa(terminal)
+    _validar_cliente_de_la_terminal(usuario, cliente)
+    return registrar_operacion_presencial(
+        caja=terminal.caja, usuario=usuario, cliente=cliente, tipo=tipo,
+        moneda_codigo=moneda_codigo, cantidad=cantidad,
+        moneda_destino_codigo=moneda_destino_codigo, modalidad=MODALIDAD_TERMINAL,
+    )
+
+
+def movimientos_de_la_operacion(transaccion):
+    """Billetes que ingresó el cliente y billetes que se le entregaron en la operación:
+    ``{'recibidos': [...], 'entregados': [...]}``, con ``moneda``, ``denominacion``,
+    ``cantidad`` y ``subtotal`` en cada renglón. Es el desglose del comprobante."""
+    movimientos = (
+        transaccion.movimientos_billetes.select_related('billete__moneda')
+        .order_by('billete__moneda__codigo', '-billete__denominacion')
+    )
+    desglose = {'recibidos': [], 'entregados': []}
+    for m in movimientos:
+        clave = 'recibidos' if m.tipo == 'ENTRADA' else 'entregados'
+        desglose[clave].append({
+            'moneda': m.billete.moneda.codigo,
+            'denominacion': m.billete.denominacion,
+            'cantidad': m.cantidad,
+            'subtotal': m.billete.denominacion * m.cantidad,
+        })
+    return desglose
 
 
 # ---------------------------------------------------------------------------

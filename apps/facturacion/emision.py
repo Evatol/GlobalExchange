@@ -167,7 +167,7 @@ def construir_documento(transaccion, numero, emitida_en):
         'dEmailE': emisor['email'],
         'gActEco': [{'cActEco': emisor['actividad_codigo'], 'dDesActEco': emisor['actividad']}],
         **receptor,
-        'iIndPres': '1' if transaccion.modalidad == 'PRESENCIAL' else '2',
+        'iIndPres': '1' if transaccion.modalidad in ('PRESENCIAL', 'TERMINAL') else '2',
         'iCondOpe': '1',
         'gPaConEIni': [pago],
         'iCondCred': '1',

@@ -1,0 +1,141 @@
+{% extends 'caja/terminal_base.html' %}
+
+{% block contenido %}
+<div class="row justify-content-center">
+    <div class="col-md-8 col-lg-6">
+        <div class="text-center mb-4">
+            <h2>Operar en efectivo</h2>
+            <p class="text-muted mb-0">
+                Operás como <strong>{{ cliente.nombre }}</strong>
+                {% if varios_clientes %}· <a href="{% url 'terminal_cliente' terminal.pk %}">cambiar cliente</a>{% endif %}
+            </p>
+        </div>
+
+        {% if error %}
+            <div class="alert alert-danger" role="alert">
+                {% if fallida %}
+                    <strong>No se pudo completar la operación.</strong> {{ error }}<br>
+                    <small>No se movió ningún billete. El intento quedó registrado como fallido (operación #{{ fallida.pk }}).</small>
+                {% else %}
+                    {{ error }}
+                {% endif %}
+            </div>
+        {% endif %}
+
+        <div class="card shadow-sm border-0 mb-4">
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="accion" value="calcular">
+                    <div class="mb-3">
+                        <label class="form-label">¿Qué querés hacer?</label>
+                        <select name="tipo" id="tipoOperacion" class="form-select form-select-lg" required>
+                            <option value="COMPRA" {% if datos.tipo == 'COMPRA' %}selected{% endif %}>Comprar divisas</option>
+                            <option value="VENTA" {% if datos.tipo == 'VENTA' %}selected{% endif %}>Vender divisas</option>
+                            <option value="CAMBIO" {% if datos.tipo == 'CAMBIO' %}selected{% endif %}>Cambiar una divisa por otra</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" id="etiquetaMoneda">Moneda</label>
+                        <select name="moneda_codigo" class="form-select form-select-lg" required>
+                            <option value="">Seleccione moneda...</option>
+                            {% for m in monedas %}
+                            <option value="{{ m.codigo }}" {% if datos.moneda_codigo == m.codigo %}selected{% endif %}>{{ m.codigo }} - {{ m.nombre }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3 d-none" id="campoMonedaDestino">
+                        <label class="form-label">Moneda que querés recibir</label>
+                        <select name="moneda_destino_codigo" class="form-select form-select-lg">
+                            <option value="">Seleccione moneda...</option>
+                            {% for m in monedas %}
+                            <option value="{{ m.codigo }}" {% if datos.moneda_destino_codigo == m.codigo %}selected{% endif %}>{{ m.codigo }} - {{ m.nombre }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Cantidad</label>
+                        <input type="number" step="0.01" min="0.01" name="cantidad" class="form-control form-control-lg"
+                               value="{{ datos.cantidad|default:'' }}" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-lg w-100">Calcular</button>
+                </form>
+            </div>
+        </div>
+
+        {% if vista_previa %}
+        {% with t=vista_previa.transaccion b=vista_previa.billetes %}
+        <div class="card shadow-sm border-0">
+            <div class="card-body">
+                <h5 class="card-title mb-3">Resumen de tu operación</h5>
+                <table class="table table-sm mb-3">
+                    {% if t.tipo == 'CAMBIO' %}
+                    <tr><th>Entregás</th><td class="text-end">{{ t.cantidad|floatformat:"2g" }} {{ t.moneda.codigo }}</td></tr>
+                    <tr><th>Tasa de {{ t.moneda.codigo }}</th><td class="text-end">{{ t.tasa_cambio|floatformat:"2g" }} Gs</td></tr>
+                    <tr><th>Tasa de {{ t.moneda_destino.codigo }}</th><td class="text-end">{{ t.tasa_cambio_destino|floatformat:"2g" }} Gs</td></tr>
+                    <tr><th>Comisión ({{ t.comision_porcentaje|floatformat:"2" }}%)</th><td class="text-end">{{ t.monto_comision|floatformat:"0g" }} Gs</td></tr>
+                    <tr class="table-light"><th>Recibís</th><td class="text-end fs-5"><strong>{{ t.cantidad_destino|floatformat:"2g" }} {{ t.moneda_destino.codigo }}</strong></td></tr>
+                    {% else %}
+                    <tr><th>{% if t.tipo == 'COMPRA' %}Comprás{% else %}Vendés{% endif %}</th><td class="text-end">{{ t.cantidad|floatformat:"2g" }} {{ t.moneda.codigo }}</td></tr>
+                    <tr><th>Tasa</th><td class="text-end">{{ t.tasa_cambio|floatformat:"2g" }} Gs</td></tr>
+                    <tr><th>Comisión ({{ t.comision_porcentaje|floatformat:"2" }}%)</th><td class="text-end">{{ t.monto_comision|floatformat:"0g" }} Gs</td></tr>
+                    <tr class="table-light"><th>{% if t.tipo == 'COMPRA' %}Total a pagar{% else %}Total a recibir{% endif %}</th><td class="text-end fs-5"><strong>{{ t.monto_total|floatformat:"0g" }} Gs</strong></td></tr>
+                    {% endif %}
+                </table>
+
+                {% if b.advertencia %}
+                    <div class="alert alert-warning">
+                        <strong>La terminal no puede completar esta operación.</strong> {{ b.advertencia }}
+                        Probá con otro monto u otra terminal.
+                    </div>
+                {% else %}
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <h6 class="text-success">Ingresá estos billetes</h6>
+                            {% for x in b.recibir %}
+                                <div class="d-flex justify-content-between small"><span>{{ x.cantidad }} × {{ x.denominacion|floatformat:"-2g" }} {{ x.moneda }}</span><span class="text-muted">{{ x.subtotal|floatformat:"-2g" }}</span></div>
+                            {% empty %}<span class="text-muted small">—</span>{% endfor %}
+                        </div>
+                        <div class="col-6">
+                            <h6 class="text-danger">La terminal te entrega</h6>
+                            {% for x in b.entregar %}
+                                <div class="d-flex justify-content-between small"><span>{{ x.cantidad }} × {{ x.denominacion|floatformat:"-2g" }} {{ x.moneda }}</span><span class="text-muted">{{ x.subtotal|floatformat:"-2g" }}</span></div>
+                            {% empty %}<span class="text-muted small">—</span>{% endfor %}
+                        </div>
+                    </div>
+                    <form method="post" class="m-0">
+                        {% csrf_token %}
+                        <input type="hidden" name="accion" value="confirmar">
+                        <input type="hidden" name="tipo" value="{{ datos.tipo }}">
+                        <input type="hidden" name="moneda_codigo" value="{{ datos.moneda_codigo }}">
+                        <input type="hidden" name="moneda_destino_codigo" value="{{ datos.moneda_destino_codigo }}">
+                        <input type="hidden" name="cantidad" value="{{ datos.cantidad }}">
+                        <button type="submit" class="btn btn-success btn-lg w-100">Confirmar operación</button>
+                    </form>
+                {% endif %}
+            </div>
+        </div>
+        {% endwith %}
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // En un cambio hay que elegir también la divisa que se recibe.
+    (function () {
+        var tipo = document.getElementById('tipoOperacion');
+        var destino = document.getElementById('campoMonedaDestino');
+        var etiqueta = document.getElementById('etiquetaMoneda');
+        function actualizar() {
+            var esCambio = tipo.value === 'CAMBIO';
+            destino.classList.toggle('d-none', !esCambio);
+            destino.querySelector('select').required = esCambio;
+            etiqueta.textContent = esCambio ? 'Moneda que entregás' : 'Moneda';
+        }
+        tipo.addEventListener('change', actualizar);
+        actualizar();
+    })();
+</script>
+{% endblock %}
