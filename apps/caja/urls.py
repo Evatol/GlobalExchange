@@ -4,10 +4,14 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     AsignacionCajeroViewSet,
     SucursalViewSet,
+    TerminalViewSet,
     asignacion_cajero_desasignar_view,
+    gestion_terminales_view,
     gestion_sucursales_view,
     sucursal_editar_view,
     sucursal_toggle_view,
+    terminal_desactivar_view,
+    terminal_editar_view,
 )
 from .views_billetes import (
     ArqueoViewSet,
@@ -22,6 +26,13 @@ from .views_billetes import (
     OperarPresencialAPIView,
     PrevisualizarOperacionAPIView,
 )
+from .views_terminal import (
+    terminal_cliente_view,
+    terminal_comprobante_view,
+    terminal_ingreso_view,
+    terminal_inicio_view,
+    terminal_operar_view,
+)
 from .views_pantallas import (
     billete_toggle_view,
     caja_abrir_view,
@@ -33,10 +44,12 @@ from .views_pantallas import (
     gestion_limites_stock_view,
     mi_caja_view,
     mostrador_view,
+    operacion_anular_view,
 )
 
 router = DefaultRouter()
 router.register('sucursales', SucursalViewSet, basename='sucursal')
+router.register('terminales', TerminalViewSet, basename='terminal')
 router.register(
     'asignaciones-cajero', AsignacionCajeroViewSet, basename='asignacioncajero'
 )
@@ -52,6 +65,28 @@ router.register('limites-stock', LimiteStockViewSet, basename='limitestock')
 
 urlpatterns = [
     # Pantallas propias de gestión (HTML), en vez de la API navegable de DRF.
+    path('gestion/terminales/', gestion_terminales_view, name='gestion_terminales'),
+    path(
+        'gestion/terminales/<int:pk>/editar/',
+        terminal_editar_view,
+        name='terminal_editar',
+    ),
+    path(
+        'gestion/terminales/<int:pk>/desactivar/',
+        terminal_desactivar_view,
+        name='terminal_desactivar',
+    ),
+    # Terminal de autoservicio (E4-193, E4-194): el inicio es público; el resto exige la
+    # identificación con Keycloak.
+    path('autoservicio/<int:pk>/', terminal_inicio_view, name='terminal_inicio'),
+    path('autoservicio/<int:pk>/ingreso/', terminal_ingreso_view, name='terminal_ingreso'),
+    path('autoservicio/<int:pk>/cliente/', terminal_cliente_view, name='terminal_cliente'),
+    path('autoservicio/<int:pk>/operar/', terminal_operar_view, name='terminal_operar'),
+    path(
+        'autoservicio/<int:pk>/comprobante/<int:transaccion_id>/',
+        terminal_comprobante_view,
+        name='terminal_comprobante',
+    ),
     path('gestion/sucursales/', gestion_sucursales_view, name='gestion_sucursales'),
     path('gestion/sucursales/<int:pk>/editar/', sucursal_editar_view, name='sucursal_editar'),
     path('gestion/sucursales/<int:pk>/toggle/', sucursal_toggle_view, name='sucursal_toggle'),
@@ -72,6 +107,11 @@ urlpatterns = [
     path('mi-caja/', mi_caja_view, name='mi_caja'),
     path('mi-caja/cerrar/', caja_cerrar_view, name='caja_cerrar'),
     path('mostrador/', mostrador_view, name='mostrador'),
+    path(
+        'mi-caja/operaciones/<int:pk>/anular/',
+        operacion_anular_view,
+        name='caja_operacion_anular',
+    ),
 
     # RF106: API del cajero.
     path('mi-inventario/', MiInventarioAPIView.as_view(), name='mi_inventario'),

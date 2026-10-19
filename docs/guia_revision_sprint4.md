@@ -107,46 +107,70 @@ está en `docs/registro_pruebas_documentacion.md` (sección Sprint 4).
 Entrá por la pantalla pública: `http://localhost:8000/` → **Ingresar al
 Portal**.
 
-### 4.1 Confirmación de pago (E4-157 / E4-158)
+### 4.1 Confirmación de pago con Stripe (E4-157 / E4-158)
 
-Con una pasarela de pago **simulada**, pero con el protocolo de una real. Todo
-por pantallas:
+Las compras con un medio que **no es efectivo** (Cuenta Itaú, Tigo Money, Visa
+Itaú) se pagan con **Stripe**, en su entorno de prueba. Hace falta la
+`STRIPE_SECRET_KEY` en el `.env` (ver `.env.example`); sin ella el sistema usa la
+pasarela simulada de siempre. Todo por pantallas:
 
 1. **Ventana normal** (`cliente_demo`): Operar Divisas → Comprar, USD, **13**,
-   Caja chica → **Continuar al pago**.
-2. En el resumen, **Pagar con la pasarela**: se abre la pantalla de la
-   **pasarela de pago (simulada)** con el concepto (*Compra de 13,00 USD*), una
-   **referencia** `PAS-...` y el total: **96.681 Gs**.
-3. **Pagar** → vuelve al resumen: *"Pago confirmado. La operación #1 se realizó
-   con éxito."* y la operación queda **Exitosa**.
-4. **Rechazar** (con otra compra): *"La pasarela rechazó el pago. La operación
-   #2 quedó fallida."* En el Historial, filtrá por **Fallida**.
-5. **Volver sin pagar**: el resumen queda *"Esperando el pago externo"*, con el
-   botón **Ir a la pasarela para pagar** para retomarlo.
+   **Cuenta Itaú** → **Continuar al pago**.
+2. El resumen ofrece **Pagar con Stripe** (no hay "Confirmar pago": con Stripe,
+   una compra que no es en efectivo solo se paga ahí). Se abre la **página de
+   Stripe** con el concepto (*Compra de 13.00 USD*) y el total en guaraníes:
+   **96.681 Gs**.
+3. Pagá con la tarjeta de prueba **4242 4242 4242 4242**, una fecha futura
+   cualquiera y cualquier CVC → Stripe vuelve al resumen: *"Pago confirmado con
+   Stripe. La operación #1 se realizó con éxito."* y la operación queda
+   **Exitosa**. En el panel de Stripe (entorno de prueba) → **Transacciones**
+   aparece el cobro de ₲96.681.
+4. **Tarjeta rechazada** (con otra compra): la tarjeta de prueba **4000 0000 0000
+   0002** la rechaza la propia página de Stripe, que deja reintentar. Si la
+   sesión vence sin cobrarse (una hora), la operación queda **Fallida**.
+5. **Volver sin pagar** (con la flecha de Stripe): el resumen queda *"Esperando
+   el pago externo"*, con **Ir a Stripe para pagar** para retomarlo y **Cancelar
+   operación**, que además cierra la sesión en Stripe para que ya no se pueda
+   pagar.
 6. **Cotización que cambia** (con las dos ventanas, como en el Sprint 3):
    iniciá el pago y, antes de pagar, el analista **edita** la cotización de USD
-   (**7350 / 7450**) → al **Pagar**, la operación se cancela y queda anotado que
-   el pago debe devolverse. **Volvé USD a 7300 / 7400 al terminar.**
+   (**7350 / 7450**) → al pagar en Stripe, la operación se cancela y **el pago se
+   devuelve solo** (el reembolso aparece en el panel de Stripe y queda anotado en
+   la operación). **Volvé USD a 7300 / 7400 al terminar.**
+7. **Efectivo**: una compra con **Caja chica** no usa Stripe, se confirma en el
+   sistema como siempre.
 
-🗣️ *"La pasarela simula a una empresa de pagos real: el sistema no confirma por
-lo que vuelve el navegador sino por el aviso de la pasarela (el webhook), que va
-firmado con HMAC-SHA256 y lo verifica el mismo código que verifica los avisos
-que llegan por HTTP. Repetir el aviso no cobra dos veces, y si cambió la
-cotización entre que se inició el pago y el aviso, se cancela y queda anotado
-que hay que devolver el pago. Solo se paga así una compra, y no se debita
-además el banco."*
+**Webhook (opcional).** Con el Stripe CLI instalado, en otra terminal:
+`stripe listen --forward-to localhost:8000/api/pasarela/stripe/webhook/`. Imprime
+un `whsec_...` que se pega en el `.env` como `STRIPE_WEBHOOK_SECRET`. Con eso la
+operación se confirma aunque el cliente cierre la pestaña antes de volver.
 
-**Si preguntan por SIPAP, Stripe o Bancard:** la cátedra confirmó que esta
-integración se puede entregar con una **pasarela simulada**, y así quedó. No
-pudimos confirmar acceso a un ambiente de pruebas de ninguno de esos servicios
-desde Paraguay. La pasarela es un módulo aparte (`apps/pasarela`): para usar un
-proveedor real se reemplaza esa pantalla por la página de pago del proveedor y se
-agrega la verificación de su firma; el resto del flujo (referencia, webhook,
-confirmación, devolución) no cambia.
+🗣️ *"El cliente paga en la página de Stripe: los datos de la tarjeta nunca pasan
+por nuestro sistema. Y el sistema no confirma por lo que vuelve el navegador sino
+por lo que Stripe dice de esa sesión, que consulta con la clave secreta o recibe en
+un aviso con firma verificada. Repetir el aviso no cobra dos veces, y si cambió la
+cotización entre que se inició el pago y el cobro, la operación se cancela y el
+pago se devuelve automáticamente."*
 
-**Seguridad:** la pantalla solo existe si `PASARELA_SIMULADA_ACTIVA` está
-encendida, cada cliente solo llega a sus propias operaciones, y el webhook
-rechaza todo aviso sin firma válida.
+**Si preguntan por Stripe:** se usa una cuenta de **Estados Unidos** en modo de
+prueba, porque Stripe no ofrece cuentas en Paraguay. El cobro se hace en
+**guaraníes** (`pyg`, que Stripe trata como moneda sin decimales). No se maneja
+ningún dato de tarjeta: las claves van solo en el `.env`, que git ignora.
+
+**Límites que conviene decir antes de que pregunten:**
+
+- **Las ventas** siguen acreditando en el banco simulado: Stripe sirve para
+  cobrarle a un cliente, pero pagarle requiere Stripe Connect.
+- Con Stripe activo, **el banco simulado ya no debita las compras** (las cobra
+  Stripe). El escenario del Sprint 3 de *saldo insuficiente → Fallida* se muestra
+  con `PASARELA_PROVEEDOR=simulada` en el `.env`.
+- La pasarela simulada se conserva (`apps/pasarela`): es la que usan las pruebas
+  automáticas y los ambientes sin claves.
+
+**Seguridad:** el webhook de Stripe rechaza todo aviso sin la firma de Stripe
+válida; la pantalla de la pasarela simulada solo existe si
+`PASARELA_SIMULADA_ACTIVA` está encendida; y cada cliente solo llega a sus propias
+operaciones, también al volver de Stripe.
 
 ### 4.2 Notificaciones por cambios de tasa (E4-24 / E4-32 / E4-33)
 
@@ -329,6 +353,9 @@ Notas para si preguntan:
   (`WEBHOOK_PAGO_SECRET`), porque este "producción" no cobra de verdad. Con un
   proveedor real la pasarela simulada debe apagarse y el secreto pasarse por
   variable de entorno.
+- Si el `.env` tiene las claves de Stripe (de **prueba**), el compose se las pasa
+  al contenedor y las compras que no son en efectivo se cobran con Stripe (4.1).
+  Las claves no se meten en la imagen: `.dockerignore` excluye el `.env`.
 
 Para volver a desarrollo:
 
@@ -341,11 +368,16 @@ docker compose -f docker-compose.prod.yml down
 
 ## 9. Preguntas que ya tenés respondidas
 
-**"¿Por qué la pasarela es simulada?"** Porque la cátedra confirmó que se podía
-entregar así, y porque no pudimos confirmar acceso a un ambiente de pruebas de
-SIPAP, Bancard o Stripe desde Paraguay. Tiene el protocolo de una real (referencia,
-webhook firmado, confirmación asíncrona, no doble cobro) y es un módulo aparte, para
-enchufar un proveedor cambiando solo la pantalla y la verificación de firma.
+**"¿Por qué Stripe, y por qué en modo de prueba?"** Porque la cátedra pidió una
+pasarela real y Stripe da un entorno de prueba gratis, sin verificar un negocio.
+Como no ofrece cuentas en Paraguay, la cuenta es de Estados Unidos; cobra en
+guaraníes y no sirve para mover plata de verdad. La pasarela simulada se conserva
+como respaldo (`PASARELA_PROVEEDOR=simulada`) para los ambientes sin claves y para
+las pruebas automáticas, que nunca hablan con Stripe.
+
+**"¿Por qué las ventas no pasan por Stripe?"** Porque Stripe cobra, pero para
+pagarle a un cliente hace falta Stripe Connect (que cada cliente tenga su cuenta
+conectada). Las ventas siguen acreditando en el banco simulado.
 
 **"¿Qué significa 'registro automático de movimientos' (E4-101)?"** Que el
 sistema calcula solo qué billetes recibe y entrega la caja en cada operación y
@@ -369,7 +401,9 @@ es todo o nada: si falla algo (stock, billetes que no cierran, límite del
 cliente, cotización), no se guarda nada, a diferencia del flujo digital.
 
 **"¿Cómo se evita cobrar dos veces?"** Si cobró la pasarela, no se debita
-además el banco; y repetir el aviso del webhook responde "ya procesado".
+además el banco; repetir el aviso (o volver dos veces de Stripe) no confirma dos
+veces; y un doble clic en *Pagar con Stripe* retoma la misma sesión en vez de crear
+otra.
 
 ---
 
@@ -383,14 +417,18 @@ además el banco; y repetir el aviso del webhook responde "ya procesado".
 | El aviso de cotización no aparece | el cliente no marcó USD como favorita, o la variación no superó el 1% |
 | Atender cliente dice "No hay billetes suficientes" | la caja gastó billetes de esa denominación: que el administrador la reabra con otra carga |
 | "No tenés una caja abierta" | la caja quedó cerrada: Cajas → **Abrir** (como administrador) |
-| La pasarela da 404 | `PASARELA_SIMULADA_ACTIVA` está apagada en ese ambiente |
+| La pasarela simulada da 404 | `PASARELA_SIMULADA_ACTIVA` está apagada en ese ambiente |
+| "Las compras con transferencia, billetera o tarjeta se pagan con Stripe" | es lo esperado con Stripe activo: usá **Pagar con Stripe** (o Caja chica, que es efectivo) |
+| "No se pudo conectar con Stripe" | sin internet, o Stripe caído: la operación sigue pendiente y se puede reintentar; o `PASARELA_PROVEEDOR=simulada` en el `.env` |
+| "La clave de Stripe configurada no es válida" | la `STRIPE_SECRET_KEY` del `.env` está mal copiada o es de otra cuenta |
+| Pagué en Stripe y la operación sigue "Esperando" | recargá el resumen (se confirma al volver de Stripe); sin webhook, si se cerró la pestaña antes de volver, abrí **Ir a Stripe para pagar** |
 | Se cayó Docker | `docker compose down` y `./scripts/levantar_sistema.sh` (los datos están en volúmenes) |
 
 ## 11. Ensayo recomendado (una vez antes de la revisión)
 
 1. `./scripts/verificar_tag.sh v1.5.0`
 2. `./scripts/levantar_sistema.sh --limpio`
-3. Pago por la pasarela: pagar, rechazar y cotización que cambia (4.1)
+3. Pago con Stripe: pagar, retomar, cancelar y cotización que cambia (4.1)
 4. Favorita, edición de cotización, aviso, cerrarlo y variación chica (4.2)
 5. Caja: compra (con su alerta de stock), cambio, balance, arqueo, cierre,
    reapertura y límites de stock (4.3)

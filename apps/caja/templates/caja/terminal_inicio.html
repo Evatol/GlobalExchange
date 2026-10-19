@@ -1,0 +1,32 @@
+{% extends 'caja/terminal_base.html' %}
+
+{% block contenido %}
+<div class="text-center mb-4">
+    <h2>Bienvenido a {{ terminal.nombre }}</h2>
+    <p class="text-muted mb-0">Cotizaciones del día y calculadora. Para operar, identificate.</p>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-7">
+        {# Precios desde el lado de quien está frente a la terminal: el cliente. #}
+        {% include 'divisas/_cambio_del_dia.html' with alto_completo=True vista_cliente=True %}
+    </div>
+    <div class="col-lg-5">
+        {% include 'divisas/_calculadora.html' %}
+        <p class="text-muted small text-center mt-2 mb-0">La calculadora solo simula: no registra una compra ni una venta.</p>
+    </div>
+</div>
+
+<div class="card shadow-sm border-0 mt-4">
+    <div class="card-body text-center p-4">
+        {% if identificado %}
+            <p class="mb-3">Tenés una sesión abierta en esta terminal.</p>
+            <a href="{% url 'terminal_ingreso' terminal.pk %}" class="btn btn-primary btn-lg">Continuar</a>
+        {% else %}
+            <p class="mb-3">Para comprar, vender o cambiar divisas en efectivo, ingresá con tu cuenta.</p>
+            <a href="{% url 'oidc_authentication_init' %}?next={% url 'terminal_ingreso' terminal.pk %}"
+               class="btn btn-primary btn-lg">Identificarme para operar</a>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

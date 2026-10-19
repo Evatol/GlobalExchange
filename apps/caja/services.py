@@ -13,14 +13,14 @@ from django.db.models import Min
 from django.utils import timezone
 
 from apps.divisas.models import Moneda
-from apps.transacciones.models import MetodoPago
+from apps.transacciones.models import MetodoPago, Transaccion
 
 from apps.notificaciones.models import Notificaciones
 from apps.usuarios.models import Usuario
 
 from .models import (
     Arqueo, Billete, Caja, CierreCaja, DetalleArqueo, DetalleCierre,
-    LimiteStock, MovimientoBillete, StockBillete,
+    LimiteStock, MovimientoBillete, StockBillete, Terminal,
 )
 
 CERO = Decimal('0')
@@ -64,6 +64,113 @@ def caja_abierta_de(usuario):
     if caja is None:
         raise ValidationError('No tenés una caja abierta asignada.')
     return caja
+
+
+def _sincronizar_caja_de_la_terminal(terminal):
+    """La caja de una terminal está abierta mientras la terminal esté activa y cerrada si
+    no: así su stock cuenta como disponible solo cuando la terminal puede operar (las
+    comprobaciones de stock y la anulación trabajan sobre cajas abiertas)."""
+    caja = terminal.caja
+    ahora = timezone.now()
+    if terminal.estado == Terminal.ACTIVA and caja.estado != 'ABIERTA':
+        caja.estado, caja.fecha_apertura, caja.fecha_cierre = 'ABIERTA', ahora, None
+        caja.save(update_fields=['estado', 'fecha_apertura', 'fecha_cierre'])
+    elif terminal.estado != Terminal.ACTIVA and caja.estado == 'ABIERTA':
+        caja.estado, caja.fecha_cierre = 'CERRADA', ahora
+        caja.save(update_fields=['estado', 'fecha_cierre'])
+
+
+@transaction.atomic
+def crear_terminal(nombre, sucursal, estado, stock_inicial=None):
+    """Crea una terminal, su caja y el inventario inicial como una unidad. La caja nace
+    abierta si la terminal está activa (ver ``_sincronizar_caja_de_la_terminal``)."""
+    if not sucursal.estado:
+        raise ValidationError({'sucursal': 'La sucursal debe estar activa.'})
+
+    stock_inicial = _normalizar(stock_inicial, 'stock inicial')
+    billetes = {
+        billete.pk: billete
+        for billete in Billete.objects.filter(pk__in=stock_inicial, estado=True)
+    }
+    faltantes = set(stock_inicial) - set(billetes)
+    if faltantes:
+        raise ValidationError(
+            f'Denominaciones inexistentes o inactivas: {sorted(faltantes)}'
+        )
+
+    caja = Caja.objects.create(
+        sucursal=sucursal,
+        cajero=None,
+        saldo_inicial=0,
+        saldo_actual=0,
+    )
+    terminal = Terminal.objects.create(
+        nombre=nombre, sucursal=sucursal, estado=estado, caja=caja
+    )
+    _sincronizar_caja_de_la_terminal(terminal)
+
+    denominaciones_activas = list(Billete.objects.filter(estado=True))
+    StockBillete.objects.bulk_create([
+        StockBillete(
+            caja=caja,
+            billete=billete,
+            cantidad=stock_inicial.get(billete.pk, 0),
+        )
+        for billete in denominaciones_activas
+    ])
+    MovimientoBillete.objects.bulk_create([
+        MovimientoBillete(
+            caja=caja,
+            billete=billetes[billete_id],
+            tipo='ENTRADA',
+            cantidad=cantidad,
+        )
+        for billete_id, cantidad in stock_inicial.items()
+        if cantidad > 0
+    ])
+    return terminal
+
+
+@transaction.atomic
+def actualizar_terminal(terminal, cambios):
+    """Actualiza datos de una terminal, manteniendo sucursal y caja coherentes."""
+    terminal = Terminal.objects.select_for_update().select_related('caja', 'sucursal').get(
+        pk=terminal.pk
+    )
+    sucursal = cambios.get('sucursal', terminal.sucursal)
+    estado = cambios.get('estado', terminal.estado)
+    if estado == Terminal.ACTIVA and not sucursal.estado:
+        raise ValidationError({'estado': 'No se puede activar una terminal en una sucursal inactiva.'})
+    if sucursal != terminal.sucursal and (
+        terminal.caja.movimientos_billetes.filter(transaccion__isnull=False).exists()
+        or terminal.caja.cierres.exists()
+        or terminal.caja.arqueos.exists()
+    ):
+        raise ValidationError({
+            'sucursal': 'No se puede cambiar la sucursal de una terminal con operaciones o cierres.'
+        })
+
+    terminal.nombre = cambios.get('nombre', terminal.nombre)
+    terminal.sucursal = sucursal
+    terminal.estado = estado
+    terminal.save()
+    if terminal.caja.sucursal_id != sucursal.pk:
+        terminal.caja.sucursal = sucursal
+        terminal.caja.save(update_fields=['sucursal'])
+    _sincronizar_caja_de_la_terminal(terminal)
+    return terminal
+
+
+def validar_terminal_operativa(terminal):
+    """Rechaza el inicio en terminales no operativas o de sucursales inactivas."""
+    if terminal.estado != Terminal.ACTIVA:
+        estados = dict(Terminal.ESTADOS)
+        raise ValidationError(
+            f'Terminal no operativa: se encuentra {estados[terminal.estado].lower()}.'
+        )
+    if not terminal.sucursal.estado:
+        raise ValidationError('Terminal no operativa: la sucursal está inactiva.')
+    return terminal
 
 
 # ---------------------------------------------------------------------------
@@ -325,9 +432,41 @@ def validar_billetes_de_operacion(transaccion, recibidos, entregados):
             )
 
 
+def operaciones_de_la_caja(caja, limite=15):
+    """Las últimas operaciones que movieron billetes en esta caja (las que se
+    atendieron en ella), la más reciente primero."""
+    return list(
+        Transaccion.objects.filter(movimientos_billetes__caja=caja)
+        .select_related('cliente', 'moneda', 'moneda_destino', 'metodo_pago')
+        .distinct().order_by('-fecha_hora', '-id')[:limite]
+    )
+
+
+def anular_operacion_en_efectivo(caja, transaccion_id):
+    """Anula una operación en efectivo atendida en ``caja`` (E4-196) y devuelve
+    la transacción. Solo se pueden anular las operaciones de la propia caja
+    abierta del cajero: una operación de otra caja (o inexistente) responde
+    igual, para no revelar su existencia. Ver ``Transaccion.anular_operacion``
+    para qué se revierte y cuándo se rechaza.
+    """
+    transaccion = (
+        Transaccion.objects.select_related('metodo_pago')
+        .filter(pk=transaccion_id, movimientos_billetes__caja=caja).distinct().first()
+    )
+    if transaccion is None:
+        raise ValidationError('No existe esa operación en tu caja.')
+    transaccion.anular_operacion(usuario=caja.cajero)
+    return transaccion
+
+
+MODALIDAD_PRESENCIAL = 'PRESENCIAL'  # atendida por un cajero en el mostrador
+MODALIDAD_TERMINAL = 'TERMINAL'  # autoservicio: la hace el propio cliente en una terminal
+
+
 def registrar_operacion_presencial(
     *, caja, usuario, cliente, tipo, moneda_codigo, cantidad,
     recibidos=None, entregados=None, moneda_destino_codigo=None,
+    modalidad=MODALIDAD_PRESENCIAL,
 ):
     """Registra la operación y conserva como FALLIDA cualquier intento que
     falle al procesar caja. Los movimientos fallidos se revierten primero.
@@ -339,7 +478,7 @@ def registrar_operacion_presencial(
             moneda_codigo=moneda_codigo, cantidad=cantidad,
             recibidos=recibidos, entregados=entregados,
             moneda_destino_codigo=moneda_destino_codigo,
-            referencia=referencia,
+            referencia=referencia, modalidad=modalidad,
         )
     except ValidationError as exc:
         transaccion = referencia.get('transaccion')
@@ -347,6 +486,7 @@ def registrar_operacion_presencial(
             transaccion.estado = 'FALLIDA'
             transaccion.observacion = ' '.join(exc.messages)
             transaccion.save()
+            exc.transaccion_fallida = transaccion  # para avisarle al cliente qué quedó registrado
         raise
 
 
@@ -354,6 +494,7 @@ def registrar_operacion_presencial(
 def _registrar_operacion_presencial_atomica(
     *, caja, usuario, cliente, tipo, moneda_codigo, cantidad,
     recibidos=None, entregados=None, moneda_destino_codigo=None, referencia=None,
+    modalidad=MODALIDAD_PRESENCIAL,
 ):
     """Compra, venta o cambio de divisas en el mostrador, pagado en efectivo.
 
@@ -374,7 +515,9 @@ def _registrar_operacion_presencial_atomica(
     # conviene moverlo a un services.py de esa app).
     from apps.transacciones.views import _preparar_transaccion
 
-    if caja.cajero_id != usuario.id:
+    # En el mostrador la caja es del cajero que atiende; la caja de una terminal no tiene
+    # cajero (la usa quien se identifica en ella), así que no se compara.
+    if modalidad == MODALIDAD_PRESENCIAL and caja.cajero_id != usuario.id:
         raise ValidationError('Esta caja no está asignada a este cajero.')
     if not cliente.estado:
         raise ValidationError('El cliente está inactivo.')
@@ -395,7 +538,7 @@ def _registrar_operacion_presencial_atomica(
 
     transaccion.usuario = usuario
     transaccion.metodo_pago = efectivo
-    transaccion.modalidad = 'PRESENCIAL'
+    transaccion.modalidad = modalidad
 
     error_limite = transaccion.validar_limite_cliente()
     if error_limite:
@@ -445,6 +588,76 @@ def previsualizar_operacion_presencial(
     esperado = _flujo_esperado(transaccion, _moneda_local())
     monedas = Moneda.objects.in_bulk(esperado.keys())
     return transaccion, {monedas[k].codigo: v for k, v in esperado.items()}
+
+
+# ---------------------------------------------------------------------------
+# Operar en efectivo en una terminal de autoservicio (E4-194)
+# ---------------------------------------------------------------------------
+
+def _validar_cliente_de_la_terminal(usuario, cliente):
+    """En el autoservicio opera el propio cliente: el cliente tiene que seguir activo y
+    asociado al usuario que se identificó."""
+    if not usuario.clientes.filter(pk=cliente.pk, estado=True).exists():
+        raise ValidationError('El cliente elegido no está asociado a tu usuario o está inactivo.')
+
+
+def previsualizar_operacion_en_terminal(
+    *, terminal, usuario, cliente, tipo, moneda_codigo, cantidad, moneda_destino_codigo=None,
+):
+    """Vista previa de una operación en la terminal, sin guardar nada: la operación armada
+    (tasa, comisión y total, con el límite de la categoría del cliente ya validado) y los
+    billetes que el cliente tiene que ingresar y los que la terminal le va a entregar.
+
+    Devuelve ``(transaccion, billetes)``; ``billetes['advertencia']`` trae el motivo si con
+    el stock de la terminal no se puede cubrir la operación (no se debe confirmar).
+    """
+    validar_terminal_operativa(terminal)
+    _validar_cliente_de_la_terminal(usuario, cliente)
+    transaccion, _ = previsualizar_operacion_presencial(
+        cliente=cliente, tipo=tipo, moneda_codigo=moneda_codigo, cantidad=cantidad,
+        moneda_destino_codigo=moneda_destino_codigo,
+    )
+    return transaccion, sugerir_billetes(terminal.caja, transaccion)
+
+
+def registrar_operacion_en_terminal(
+    *, terminal, usuario, cliente, tipo, moneda_codigo, cantidad, moneda_destino_codigo=None,
+):
+    """Compra, venta o cambio en efectivo hecho por el cliente en una terminal (E4-194).
+
+    Se confirma en el acto, con el desglose de billetes armado por el sistema, sobre la
+    caja de la terminal: la operación queda ``EXITOSA`` con sus movimientos de billetes
+    (los que ingresa el cliente y los que la terminal entrega). Si falla por stock de la
+    terminal, límite de la categoría del cliente o cotización que cambió, no se mueve
+    ningún billete y el intento queda registrado como ``FALLIDA``.
+    """
+    validar_terminal_operativa(terminal)
+    _validar_cliente_de_la_terminal(usuario, cliente)
+    return registrar_operacion_presencial(
+        caja=terminal.caja, usuario=usuario, cliente=cliente, tipo=tipo,
+        moneda_codigo=moneda_codigo, cantidad=cantidad,
+        moneda_destino_codigo=moneda_destino_codigo, modalidad=MODALIDAD_TERMINAL,
+    )
+
+
+def movimientos_de_la_operacion(transaccion):
+    """Billetes que ingresó el cliente y billetes que se le entregaron en la operación:
+    ``{'recibidos': [...], 'entregados': [...]}``, con ``moneda``, ``denominacion``,
+    ``cantidad`` y ``subtotal`` en cada renglón. Es el desglose del comprobante."""
+    movimientos = (
+        transaccion.movimientos_billetes.select_related('billete__moneda')
+        .order_by('billete__moneda__codigo', '-billete__denominacion')
+    )
+    desglose = {'recibidos': [], 'entregados': []}
+    for m in movimientos:
+        clave = 'recibidos' if m.tipo == 'ENTRADA' else 'entregados'
+        desglose[clave].append({
+            'moneda': m.billete.moneda.codigo,
+            'denominacion': m.billete.denominacion,
+            'cantidad': m.cantidad,
+            'subtotal': m.billete.denominacion * m.cantidad,
+        })
+    return desglose
 
 
 # ---------------------------------------------------------------------------
@@ -720,3 +933,105 @@ def registrar_arqueo(caja, cajero, moneda, contados):
         d.arqueo = arqueo
     DetalleArqueo.objects.bulk_create(detalles)
     return arqueo
+
+
+# ---------------------------------------------------------------------------
+# Disponibilidad de billetes de la terminal (E4-195)
+# ---------------------------------------------------------------------------
+
+def _billetes_a_entregar(transaccion):
+    """``{moneda_id: monto}`` que la terminal entrega en billetes en esta operación.
+
+    * Compra: la divisa que compra el cliente.
+    * Cambio: la divisa de destino.
+    * Venta: guaraníes, pero solo si el cliente cobra en efectivo; si cobra en
+      una cuenta o billetera no se entregan billetes.
+    """
+    t = transaccion
+    if t.tipo == 'COMPRA':
+        return {t.moneda_id: t.cantidad}
+    if t.tipo == 'CAMBIO':
+        return {t.moneda_destino_id: t.cantidad_destino}
+    if t.metodo_pago.tipo != MetodoPago.TIPO_EFECTIVO:
+        return {}
+    try:
+        return {_moneda_local().id: t.monto_total}
+    except ValidationError:
+        return {}  # sin moneda local en el catálogo no hay inventario de guaraníes
+
+
+def _stock_en_cajas_abiertas(moneda_id):
+    """``{billete_id: cantidad}`` sumando el stock de todas las cajas abiertas.
+    Las cajas cerradas no cuentan: su efectivo no está disponible para operar."""
+    disponible = {}
+    filas = StockBillete.objects.filter(
+        caja__estado='ABIERTA', billete__moneda_id=moneda_id
+    )
+    for fila in filas:
+        disponible[fila.billete_id] = disponible.get(fila.billete_id, 0) + fila.cantidad
+    return disponible
+
+
+def evaluar_entrega_de_billetes(transaccion):
+    """E4-195: ¿alcanza el stock de billetes para entregar lo que la operación requiere?
+
+    Usa la misma regla de composición que el mostrador (``desglose_de_monto``:
+    de la denominación mayor a la menor, con la tolerancia de media denominación
+    mínima) sobre el stock total de las cajas abiertas.
+
+    Devuelve ``None`` si alcanza, o ``(moneda_id, mensaje)`` con un mensaje claro
+    para el usuario si no. Una moneda sin denominaciones cargadas no maneja
+    inventario de billetes y no se evalúa.
+    """
+    for moneda_id, monto in _billetes_a_entregar(transaccion).items():
+        if not Billete.objects.filter(moneda_id=moneda_id, estado=True).exists():
+            continue
+        try:
+            desglose_de_monto(moneda_id, monto, _stock_en_cajas_abiertas(moneda_id))
+        except ValidationError:
+            codigo = Moneda.objects.filter(pk=moneda_id).values_list('codigo', flat=True).first()
+            return moneda_id, (
+                f'La terminal no cuenta con billetes suficientes de {codigo} '
+                f'para entregar {_formato(monto)} {codigo}.'
+            )
+    return None
+
+
+def notificar_falla_por_stock(transaccion, moneda_id):
+    """E4-195: avisa que una operación quedó fallida por falta de billetes.
+
+    1. Dispara la alerta de mínimo/máximo configurada (RF107) de esa moneda en
+       cada caja abierta, aunque no sea nueva: la falla es el motivo del aviso.
+       Si la moneda no tiene límite configurado o está dentro de sus límites,
+       no hay alerta de RF107 que mandar.
+    2. Avisa de la operación fallida a los administradores y a los cajeros de
+       las cajas abiertas, siempre.
+
+    Corre dentro de la transacción de ``Transaccion.confirmar()``: el estado
+    FALLIDA y los avisos se guardan juntos.
+    """
+    cajas = list(Caja.objects.filter(estado='ABIERTA').select_related('sucursal', 'cajero'))
+
+    for caja in cajas:
+        vigentes = {a['moneda_id']: a for a in alertas_de_stock(caja, [moneda_id])}
+        _notificar_alertas_nuevas(caja, {}, vigentes)
+
+    # Una Caja vacía no tiene cajero: ``_destinatarios_de_alerta`` devuelve solo
+    # a los administradores.
+    destinatarios = {u.pk: u for u in _destinatarios_de_alerta(Caja())}
+    for caja in cajas:
+        destinatarios.update({u.pk: u for u in _destinatarios_de_alerta(caja)})
+
+    codigo = Moneda.objects.filter(pk=moneda_id).values_list('codigo', flat=True).first()
+    mensaje = (
+        f'La operación #{transaccion.pk} ({transaccion.get_tipo_display()} de '
+        f'{_formato(transaccion.cantidad)} {transaccion.moneda.codigo}) quedó fallida: '
+        f'la terminal no cuenta con billetes suficientes de {codigo}.'
+    )
+    for usuario in destinatarios.values():
+        Notificaciones.objects.create(
+            usuario=usuario,
+            titulo=f'Operación fallida por falta de billetes: {codigo}',
+            mensaje=mensaje,
+            tipo='stock_billetes',
+        )

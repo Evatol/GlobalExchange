@@ -12,6 +12,22 @@ facturacion.migrations.0001\_initial module
    :show-inheritance:
    :undoc-members:
 
+facturacion.migrations.0002\_factura\_electronica module
+--------------------------------------------------------
+
+.. automodule:: apps.facturacion.migrations.0002_factura_electronica
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+facturacion.migrations.0003\_factura\_correo module
+---------------------------------------------------
+
+.. automodule:: apps.facturacion.migrations.0003_factura_correo
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 Module contents
 ---------------
 

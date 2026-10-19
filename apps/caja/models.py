@@ -118,6 +118,32 @@ class Caja(models.Model):
         return f'Caja #{self.id}'
 
 
+class Terminal(models.Model):
+    """Punto de autoservicio con caja e inventario de billetes propios."""
+
+    ACTIVA = 'ACTIVA'
+    INACTIVA = 'INACTIVA'
+    MANTENIMIENTO = 'MANTENIMIENTO'
+    ESTADOS = [
+        (ACTIVA, 'Activa'),
+        (INACTIVA, 'Inactiva'),
+        (MANTENIMIENTO, 'Mantenimiento'),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    nombre = models.CharField(max_length=100, unique=True)
+    sucursal = models.ForeignKey(
+        Sucursal, on_delete=models.PROTECT, related_name='terminales'
+    )
+    estado = models.CharField(max_length=20, choices=ESTADOS, default=ACTIVA)
+    caja = models.OneToOneField(
+        Caja, on_delete=models.PROTECT, related_name='terminal'
+    )
+
+    def __str__(self):
+        return self.nombre
+
+
 class Billete(models.Model):
     """Catálogo de denominaciones por moneda (lo carga el administrador).
 

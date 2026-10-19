@@ -50,6 +50,9 @@
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'historial_transacciones' %}">Historial</a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'lista_facturas' %}">Facturas</a>
+                    </li>
                     {% if es_administrador %}
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'gestion_metodos_pago' %}">Métodos de Pago</a>
@@ -62,6 +65,9 @@
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'gestion_cajas' %}">Cajas</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'gestion_terminales' %}">Terminales</a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'gestion_limites_stock' %}">Límites de Stock</a>
@@ -145,7 +151,24 @@
                     </div>
                 </div>
             </div>
-
+            <div class="col-md-4">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">Facturas</h5>
+                        <p class="card-text">Consultá tus facturas, mirá su detalle y descargalas en PDF.</p>
+                        <a href="{% url 'lista_facturas' %}" class="btn btn-primary w-100">Ver Facturas</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                    <div class="card h-100 shadow-sm border-0">
+                        <div class="card-body text-center">
+                            <h5 class="card-title">Facturas</h5>
+                            <p class="card-text">Consultá tus facturas, mirá su detalle y descargalas en PDF.</p>
+                            <a href="{% url 'lista_facturas' %}" class="btn btn-primary w-100">Ver Facturas</a>
+                        </div>
+                    </div>
+            </div>
             <div class="col-md-4">
                 <div class="card h-100 shadow-sm border-0">
                     <div class="card-body text-center">

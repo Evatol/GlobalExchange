@@ -263,6 +263,48 @@ def _simular(moneda_codigo, tipo_operacion, cantidad, moneda_destino_codigo=None
     return simulacion, tasa_aplicada, tasa_obj, None
 
 
+def contexto_de_simulacion(datos):
+    """Contexto de la calculadora pública a partir de lo que mandó el formulario
+    (``request.POST``): las tasas del día y, si los datos son válidos, el resultado de la
+    simulación. La comparten la pantalla pública y la pantalla de inicio del autoservicio,
+    para que las dos calculen siempre igual."""
+    tasas = TasaCambio.objects.filter(estado=True).select_related('moneda')
+
+    serializer = SimulacionRequestSerializer(data=datos)
+    resultado = None
+    tasa_aplicada = None
+    error = None
+    moneda_codigo = datos.get('moneda_codigo', '')
+    tipo_operacion = datos.get('tipo_operacion', 'compra')
+    moneda_destino = datos.get('moneda_destino_codigo', '')
+
+    if not serializer.is_valid():
+        error = ' '.join(
+            str(msg) for errores in serializer.errors.values() for msg in errores
+        )
+    else:
+        validados = serializer.validated_data
+        moneda_codigo = validados['moneda_codigo']
+        tipo_operacion = validados['tipo_operacion']
+        moneda_destino = validados.get('moneda_destino_codigo', '').upper()
+        simulacion, tasa_aplicada, _, error = _simular(
+            moneda_codigo, tipo_operacion, validados['cantidad'], moneda_destino,
+        )
+        if simulacion is not None:
+            resultado = simulacion.resultado
+
+    return {
+        'tasas': tasas,
+        'resultado': resultado,
+        'tasa_aplicada': tasa_aplicada,
+        'cantidad_ingresada': datos.get('cantidad'),
+        'moneda_seleccionada': moneda_codigo,
+        'tipo_operacion': tipo_operacion,
+        'moneda_destino': moneda_destino,
+        'error': error,
+    }
+
+
 class PantallaPublicaCambiosView(View):
     """Pantalla pública en HTML (RF13, RF20, RF24): cotizaciones del día y
     calculadora de conversión, visible sin haber iniciado sesión.
@@ -279,42 +321,7 @@ class PantallaPublicaCambiosView(View):
         return render(request, 'divisas/publica.html', {'tasas': tasas})
 
     def post(self, request):
-        tasas = TasaCambio.objects.filter(estado=True).select_related('moneda')
-
-        serializer = SimulacionRequestSerializer(data=request.POST)
-        resultado = None
-        tasa_aplicada = None
-        error = None
-        moneda_codigo = request.POST.get('moneda_codigo', '')
-        tipo_operacion = request.POST.get('tipo_operacion', 'compra')
-        moneda_destino = request.POST.get('moneda_destino_codigo', '')
-
-        if not serializer.is_valid():
-            error = ' '.join(
-                str(msg) for errores in serializer.errors.values() for msg in errores
-            )
-        else:
-            datos = serializer.validated_data
-            moneda_codigo = datos['moneda_codigo']
-            tipo_operacion = datos['tipo_operacion']
-            moneda_destino = datos.get('moneda_destino_codigo', '').upper()
-            simulacion, tasa_aplicada, _, error = _simular(
-                moneda_codigo, tipo_operacion, datos['cantidad'], moneda_destino,
-            )
-            if simulacion is not None:
-                resultado = simulacion.resultado
-
-        context = {
-            'tasas': tasas,
-            'resultado': resultado,
-            'tasa_aplicada': tasa_aplicada,
-            'cantidad_ingresada': request.POST.get('cantidad'),
-            'moneda_seleccionada': moneda_codigo,
-            'tipo_operacion': tipo_operacion,
-            'moneda_destino': moneda_destino,
-            'error': error,
-        }
-        return render(request, 'divisas/publica.html', context)
+        return render(request, 'divisas/publica.html', contexto_de_simulacion(request.POST))
 
 
 @login_required

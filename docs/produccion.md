@@ -36,12 +36,66 @@ configuración. Cada uno se levanta con un solo comando.
 - **Datos separados:** producción tiene sus propios volúmenes; lo que se hace
   en desarrollo no toca la base productiva.
 
+
+## Despliegue completo con un solo comando
+
+\`\`\`bash
+./scripts/levantar_sistema.sh --prod
+\`\`\`
+
+El script hace seis pasos y se puede correr cuantas veces haga falta, porque
+cada uno es idempotente:
+
+1. verifica que Docker esté instalado y corriendo;
+2. revisa que los puertos 8080 y 8000 estén libres;
+3. levanta el stack (`docker compose up --build -d`: si ya estaba levantado,
+   solo recrea lo que cambió);
+4. espera a que respondan Django **y** Keycloak;
+5. carga los datos de demostración (`seed_datos_demo`, ver más abajo);
+6. verifica facturación y terminales (`verificar_despliegue`).
+
+Si el paso 4 o el 6 fallan, el script termina con código 1 y apunta a la
+sección *Si la verificación falla*. Opciones útiles: `--limpio` (borra los
+datos y arranca de cero), `--sin-datos` (no carga la demo y la verificación no
+exige datos) y `--sin-verificar`.
+
+Para reconstruir el sistema desde un tag en una carpeta limpia (control de
+versiones, SCC):
+
+\`\`\`bash
+./scripts/arrancar_desde_cero.sh v1.5.0 /tmp/GlobalExchange-demo
+\`\`\`
+
+Clona, instala dependencias, migra, carga los datos de demostración y corre la
+verificación funcional. Con un tag anterior a la ampliación del despliegue,
+avisa que ese tag no incluye los comandos y sigue.
+
+## Datos de demostración
+
+`seed_datos_demo` es **idempotente**: correrlo de nuevo no duplica nada. Deja:
+
+- monedas con cotización, métodos de pago, clientes y los medios de pago del
+  cliente demo;
+- la sucursal *Casa Central* con `cajero_demo` y su caja abierta;
+- las **terminales de autoservicio** (hoy, *Terminal Autoservicio Centro*): cada
+  una es una `Terminal` (se administra desde *Terminales*) con su sucursal, su
+  propia caja, que está abierta mientras la terminal esté activa, y su **stock
+  inicial** de billetes, repartido por denominación. Una base que ya tenía la
+  terminal cargada como una caja suelta de su sucursal (antes de existir el
+  modelo `Terminal`) la conserva: el seed adopta esa caja con su stock;
+- operaciones exitosas de `cliente_demo` con su **factura emitida**.
+
+Cómo evita duplicar: cada dato se busca antes de crearlo (por nombre,
+documento o por una marca en la operación), y la caja se abre con su carga
+inicial **solo la primera vez**. Una caja que el administrador cerró no se
+vuelve a abrir ni a cargar: eso se hace a mano desde *Cajas*.
+
 ## Cómo se verifica
 
-```bash
+\`\`\`bash
 ./scripts/levantar_sistema.sh --prod
 ./scripts/verificar_produccion.sh
-```
+\`\`\`
 
 `verificar_produccion.sh` comprueba, con un resultado por línea:
 
@@ -52,15 +106,45 @@ configuración. Cada uno se levanta con un solo comando.
 5. `manage.py check --deploy` (ver abajo);
 6. que el código corre desde la imagen, sin nada montado desde el disco;
 7. que Postgres usa el volumen de producción;
-8. que el login redirige a Keycloak y Keycloak responde.
+8. que el login redirige a Keycloak y Keycloak responde;
+9. **facturación y terminales**, con `manage.py verificar_despliegue` (corre
+   dentro del contenedor, con un usuario temporal que no deja rastros): que la
+   base responda, que el listado de facturas y las pantallas de caja
+   funcionen, que haya facturas emitidas, que se genere el PDF de una de ellas
+   y que cada terminal tenga su caja abierta con billetes.
 
 Si lo que está levantado es desarrollo, lo avisa en vez de dar resultados que
-no corresponden.
+no corresponden. Si algo falla, termina con código 1 y emite un **reporte de
+fallo** con la lista de lo que falló. `verificar_despliegue --sin-datos` solo
+comprueba que las pantallas respondan, para un ambiente sin datos de demo.
 
 `manage.py check --deploy` solo deja tres avisos, los tres por la misma
 razón (no hay HTTPS, ver limitaciones): `security.W008`
 (`SECURE_SSL_REDIRECT`), `security.W012` (`SESSION_COOKIE_SECURE`) y
 `security.W016` (`CSRF_COOKIE_SECURE`).
+
+## Si la verificación falla
+
+El reporte lista cada comprobación que falló. Este es el procedimiento para
+cada una:
+
+| Falla | Causa probable | Cómo resolverla |
+|---|---|---|
+| "El sistema no está levantado" | El contenedor `web` no corre | `./scripts/levantar_sistema.sh --prod`; si no arranca, `docker compose -f docker-compose.prod.yml logs web` |
+| "Lo que está corriendo es el ambiente de DESARROLLO" | Desarrollo y producción usan los mismos nombres de contenedor | `docker compose down` y luego `./scripts/levantar_sistema.sh --prod` |
+| No responde gunicorn / `DEBUG` encendido | Se levantó con otro compose o se pisó la variable `DEBUG` | Revisar `DEBUG` en `docker-compose.prod.yml` y reconstruir con `up --build` |
+| Los estáticos no se sirven | No corrió `collectstatic` | Ver los logs de `web`; `docker compose -f docker-compose.prod.yml exec web python manage.py collectstatic --noinput` |
+| `check --deploy` con problemas inesperados | Una variable de seguridad cambió | Leer el aviso y corregir la variable; solo W008, W012 y W016 son aceptados |
+| Postgres no usa el volumen de producción | Se mezclaron los ambientes | `docker compose down` y volver a levantar con `--prod` |
+| El login no llega a Keycloak | Keycloak todavía arrancando, o `KC_HOSTNAME` mal | Esperar y repetir; `docker compose -f docker-compose.prod.yml logs keycloak` |
+| **Base de datos**: no responde | Postgres no está sano o las credenciales `DB_*` no coinciden | `docker compose -f docker-compose.prod.yml ps` y revisar los logs de `postgres` |
+| **Facturación, listado** o **Caja**: error o código distinto de 200 | Falta aplicar migraciones o hay un error en la pantalla | `docker compose -f docker-compose.prod.yml exec web python manage.py migrate` y mirar `logs web` |
+| **Facturación, datos**: no hay facturas emitidas | No se cargó la demo | `docker compose -f docker-compose.prod.yml exec web python manage.py seed_datos_demo` |
+| **Facturación, PDF**: no se generó | Falta `reportlab` en la imagen o hay un dato inconsistente | Reconstruir con `up --build` y revisar `requirements.txt` |
+| **Terminal, stock**: sin caja abierta con billetes | No se cargó la demo, o la terminal no está activa | Correr `seed_datos_demo`; si la terminal estaba inactiva o en mantenimiento, activarla desde *Terminales* (eso vuelve a abrir su caja) |
+
+Después de resolverlo, volver a correr `./scripts/verificar_produccion.sh`
+hasta que termine en verde.
 
 ## Limitaciones conocidas
 

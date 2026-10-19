@@ -1,11 +1,15 @@
+import logging
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 
+from django.conf import settings
 from django.db import models, transaction
 from django.core.exceptions import ValidationError
 from apps.banco import services as banco
 from apps.banco.models import CuentaBancaria
 from apps.usuarios.models import Usuario, Cliente
 from apps.divisas.models import Moneda
+
+logger = logging.getLogger(__name__)
 
 
 def _a_guaranies(monto):
@@ -176,6 +180,32 @@ class Transaccion(models.Model):
     por falta de saldo, en cuyo caso queda ``FALLIDA``; ``cancelar()`` la
     cancela a pedido del usuario (RF23). ``EXITOSA``, ``CANCELADA``,
     ``FALLIDA`` y ``ANULADA`` son estados finales.
+
+    Una operación en efectivo ``EXITOSA`` se puede anular (``anular_operacion``,
+    E4-196): pasa a ``ANULADA`` y se revierten los billetes y el stock de la caja
+    donde se atendió.
+
+    Una compra también puede pagarse por una pasarela externa (E4-157/E4-158):
+    ``iniciar_pago_externo()`` la deja en ``PENDIENTE_PAGO`` esperando el aviso;
+    el webhook la pasa a ``PAGADO`` (``confirmar_pago_webhook()``) y se termina
+    de confirmar con ``confirmar()``, o la deja ``FALLIDA`` si la pasarela
+    rechazó el cobro (``rechazar_pago_webhook()``). En ese caso el cobro lo hizo
+    la pasarela, así que no se debita además el banco.
+
+    Con Stripe activo (``PASARELA_PROVEEDOR='stripe'``) la pasarela es obligatoria
+    para toda compra que no sea en efectivo (``requiere_pasarela``): ya no se
+    debita la cuenta del banco simulado. La venta sigue acreditando en el banco
+    (Stripe cobra, no le paga a un cliente) y el efectivo se paga en caja.
+
+    Cuando una operación pasa a ``EXITOSA`` se registra su factura electrónica
+    (``_registrar_factura``, ver ``apps.facturacion``). La factura es un efecto de la
+    operación: si falla, la operación sigue exitosa.
+
+    En un ``CAMBIO``, ``moneda``/``cantidad``/``tasa_cambio`` son los de la
+    divisa que entrega el cliente, y ``moneda_destino``/``cantidad_destino``/
+    ``tasa_cambio_destino`` los de la que recibe. La conversión pasa por el
+    guaraní, como en una casa de cambio real: la casa le compra la divisa de
+    origen y le vende la de destino.
     """
 
     TIPOS = [
@@ -240,7 +270,32 @@ class Transaccion(models.Model):
         Cliente.PREFERENCIA_MAYORISTA: Decimal('0.50'),
     }
 
-    def iniciar_pago_externo(self, referencia, proveedor='PASARELA_LOCAL'):
+    PROVEEDOR_STRIPE = 'STRIPE'
+
+    @property
+    def requiere_pasarela(self):
+        """True si esta compra solo puede pagarse por la pasarela: con Stripe
+        activo, toda compra con un medio que no es efectivo."""
+        return (
+            settings.PASARELA_PROVEEDOR == 'stripe'
+            and self.tipo == 'COMPRA'
+            and self.metodo_pago.usa_banco
+        )
+
+    @property
+    def falta_pagar_con_pasarela(self):
+        """True si es una compra que tiene que pagarse por la pasarela y todavía no se
+        inició el pago: confirmarla antes no es una falla, solo hay que pagarla."""
+        return self.requiere_pasarela and not self.referencia_pago_externo
+
+    def validar_pago_externo(self, proveedor='PASARELA_LOCAL'):
+        """Lanza ``ValidationError`` si esta operación no puede pagarse por la
+        pasarela. Se llama antes de crear nada en el proveedor externo.
+
+        Solo una compra ``PENDIENTE`` puede pagarse por la pasarela: en una
+        venta el cliente recibe plata (no la paga) y en un cambio solo hay
+        efectivo. Con Stripe tampoco el efectivo: se paga en caja.
+        """
         if self.estado != 'PENDIENTE':
             raise ValidationError(
                 f'Solo se puede iniciar el pago externo de una transacción pendiente '
@@ -248,12 +303,25 @@ class Transaccion(models.Model):
             )
         if self.tipo != 'COMPRA':
             raise ValidationError('El pago externo solo aplica a las compras.')
+        if proveedor == self.PROVEEDOR_STRIPE and not self.metodo_pago.usa_banco:
+            raise ValidationError('El efectivo se paga en caja: no se cobra con Stripe.')
+
+    def iniciar_pago_externo(self, referencia, proveedor='PASARELA_LOCAL'):
+        """Ticket E4-157: Registra la referencia e inicia la confirmación externa
+        (ver ``validar_pago_externo`` para qué operaciones pueden hacerlo)."""
+        self.validar_pago_externo(proveedor)
         self.referencia_pago_externo = referencia
         self.proveedor_pago = proveedor
         self.estado = 'PENDIENTE_PAGO'
         self.save()
 
     def confirmar_pago_webhook(self):
+        """Ticket E4-158: Confirma el pago recibido desde el Webhook pasándolo a PAGADO.
+
+        Solo una transacción que espera el pago externo (``PENDIENTE_PAGO``)
+        pasa a ``PAGADO``; ``PAGADO`` queda como está (el webhook puede
+        repetirse). Una cancelada, fallida o ya exitosa no se reabre.
+        """
         if self.estado == 'PAGADO':
             return
         if self.estado != 'PENDIENTE_PAGO':
@@ -265,6 +333,8 @@ class Transaccion(models.Model):
         self.save()
 
     def rechazar_pago_webhook(self, motivo='Pago rechazado por la pasarela.'):
+        """Ticket E4-158: la pasarela informó que el pago no se pudo cobrar; la
+        operación queda ``FALLIDA`` con el motivo."""
         if self.estado != 'PENDIENTE_PAGO':
             raise ValidationError(
                 f'No se puede rechazar el pago de una transacción '
@@ -274,42 +344,102 @@ class Transaccion(models.Model):
         self.observacion = motivo[:255]
         self.save()
 
-    def anular_operacion(self):
-        """Ticket E4-196: Anula una transacción en efectivo EXITOSA.
-        Revierte los billetes ingresados/entregados restaurando el stock físico.
-        Bloquea la acción si la caja se encuentra cerrada o si la transacción ya fue anulada.
+    def anular_operacion(self, usuario=None):
+        """Ticket E4-196: anula una transacción en efectivo ``EXITOSA``.
+
+        Revierte los billetes de la operación: los que entraron a la caja se
+        descuentan y los que salieron vuelven a entrar, así el stock queda como
+        antes. Si algo no se puede revertir (la caja ya cerró, o no quedan los
+        billetes que habría que devolver) no se toca nada y se lanza
+        ``ValidationError`` con el motivo.
+
+        La anula quien atendió la operación, desde su caja abierta (ver
+        ``apps.caja.services.anular_operacion_en_efectivo``); ``usuario`` queda en la
+        auditoría de la factura. La fila queda bloqueada mientras se procesa, para que dos
+        anulaciones simultáneas no devuelvan el stock dos veces.
+
+        Si la operación tenía factura, también se anula con su nota de crédito (E4-191,
+        ``apps.facturacion.emision.anular_factura``); si no se puede (la factura todavía
+        espera la aprobación de SIFEN) se rechaza la anulación entera.
         """
-        if self.estado == 'ANULADA':
-            raise ValidationError('La transacción ya fue anulada previamente.')
-        if self.estado != 'EXITOSA':
-            raise ValidationError('Solo se pueden anular transacciones exitosas.')
-        if self.metodo_pago.tipo != MetodoPago.TIPO_EFECTIVO:
-            raise ValidationError('Solo se pueden anular operaciones pagadas en efectivo.')
-
-        movimientos = self.movimientos_billetes.all()
-        if not movimientos.exists():
-            raise ValidationError('No se encontraron movimientos de caja asociados a esta transacción.')
-
-        # Verificar que la caja siga abierta (Requisito E4-196)
-        caja = movimientos.first().caja
-        caja.validar_abierta()
-
         with transaction.atomic():
-            # Revertir los movimientos de billetes en el stock de la caja
-            for mov in movimientos:
-                stock_billete = caja.stock_billetes.get(billete=mov.billete)
-                if mov.tipo == 'ENTRADA':
-                    # Si ingresaron billetes en la operación original, al anular se descuentan (se devuelven)
-                    stock_billete.descontar(mov.cantidad)
-                elif mov.tipo == 'SALIDA':
-                    # Si salieron billetes en la operación original, al anular se incrementan (reingresan a la caja)
-                    stock_billete.incrementar(mov.cantidad)
+            self.estado = (
+                Transaccion.objects.select_for_update()
+                .filter(pk=self.pk).values_list('estado', flat=True).get()
+            )
+            if self.estado == 'ANULADA':
+                raise ValidationError('La transacción ya fue anulada previamente.')
+            if self.estado != 'EXITOSA':
+                raise ValidationError('Solo se pueden anular transacciones exitosas.')
+            if self.metodo_pago.tipo != MetodoPago.TIPO_EFECTIVO:
+                raise ValidationError('Solo se pueden anular operaciones pagadas en efectivo.')
+
+            movimientos = list(self.movimientos_billetes.select_related('caja', 'billete'))
+            if not movimientos:
+                raise ValidationError(
+                    'No se encontraron movimientos de caja asociados a esta transacción.'
+                )
+            caja = movimientos[0].caja
+            caja.validar_abierta()  # requisito E4-196: la caja tiene que seguir abierta
+
+            for movimiento in movimientos:
+                stock, _ = caja.stock_billetes.select_for_update().get_or_create(
+                    billete=movimiento.billete
+                )
+                if movimiento.tipo == 'ENTRADA':
+                    stock.descontar(movimiento.cantidad)  # los billetes recibidos se devuelven
+                else:
+                    stock.incrementar(movimiento.cantidad)  # los entregados vuelven a la caja
+
+            # Antes de marcar la operación: si la factura no se puede anular, no queda
+            # anulada ni siquiera en memoria.
+            from apps.facturacion import emision  # import diferido: facturación depende de esta app
+            emision.anular_factura_de(self, usuario)
 
             self.estado = 'ANULADA'
             self.observacion = 'Operación anulada por el cajero. Billetes reversados y stock restaurado.'
             self.save()
 
+    def anotar_devolucion(self, id_reembolso=None):
+        """Anota en la operación qué pasó con un pago externo que quedó sin
+        realizarse (cancelada o fallida después de que el cliente pagó).
+
+        Con ``id_reembolso`` el pago ya se devolvió al cliente; sin él, queda anotado
+        que hay que devolverlo. Reemplaza el aviso "debe devolverse al cliente" que
+        deja ``confirmar()``, y repetirlo con el mismo reembolso no cambia nada.
+        """
+        pendiente = 'debe devolverse al cliente'
+        if id_reembolso is None:
+            if 'devolverse' not in self.observacion and 'devolvió' not in self.observacion:
+                self.observacion = (
+                    f'{self.observacion} El pago externo {self.referencia_pago_externo} '
+                    f'{pendiente}.'
+                ).strip()[:255]
+        elif id_reembolso not in self.observacion:
+            devuelto = f'se devolvió al cliente (reembolso {id_reembolso})'
+            if pendiente in self.observacion:
+                self.observacion = self.observacion.replace(pendiente, devuelto)
+            else:
+                self.observacion = (
+                    f'{self.observacion} El pago externo {self.referencia_pago_externo} '
+                    f'{devuelto}.'
+                ).strip()
+            self.observacion = self.observacion[:255]
+        self.save(update_fields=['observacion'])
+
+
     def calcular_tasas_y_comisiones(self):
+        """
+        Lógica del Ticket E4-144:
+        Calcula el subtotal, la comisión aplicada (según la preferencia de
+        tipo de cambio del cliente, si hay uno asociado) y el monto total
+        definitivo de la transacción.
+
+        En un ``CAMBIO`` el subtotal es lo que vale en guaraníes la divisa
+        que entrega el cliente; se le descuenta la comisión y lo que queda
+        (``monto_total``) se convierte a la divisa de destino. Se redondea
+        hacia abajo: la casa no entrega centavos que no cubrió.
+        """
         if self.cliente_id:
             self.comision_porcentaje = self.COMISION_POR_PREFERENCIA.get(
                 self.cliente.preferencia_tipo_cambio, self.comision_porcentaje
@@ -342,6 +472,15 @@ class Transaccion(models.Model):
         return res['monto_total']
 
     def validar_limite_cliente(self):
+        """E4-143 (RF41): el monto de la operación no puede superar el límite
+        por operación de la categoría del cliente (Minorista 100.000 Gs,
+        Mayorista 1.000.000 Gs, VIP sin límite). Aplica igual a compras,
+        ventas y cambios, siempre sobre el ``monto_total`` en guaraníes.
+
+        Devuelve ``None`` si está dentro del límite, o el mensaje de error
+        correspondiente si lo supera. Requiere que ``monto_total`` ya esté
+        calculado (``calcular_tasas_y_comisiones``).
+        """
         if not self.cliente_id:
             return None
 
@@ -359,15 +498,40 @@ class Transaccion(models.Model):
 
     @property
     def subtotal(self):
+        """Cantidad por tasa aplicada, antes de la comisión (en guaraníes)."""
         return _a_guaranies(self.cantidad * self.tasa_cambio)
 
     def confirmar(self):
+        """Confirma el pago de una transacción ``PENDIENTE`` (E4-28).
+
+        Antes de confirmar vuelve a leer la cotización vigente y la compara
+        con la tasa guardada cuando se inició la operación (en un cambio,
+        las de las dos divisas):
+
+        * si cambió, la transacción pasa a ``CANCELADA`` (si ya la había cobrado
+          la pasarela externa, queda anotado que ese pago debe devolverse);
+        * si no, se cobra (compra) o se paga (venta) en la cuenta del banco
+          del medio de pago. Si el banco la rechaza (por ejemplo, por saldo
+          insuficiente) la transacción pasa a ``FALLIDA``;
+        * si el banco la acepta, pasa a ``EXITOSA``.
+
+        Cancelada o fallida, lanza ``ValidationError`` con el motivo.
+
+        Solo se puede confirmar una transacción pendiente: sin esa guarda,
+        una transacción ya cancelada podía volver a confirmarse si la
+        cotización regresaba a su valor original. La fila queda bloqueada
+        mientras se procesa, para que dos confirmaciones simultáneas no
+        cobren dos veces.
+        """
         with transaction.atomic():
             error = self._procesar_pago()
         if error:
             raise ValidationError(error)
 
     def _procesar_pago(self):
+        """Lo que hace ``confirmar()``, dentro de su transacción. Devuelve el
+        mensaje de error en vez de lanzarlo, para que el cambio de estado
+        (cancelada o fallida) se guarde igual."""
         self.estado = (
             Transaccion.objects.select_for_update()
             .filter(pk=self.pk).values_list('estado', flat=True).get()
@@ -379,6 +543,11 @@ class Transaccion(models.Model):
             )
         if not self.validar():
             return 'La transacción no es válida.'
+        if self.falta_pagar_con_pasarela:
+            return (
+                'Las compras con transferencia, billetera o tarjeta se pagan con Stripe: '
+                'usá "Pagar con Stripe".'
+            )
 
         cambios, error = self._cambios_de_cotizacion()
         if error:
@@ -398,6 +567,21 @@ class Transaccion(models.Model):
             )
 
         self.calcular_monto_total()
+        error_stock = self._sin_billetes_para_entregar()
+        if error_stock:
+            self.estado = 'FALLIDA'
+            self.observacion = error_stock
+            if self.referencia_pago_externo:
+                self.observacion = (
+                    f'{error_stock} El pago externo {self.referencia_pago_externo} '
+                    f'debe devolverse al cliente.'
+                )
+            self.observacion = self.observacion[:255]
+            self.save()
+            return (
+                f'No se pudo completar la operación. {error_stock} '
+                f'La operación quedó registrada como fallida.'
+            )
         error_pago = self._mover_fondos()
         if error_pago:
             self.estado = 'FALLIDA'
@@ -407,9 +591,42 @@ class Transaccion(models.Model):
 
         self.estado = 'EXITOSA'
         self.save()
+        self._registrar_factura()
         return None
 
+    def _sin_billetes_para_entregar(self):
+        """E4-195: en el flujo digital (la terminal), verifica que haya billetes
+        para entregar lo que la operación requiere. Devuelve el motivo si no
+        alcanzan (y avisa a administradores y cajeros), o ``None``. Las
+        operaciones presenciales no pasan por acá: el cajero ya movió sus
+        propios billetes."""
+        if self.modalidad != 'DIGITAL':
+            return None
+        from apps.caja import services as caja  # import diferido: caja importa transacciones
+        faltante = caja.evaluar_entrega_de_billetes(self)
+        if faltante is None:
+            return None
+        moneda_id, mensaje = faltante
+        caja.notificar_falla_por_stock(self, moneda_id)
+        return mensaje
+
+    def _registrar_factura(self):
+        """Crea la factura electrónica de la operación recién exitosa (RF33). La
+        factura es un efecto de la operación, no una condición: si no se pudo crear, la
+        operación sigue exitosa y ``manage.py procesar_facturas`` la crea después."""
+        from apps.facturacion import emision  # import diferido: facturación depende de esta app
+
+        try:
+            with transaction.atomic():  # savepoint: un fallo acá no daña la operación
+                emision.registrar_factura(self)
+        except Exception:
+            logger.exception('No se pudo registrar la factura de la operación %s', self.pk)
+
+
     def _cambios_de_cotizacion(self):
+        """Compara las tasas guardadas con las vigentes. Devuelve
+        ``(cambios, error)``: la lista de las que cambiaron (vacía si
+        ninguna) o el error si alguna moneda ya no tiene cotización."""
         if self.tipo == 'CAMBIO':
             a_comparar = [
                 (self.moneda, 'VENTA', self.tasa_cambio),
@@ -430,9 +647,12 @@ class Transaccion(models.Model):
         return cambios, None
 
     def _mover_fondos(self):
+        """Cobra la compra o paga la venta en la cuenta del banco del medio
+        de pago. Devuelve el motivo si el banco la rechaza, o ``None``. El
+        efectivo no pasa por el banco."""
         medio = self.medio_pago
         if self.referencia_pago_externo:
-            return None
+            return None  # ya lo cobró la pasarela externa: no se debita además el banco
         if medio is None or not medio.metodo_pago.usa_banco:
             return None
         if self.tipo == 'CAMBIO':
@@ -457,13 +677,29 @@ class Transaccion(models.Model):
         return None
 
     def cancelar(self):
-        if self.estado not in ['PENDIENTE', 'PENDIENTE_PAGO']:
-            raise ValidationError(
-                f'Solo se puede cancelar una transacción pendiente '
-                f'(esta está {self.get_estado_display().lower()}).'
+        """Cancela a pedido del usuario una transacción todavía no pagada (RF23 / E4-195).
+
+        Aplica a transacciones ``PENDIENTE`` y a las que esperan la pasarela
+        (``PENDIENTE_PAGO``): una exitosa ya se pagó y una cancelada ya terminó.
+        Si la pasarela cobra después de cancelar, el webhook la rechaza (409).
+
+        El estado se vuelve a leer con la fila bloqueada, igual que en
+        ``_procesar_pago``: si mientras el usuario miraba la pantalla el webhook
+        confirmó el pago, cancelar no puede pisar ese resultado con un estado
+        desactualizado (quedaría "cancelada" una operación ya cobrada).
+        """
+        with transaction.atomic():
+            self.estado = (
+                Transaccion.objects.select_for_update()
+                .filter(pk=self.pk).values_list('estado', flat=True).get()
             )
-        self.estado = 'CANCELADA'
-        self.save()
+            if self.estado not in ['PENDIENTE', 'PENDIENTE_PAGO']:
+                raise ValidationError(
+                    f'Solo se puede cancelar una transacción pendiente '
+                    f'(esta está {self.get_estado_display().lower()}).'
+                )
+            self.estado = 'CANCELADA'
+            self.save(update_fields=['estado'])
 
     def cambiar_estado(self, estado):
         if estado not in dict(self.ESTADOS):
