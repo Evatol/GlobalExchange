@@ -32,6 +32,10 @@ El recorrido del cliente en el quiosco es:
    como de terminal (``terminal_id`` en la sesión) y
    ``TerminalSoloAutoservicioMiddleware`` responde **403** a cualquier pantalla que no
    sea del autoservicio, del login/logout (``/oidc/``) o de las cotizaciones públicas.
+   Solo opera un usuario con rol ``usuario_final`` y perfil activo y no bloqueado
+   (``Usuario.bloqueado``, que un administrador cambia en ``/api/usuarios/roles/`` sin
+   tocar Keycloak); si no cumple, ve el motivo con un **403**. Se revisa en cada pantalla,
+   así que un bloqueo hecho durante la sesión corta la operación.
 3. **Cliente**: si el usuario tiene un solo cliente activo se usa ese; si tiene varios,
    elige uno; si no tiene ninguno (o todos están dados de baja) se le explica y solo puede
    salir.

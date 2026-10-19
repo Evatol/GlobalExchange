@@ -142,6 +142,7 @@ class Usuario(models.Model):
     telefono = models.CharField(max_length=30)
     direccion = models.CharField(max_length=200)
     estado = models.BooleanField(default=True)
+    bloqueado = models.BooleanField(default=False)
 
     clientes = models.ManyToManyField(
         Cliente,
@@ -170,6 +171,10 @@ class Usuario(models.Model):
     def actualizar_estado(self, estado):
         self.estado = estado
         self.save()
+
+    def actualizar_bloqueo(self, bloqueado):
+        self.bloqueado = bloqueado
+        self.save(update_fields=['bloqueado'])
 
     def seleccionar_cliente(self, cliente):
         self.clientes.add(cliente)

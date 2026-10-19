@@ -43,6 +43,7 @@
                                         <th>Email</th>
                                         <th>Rol actual</th>
                                         <th>Nuevo rol</th>
+                                        <th>Bloqueo de operación</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -69,10 +70,28 @@
                                                 <button type="submit" class="btn btn-sm btn-primary">Guardar</button>
                                             </form>
                                         </td>
+                                        <td>
+                                            {% if u.perfil_existente %}
+                                                {% if u.bloqueado %}
+                                                    <span class="badge bg-danger">Bloqueado</span>
+                                                {% else %}
+                                                    <span class="badge bg-success">Habilitado</span>
+                                                {% endif %}
+                                                <form method="post" action="{% url 'usuario_bloqueo' u.username %}" class="mt-2">
+                                                    {% csrf_token %}
+                                                    <input type="hidden" name="bloqueado" value="{% if u.bloqueado %}false{% else %}true{% endif %}">
+                                                    <button type="submit" class="btn btn-sm {% if u.bloqueado %}btn-success{% else %}btn-outline-danger{% endif %}">
+                                                        {% if u.bloqueado %}Desbloquear{% else %}Bloquear{% endif %}
+                                                    </button>
+                                                </form>
+                                            {% else %}
+                                                <span class="text-muted">Perfil no sincronizado</span>
+                                            {% endif %}
+                                        </td>
                                     </tr>
                                     {% empty %}
                                     <tr>
-                                        <td colspan="4" class="text-center text-muted">No hay usuarios registrados en Keycloak.</td>
+                                        <td colspan="5" class="text-center text-muted">No hay usuarios registrados en Keycloak.</td>
                                     </tr>
                                     {% endfor %}
                                 </tbody>

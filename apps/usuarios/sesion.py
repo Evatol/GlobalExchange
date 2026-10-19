@@ -8,6 +8,7 @@ solo cliente, se selecciona automáticamente.
 from django.core.exceptions import PermissionDenied
 
 from .models import Cliente, Usuario
+from .permissions import USUARIO_FINAL
 
 SESSION_KEY = "cliente_activo_id"
 
@@ -95,3 +96,35 @@ def salir_modo_terminal(request):
     """Quita la marca de quiosco y el cliente elegido de la sesión."""
     request.session.pop(SESSION_KEY_TERMINAL, None)
     request.session.pop(SESSION_KEY, None)
+
+
+def validar_acceso_terminal(request, exigir_clientes=True):
+    """Valida rol y estado del perfil antes de operar desde el kiosco: tiene que ser
+    ``usuario_final``, con perfil existente, activo y no bloqueado (``Usuario.bloqueado``).
+    Con ``exigir_clientes`` también tiene que tener algún cliente activo; las pantallas del
+    autoservicio lo dejan en ``False`` porque explican ese caso en la elección del cliente.
+    Lanza ``PermissionDenied`` con el motivo, para mostrárselo a quien está en la terminal."""
+    user = request.user
+    if not user.is_authenticated:
+        raise PermissionDenied('Iniciá sesión para operar en la terminal.')
+    if not user.groups.filter(name=USUARIO_FINAL).exists():
+        raise PermissionDenied(
+            'Tu usuario no tiene el rol usuario_final requerido para operar en la terminal.'
+        )
+
+    perfil = usuario_negocio(request)
+    if perfil is None:
+        raise PermissionDenied('No se encontró tu perfil de usuario.')
+    if not perfil.estado:
+        raise PermissionDenied('Tu perfil está inactivo y no puede operar.')
+    if perfil.bloqueado:
+        raise PermissionDenied(
+            'Tu cuenta está bloqueada para operar. Contactá al administrador.'
+        )
+
+    clientes = clientes_disponibles(request)
+    if exigir_clientes and not clientes.exists():
+        raise PermissionDenied(
+            'No tenés clientes activos asociados. Contactá al administrador.'
+        )
+    return perfil, clientes

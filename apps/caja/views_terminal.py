@@ -6,8 +6,9 @@ Recorrido del cliente en el quiosco:
    sesión. Si la terminal no está operativa, avisa y no deja avanzar.
 2. **Ingreso** (``terminal_ingreso``): el cliente se identifica con Keycloak. Desde acá la
    sesión queda marcada como de quiosco y ``TerminalSoloAutoservicioMiddleware`` no la deja
-   salir de estas pantallas. Si el usuario tiene varios clientes, elige uno
-   (``terminal_cliente``); si no tiene ninguno activo, se le explica.
+   salir de estas pantallas. Solo opera un ``usuario_final`` con perfil activo y no bloqueado
+   (``sesion.validar_acceso_terminal``); si no, ve el motivo con un 403. Si el usuario tiene
+   varios clientes, elige uno (``terminal_cliente``); si no tiene ninguno activo, se le explica.
 3. **Operar** (``terminal_operar``): compra, venta o cambio en efectivo. Primero ve el cálculo
    (tasa, comisión, total y billetes a ingresar y a retirar) y recién después confirma.
 4. **Comprobante** (``terminal_comprobante``): resultado y desglose de billetes.
@@ -43,11 +44,23 @@ def _bloqueo(terminal):
     return None
 
 
-def _pantalla_bloqueada(request, terminal, motivo):
+def _pantalla_bloqueada(request, terminal, motivo, estado=409):
+    """Pantalla que explica por qué no se puede seguir: 409 si la terminal no está operativa,
+    403 si es el usuario el que no puede operar."""
     return render(
         request, 'caja/terminal_bloqueada.html', {'terminal': terminal, 'bloqueo': motivo},
-        status=409,
+        status=estado,
     )
+
+
+def _acceso_denegado(request, terminal):
+    """Respuesta 403 si el usuario identificado no puede operar en la terminal (no es usuario
+    final, perfil inactivo o bloqueado), o ``None`` si puede (E4-193)."""
+    try:
+        sesion.validar_acceso_terminal(request, exigir_clientes=False)
+    except DjangoPermissionDenied as exc:
+        return _pantalla_bloqueada(request, terminal, str(exc), estado=403)
+    return None
 
 
 def _en_esta_terminal(request, terminal):
@@ -82,6 +95,9 @@ def terminal_ingreso_view(request, pk):
     motivo = _bloqueo(terminal)
     if motivo:
         return _pantalla_bloqueada(request, terminal, motivo)
+    denegado = _acceso_denegado(request, terminal)
+    if denegado:
+        return denegado
     if sesion.get_cliente_activo(request) is None:
         # Varios clientes sin elegir uno, o ninguno activo: la pantalla de clientes lo explica.
         return redirect('terminal_cliente', pk=terminal.pk)
@@ -99,6 +115,9 @@ def terminal_cliente_view(request, pk):
     motivo = _bloqueo(terminal)
     if motivo:
         return _pantalla_bloqueada(request, terminal, motivo)
+    denegado = _acceso_denegado(request, terminal)
+    if denegado:
+        return denegado
 
     disponibles = list(sesion.clientes_disponibles(request))
     usuario = sesion.usuario_negocio(request)
@@ -149,6 +168,9 @@ def terminal_operar_view(request, pk):
     motivo = _bloqueo(terminal)
     if motivo:
         return _pantalla_bloqueada(request, terminal, motivo)
+    denegado = _acceso_denegado(request, terminal)
+    if denegado:
+        return denegado
     cliente = sesion.get_cliente_activo(request)
     if cliente is None:
         return redirect('terminal_cliente', pk=terminal.pk)
