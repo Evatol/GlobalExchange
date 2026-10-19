@@ -393,6 +393,27 @@ class CalcularTransaccionAPIView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+def _validar_acceso_operativo(request):
+    """Valida el perfil y, si aplica, que la terminal de la sesión siga operativa."""
+    terminal_id = request.session.get('terminal_kiosco_id')
+    if terminal_id is None:
+        return
+
+    sesion.validar_acceso_terminal(request)
+    from apps.caja.models import Terminal
+    from apps.caja.services import validar_terminal_operativa
+
+    terminal = Terminal.objects.select_related('sucursal').filter(pk=terminal_id).first()
+    if terminal is None:
+        raise DjangoPermissionDenied('La terminal seleccionada ya no está disponible.')
+    try:
+        validar_terminal_operativa(terminal)
+    except ValidationError as exc:
+        raise DjangoPermissionDenied(
+            'Terminal no operativa: ' + ' '.join(exc.messages)
+        ) from exc
+
+
 def _crear_transaccion_digital(request, tipo_operacion, moneda_codigo, cantidad, medio_pago_id,
                                moneda_destino_codigo=None):
     """Lógica compartida por ``OperarDivisaAPIView`` y ``operar_divisa_view``
@@ -413,6 +434,7 @@ def _crear_transaccion_digital(request, tipo_operacion, moneda_codigo, cantidad,
     la transacción -- ese es el ``User`` de autenticación de Django, no el
     ``Usuario`` de negocio que espera ``Transaccion.usuario``.
     """
+    _validar_acceso_operativo(request)
     cliente_activo = sesion.get_cliente_activo(request)
     if cliente_activo is None:
         return None, 'No tenés un cliente activo asociado a la sesión.'
@@ -485,6 +507,13 @@ class OperarDivisaAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        try:
+            _validar_acceso_operativo(request)
+        except DjangoPermissionDenied as exc:
+            return Response(
+                {'detail': str(exc)},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         transaccion, error = _crear_transaccion_digital(
             request,
             tipo_operacion=request.data.get('tipo', 'COMPRA').upper(),
@@ -529,6 +558,16 @@ def operar_divisa_view(request):
     """Vista HTML para iniciar una compra (E4-19) o venta (E4-20) de divisas,
     o un cambio entre divisas.
     """
+    try:
+        _validar_acceso_operativo(request)
+    except DjangoPermissionDenied as exc:
+        return render(
+            request,
+            'transacciones/operar_denegado.html',
+            {'mensaje': str(exc)},
+            status=403,
+        )
+
     cliente_activo = sesion.get_cliente_activo(request)
     error = None
 

@@ -578,6 +578,7 @@ class OperarDivisaViewTests(TestCase):
         Usuario.objects.create(username='sin_cliente_operar', email='sc@example.com', nombres='S', apellidos='C')
         self.client.force_login(sin_cliente)
         resp = self._comprar()
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertContains(resp, 'cliente activo')
         self.assertFalse(Transaccion.objects.exists())
 
@@ -624,6 +625,18 @@ class OperarDivisaAPITests(APITestCase):
         self.assertEqual(tx.usuario, self.usuario_negocio)
         self.assertEqual(tx.estado, 'PENDIENTE')
         self.assertEqual(resp.data['subtotal'], Decimal('74000.00'))
+
+    def test_operacion_fuera_de_terminal_no_exige_rol_de_kiosco(self):
+        self.user_final.groups.clear()
+        self.client.force_authenticate(user=self.user_final)
+
+        resp = self.client.post('/api/transacciones/operar/', {
+            'tipo': 'COMPRA', 'moneda_codigo': 'USD', 'cantidad': '10',
+            'medio_pago_id': self.medio.id,
+        })
+
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        self.assertTrue(Transaccion.objects.exists())
 
     def test_requiere_autenticacion(self):
         resp = self.client.post('/api/transacciones/operar/', {

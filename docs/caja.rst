@@ -20,6 +20,22 @@ validación del lado del servidor.
 Las cajas vinculadas a terminales no aparecen en la administración de cajas
 de cajero: su inventario y su estado operativo se gestionan desde la terminal.
 
+Acceso del usuario a la terminal (E4-193)
+-----------------------------------------
+
+La ruta ``/api/caja/autoservicio/<id>/`` es el kiosco público. Permite consultar
+las tasas vigentes y simular conversiones sin autenticar; una simulación no crea
+una transacción de compra o venta. Para operar, la persona inicia sesión en
+Keycloak desde ``/api/caja/autoservicio/<id>/operar/``.
+
+Antes de continuar se exige el rol ``usuario_final``, un perfil de negocio
+activo y desbloqueado, y al menos un cliente activo asociado. Con un cliente se
+selecciona automáticamente; con varios, la pantalla solicita una elección y
+valida que pertenezca al usuario. Los bloqueos de operación se administran por
+un administrador en la pantalla ``/api/usuarios/roles/`` y son independientes
+del estado de autenticación de Keycloak. Un rechazo de autorización devuelve
+HTTP 403 con un mensaje explicativo.
+
 Subpackages
 -----------
 

@@ -556,6 +556,55 @@ class GestionRolesTests(TestCase):
         self.assertEqual(resp.status_code, 403)
         mock_asignar.assert_not_called()
 
+    def test_administrador_bloquea_y_desbloquea_perfil_de_negocio(self):
+        perfil = Usuario.objects.create(
+            username='cliente_bloqueable',
+            email='bloqueable@example.com',
+            nombres='Cliente',
+            apellidos='Demo',
+            telefono='0981000000',
+            direccion='Asunción',
+        )
+        self.client.force_login(self.admin)
+
+        bloqueado = self.client.post(
+            '/api/usuarios/roles/cliente_bloqueable/bloqueo/',
+            {'bloqueado': 'true'},
+        )
+        perfil.refresh_from_db()
+        self.assertRedirects(
+            bloqueado,
+            '/api/usuarios/roles/',
+            fetch_redirect_response=False,
+        )
+        self.assertTrue(perfil.bloqueado)
+
+        self.client.post(
+            '/api/usuarios/roles/cliente_bloqueable/bloqueo/',
+            {'bloqueado': 'false'},
+        )
+        perfil.refresh_from_db()
+        self.assertFalse(perfil.bloqueado)
+
+    def test_no_administrador_no_puede_bloquear_perfil(self):
+        Usuario.objects.create(
+            username='cliente_protegido',
+            email='protegido@example.com',
+            nombres='Cliente',
+            apellidos='Demo',
+            telefono='0981000000',
+            direccion='Asunción',
+        )
+        self.client.force_login(self.no_admin)
+
+        respuesta = self.client.post(
+            '/api/usuarios/roles/cliente_protegido/bloqueo/',
+            {'bloqueado': 'true'},
+        )
+
+        self.assertEqual(respuesta.status_code, 403)
+        self.assertFalse(Usuario.objects.get(username='cliente_protegido').bloqueado)
+
 
 class AsignarRolNegocioServiceTests(TestCase):
     """Pruebas unitarias de la lógica de apps.usuarios.services.asignar_rol_negocio

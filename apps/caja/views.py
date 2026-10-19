@@ -3,6 +3,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_POST
 from django.views.decorators.http import require_http_methods
 from rest_framework import status, viewsets
@@ -12,6 +13,10 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from apps.usuarios.models import Usuario
+from apps.usuarios import sesion
+from apps.divisas.models import TasaCambio
+from apps.divisas.serializers import SimulacionRequestSerializer
+from apps.divisas.views import _simular
 from apps.usuarios.permissions import (
     ADMINISTRADOR,
     CAJERO,
@@ -256,26 +261,129 @@ def terminal_desactivar_view(request, pk):
 
 @require_http_methods(['GET', 'POST'])
 def terminal_demo_view(request, pk):
-    """Pantalla pública simulada que valida el estado antes de iniciar."""
+    """Kiosco público: consulta tasas y simula sin iniciar una operación real."""
     terminal = get_object_or_404(
         Terminal.objects.select_related('sucursal'), pk=pk
     )
+    tasas = TasaCambio.objects.filter(estado=True).select_related('moneda')
     mensaje = None
     error = None
-    response_status = status.HTTP_200_OK
+    resultado = None
+    tasa_aplicada = None
+    moneda_seleccionada = ''
+    tipo_operacion = 'compra'
+    moneda_destino = ''
     try:
         services.validar_terminal_operativa(terminal)
         if request.method == 'POST':
-            mensaje = 'Terminal operativa. La simulación está lista para iniciar una operación.'
+            if 'moneda_codigo' in request.POST:
+                serializer = SimulacionRequestSerializer(data=request.POST)
+                if not serializer.is_valid():
+                    error = ' '.join(
+                        str(msg)
+                        for errores in serializer.errors.values()
+                        for msg in errores
+                    )
+                else:
+                    datos = serializer.validated_data
+                    moneda_seleccionada = datos['moneda_codigo']
+                    tipo_operacion = datos['tipo_operacion']
+                    moneda_destino = datos.get(
+                        'moneda_destino_codigo', ''
+                    ).upper()
+                    simulacion, tasa_aplicada, _, error = _simular(
+                        moneda_seleccionada,
+                        tipo_operacion,
+                        datos['cantidad'],
+                        moneda_destino,
+                    )
+                    if simulacion is not None:
+                        resultado = simulacion.resultado
+            else:
+                mensaje = (
+                    'Terminal operativa. La simulación está lista para iniciar '
+                    'una operación.'
+                )
     except DjangoValidationError as exc:
         error = _errores_validacion(exc)
-        response_status = status.HTTP_409_CONFLICT
+        return render(
+            request,
+            'caja/terminal_kiosco.html',
+            {'terminal': terminal, 'error': error, 'tasas': tasas},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    operar_url = reverse('terminal_operar', args=[terminal.pk])
     return render(
         request,
-        'caja/terminal_demo.html',
-        {'terminal': terminal, 'mensaje': mensaje, 'error': error},
-        status=response_status,
+        'caja/terminal_kiosco.html',
+        {
+            'terminal': terminal,
+            'mensaje': mensaje,
+            'error': error,
+            'tasas': tasas,
+            'resultado': resultado,
+            'tasa_aplicada': tasa_aplicada,
+            'moneda_seleccionada': moneda_seleccionada,
+            'tipo_operacion': tipo_operacion,
+            'moneda_destino': moneda_destino,
+            'cantidad_ingresada': request.POST.get('cantidad', ''),
+            'operar_url': operar_url,
+        },
     )
+
+
+@login_required
+@require_http_methods(['GET', 'POST'])
+def terminal_operar_view(request, pk):
+    """Valida el usuario y selecciona el cliente antes de operar en el kiosco."""
+    terminal = get_object_or_404(
+        Terminal.objects.select_related('sucursal'), pk=pk
+    )
+    try:
+        services.validar_terminal_operativa(terminal)
+    except DjangoValidationError as exc:
+        return render(
+            request,
+            'caja/terminal_denegado.html',
+            {'terminal': terminal, 'mensaje': _errores_validacion(exc)},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    try:
+        _, clientes = sesion.validar_acceso_terminal(request)
+    except DjangoPermissionDenied as exc:
+        return render(
+            request,
+            'caja/terminal_denegado.html',
+            {'terminal': terminal, 'mensaje': str(exc)},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if request.session.get('terminal_kiosco_id') != terminal.pk:
+        request.session.pop(sesion.SESSION_KEY, None)
+        request.session['terminal_kiosco_id'] = terminal.pk
+
+    if request.method == 'POST':
+        try:
+            sesion.set_cliente_activo(request, request.POST.get('cliente'))
+        except DjangoPermissionDenied as exc:
+            return render(
+                request,
+                'caja/terminal_denegado.html',
+                {'terminal': terminal, 'mensaje': str(exc)},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return redirect('operar_divisa')
+
+    if clientes.count() == 1:
+        sesion.set_cliente_activo(request, clientes.first().pk)
+        return redirect('operar_divisa')
+
+    return render(request, 'caja/terminal_seleccionar_cliente.html', {
+        'terminal': terminal,
+        'clientes': clientes,
+    })
 
 
 @login_required

@@ -13,6 +13,7 @@ from .views import (
     terminal_desactivar_view,
     terminal_demo_view,
     terminal_editar_view,
+    terminal_operar_view,
 )
 from .views_billetes import (
     ArqueoViewSet,
@@ -70,6 +71,11 @@ urlpatterns = [
         name='terminal_desactivar',
     ),
     path('autoservicio/<int:pk>/', terminal_demo_view, name='terminal_demo'),
+    path(
+        'autoservicio/<int:pk>/operar/',
+        terminal_operar_view,
+        name='terminal_operar',
+    ),
     path('gestion/sucursales/', gestion_sucursales_view, name='gestion_sucursales'),
     path('gestion/sucursales/<int:pk>/editar/', sucursal_editar_view, name='sucursal_editar'),
     path('gestion/sucursales/<int:pk>/toggle/', sucursal_toggle_view, name='sucursal_toggle'),

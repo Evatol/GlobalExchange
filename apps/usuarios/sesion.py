@@ -8,6 +8,7 @@ solo cliente, se selecciona automáticamente.
 from django.core.exceptions import PermissionDenied
 
 from .models import Cliente, Usuario
+from .permissions import USUARIO_FINAL
 
 SESSION_KEY = "cliente_activo_id"
 
@@ -64,3 +65,31 @@ def set_cliente_activo(request, cliente_id):
         )
     request.session[SESSION_KEY] = cliente.pk
     return cliente
+
+
+def validar_acceso_terminal(request):
+    """Valida rol y estado del perfil antes de operar desde el kiosco."""
+    user = request.user
+    if not user.is_authenticated:
+        raise PermissionDenied('Iniciá sesión para operar en la terminal.')
+    if not user.groups.filter(name=USUARIO_FINAL).exists():
+        raise PermissionDenied(
+            'Tu usuario no tiene el rol usuario_final requerido para operar en la terminal.'
+        )
+
+    perfil = usuario_negocio(request)
+    if perfil is None:
+        raise PermissionDenied('No se encontró tu perfil de usuario.')
+    if not perfil.estado:
+        raise PermissionDenied('Tu perfil está inactivo y no puede operar.')
+    if perfil.bloqueado:
+        raise PermissionDenied(
+            'Tu cuenta está bloqueada para operar. Contactá al administrador.'
+        )
+
+    clientes = clientes_disponibles(request)
+    if not clientes.exists():
+        raise PermissionDenied(
+            'No tenés clientes activos asociados. Contactá al administrador.'
+        )
+    return perfil, clientes
