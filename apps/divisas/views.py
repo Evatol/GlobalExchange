@@ -145,12 +145,12 @@ class CotizacionViewSet(viewsets.ModelViewSet):
                 moneda=cotizacion.moneda, estado=True
             ).exclude(pk=cotizacion.pk).update(estado=False)
             
-            # Evaluar y disparar notificaciones si supera el umbral (E4-32)
+            # Evaluar y disparar notificaciones ante cualquier cambio real (E4-32)
             procesar_cambio_cotizacion(cotizacion, cotizacion_anterior)
 
     def perform_update(self, serializer):
         """Editar la cotización vigente (PUT/PATCH) también es un cambio de tasa:
-        se avisa si la variación supera el umbral (E4-32/E4-33)."""
+        se avisa ante cualquier variación real (E4-32/E4-33)."""
         previos = _valores_previos_si_vigente(serializer.instance)
         cotizacion = serializer.save()
         if previos is not None and cotizacion.estado and previos.moneda_id == cotizacion.moneda_id:

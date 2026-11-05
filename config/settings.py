@@ -309,8 +309,6 @@ if not DEBUG:
     # Detrás de un proxy inverso (Nginx, etc.) que termina TLS.
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
-PRICE_CHANGE_THRESHOLD_PERCENT = float(os.getenv('PRICE_CHANGE_THRESHOLD_PERCENT', '1.0')) # se creo el umbral
-
 # Secreto compartido con la pasarela de pago externa (E4-157/E4-158). El webhook
 # solo acepta mensajes firmados con HMAC-SHA256 con este secreto. Sin secreto
 # configurado el webhook rechaza todo; en desarrollo hay uno por defecto para
