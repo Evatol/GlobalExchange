@@ -10,14 +10,12 @@ logger = logging.getLogger(__name__)
 
 def procesar_cambio_cotizacion(cotizacion_nueva, cotizacion_anterior=None):
     """
-    Evalúa si la variación entre la cotización anterior y la nueva supera el umbral (E4-32)
-    y genera notificaciones internas y por correo (E4-33) para los usuarios que tienen la moneda como favorita.
+    Evalúa si la cotización cambió y genera notificaciones internas y por correo
+    (E4-32/E4-33) para los usuarios que tienen la moneda como favorita.
     """
     if not cotizacion_anterior:
         return None
 
-    umbral_percent = getattr(settings, 'PRICE_CHANGE_THRESHOLD_PERCENT', 1.0)
-    
     # Tasas anteriores y nuevas
     tc_ant = Decimal(str(cotizacion_anterior.tasa_compra))
     tc_nueva = Decimal(str(cotizacion_nueva.tasa_compra))
@@ -28,10 +26,10 @@ def procesar_cambio_cotizacion(cotizacion_nueva, cotizacion_anterior=None):
     var_compra = abs((tc_nueva - tc_ant) / tc_ant * 100) if tc_ant > 0 else Decimal('0')
     var_venta = abs((tv_nueva - tv_ant) / tv_ant * 100) if tv_ant > 0 else Decimal('0')
 
-    supera_compra = var_compra > Decimal(str(umbral_percent))
-    supera_venta = var_venta > Decimal(str(umbral_percent))
+    cambio_compra = tc_nueva != tc_ant
+    cambio_venta = tv_nueva != tv_ant
 
-    if not (supera_compra or supera_venta):
+    if not (cambio_compra or cambio_venta):
         return None
 
     # Determinar dirección del cambio
@@ -41,9 +39,9 @@ def procesar_cambio_cotizacion(cotizacion_nueva, cotizacion_anterior=None):
     moneda = cotizacion_nueva.moneda
     mensaje_partes = []
 
-    if supera_compra:
+    if cambio_compra:
         mensaje_partes.append(f"Tasa Compra {dir_compra}: de {tc_ant} a {tc_nueva} ({var_compra:.2f}%)")
-    if supera_venta:
+    if cambio_venta:
         mensaje_partes.append(f"Tasa Venta {dir_venta}: de {tv_ant} a {tv_nueva} ({var_venta:.2f}%)")
 
     detalle = " | ".join(mensaje_partes)

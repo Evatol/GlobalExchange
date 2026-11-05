@@ -35,7 +35,7 @@ class NotificacionesVariacionPrecioTests(TestCase): # E4-32 y E4-33
             direccion='Dirección de prueba',
         )
 
-    def test_variacion_menor_o_igual_a_uno_por_ciento_no_genera_aviso(self):
+    def test_variacion_menor_a_uno_por_ciento_genera_aviso_y_correo_para_favoritos(self):
         # Cotización inicial
         tasa_ant = TasaCambio.objects.create(
             moneda=self.moneda_usd,
@@ -43,7 +43,7 @@ class NotificacionesVariacionPrecioTests(TestCase): # E4-32 y E4-33
             tasa_venta=Decimal('105.00'),
             estado=True
         )
-        # Cotización nueva con un cambio del 0.5% (menor al umbral de 1.0%)
+        # Cotización nueva con un cambio real del 0.5%, sin umbral mínimo
         tasa_nueva = TasaCambio.objects.create(
             moneda=self.moneda_usd,
             tasa_compra=Decimal('100.50'),
@@ -51,9 +51,30 @@ class NotificacionesVariacionPrecioTests(TestCase): # E4-32 y E4-33
             estado=True
         )
 
+        with self.captureOnCommitCallbacks(execute=True):
+            procesar_cambio_cotizacion(tasa_nueva, tasa_ant)
+
+        self.assertEqual(Notificaciones.objects.count(), 1)
+        self.assertEqual(Notificaciones.objects.first().usuario, self.user_con_favorita)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn('romina@example.com', mail.outbox[0].to)
+
+    def test_cotizacion_sin_cambios_no_genera_aviso(self):
+        tasa_ant = TasaCambio.objects.create(
+            moneda=self.moneda_usd,
+            tasa_compra=Decimal('100.00'),
+            tasa_venta=Decimal('105.00'),
+            estado=True
+        )
+        tasa_nueva = TasaCambio.objects.create(
+            moneda=self.moneda_usd,
+            tasa_compra=Decimal('100.00'),
+            tasa_venta=Decimal('105.00'),
+            estado=True
+        )
+
         procesar_cambio_cotizacion(tasa_nueva, tasa_ant)
 
-        # No debe crearse ninguna notificación ni correo
         self.assertEqual(Notificaciones.objects.count(), 0)
         self.assertEqual(len(mail.outbox), 0)
 
