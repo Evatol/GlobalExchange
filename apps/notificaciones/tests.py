@@ -315,9 +315,12 @@ class EditarLaCotizacionVigenteAvisaTests(TestCase):
         self.assertIn('7500', aviso.mensaje)
         self.assertEqual(len(mail.outbox), 1)
 
-    def test_editar_con_una_variacion_chica_no_avisa(self):
-        self._editar('7310', '7410')  # +0,14%
-        self.assertEqual(Notificaciones.objects.count(), 0)
+    def test_editar_con_una_variacion_chica_tambien_avisa(self):
+        # Sin umbral mínimo: cualquier cambio real de tasa se avisa (+0,14%).
+        with self.captureOnCommitCallbacks(execute=True):
+            self._editar('7310', '7410')
+        self.assertEqual(Notificaciones.objects.filter(usuario=self.favorito).count(), 1)
+        self.assertEqual(len(mail.outbox), 1)
 
     def test_guardar_sin_cambiar_las_tasas_no_avisa(self):
         self._editar('7300', '7400', origen='otro origen')
@@ -353,9 +356,9 @@ class EditarLaCotizacionVigenteAvisaTests(TestCase):
         self.assertEqual(resp.status_code, 200, resp.content)
         self.assertEqual(Notificaciones.objects.filter(usuario=self.favorito).count(), 1)
 
-    def test_por_la_api_una_variacion_chica_no_avisa(self):
+    def test_por_la_api_una_variacion_chica_tambien_avisa(self):
         self.client.patch(
             f'/api/divisas/cotizaciones/{self.tasa.pk}/', {'tasa_compra': '7305', 'tasa_venta': '7405'},
             content_type='application/json',
         )
-        self.assertEqual(Notificaciones.objects.count(), 0)
+        self.assertEqual(Notificaciones.objects.filter(usuario=self.favorito).count(), 1)
