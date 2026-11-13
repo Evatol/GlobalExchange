@@ -188,9 +188,10 @@ class OperarEnLaTerminalTests(BaseQuioscoTests):
         self.assertContains(respuesta, 'Tasa')
         self.assertContains(respuesta, 'Comisión (1,50%)')
         self.assertContains(respuesta, 'Total a pagar')
-        self.assertContains(respuesta, 'Ingresá estos billetes')
-        self.assertContains(respuesta, 'La terminal te entrega')
         self.assertContains(respuesta, 'Confirmar operación')
+        # La vista previa no muestra la simulación de billetes: se arman y registran al confirmar.
+        self.assertNotContains(respuesta, 'Ingresá estos billetes')
+        self.assertNotContains(respuesta, 'La terminal te entrega')
         self.assertEqual(Transaccion.objects.count(), 0)
         self.assertEqual(self.stock_terminal(), antes)
 

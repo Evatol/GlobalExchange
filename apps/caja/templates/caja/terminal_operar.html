@@ -89,20 +89,6 @@
                         Probá con otro monto u otra terminal.
                     </div>
                 {% else %}
-                    <div class="row mb-3">
-                        <div class="col-6">
-                            <h6 class="text-success">Ingresá estos billetes</h6>
-                            {% for x in b.recibir %}
-                                <div class="d-flex justify-content-between small"><span>{{ x.cantidad }} × {{ x.denominacion|floatformat:"-2g" }} {{ x.moneda }}</span><span class="text-muted">{{ x.subtotal|floatformat:"-2g" }}</span></div>
-                            {% empty %}<span class="text-muted small">—</span>{% endfor %}
-                        </div>
-                        <div class="col-6">
-                            <h6 class="text-danger">La terminal te entrega</h6>
-                            {% for x in b.entregar %}
-                                <div class="d-flex justify-content-between small"><span>{{ x.cantidad }} × {{ x.denominacion|floatformat:"-2g" }} {{ x.moneda }}</span><span class="text-muted">{{ x.subtotal|floatformat:"-2g" }}</span></div>
-                            {% empty %}<span class="text-muted small">—</span>{% endfor %}
-                        </div>
-                    </div>
                     <form method="post" class="m-0">
                         {% csrf_token %}
                         <input type="hidden" name="accion" value="confirmar">

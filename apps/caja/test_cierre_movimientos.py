@@ -415,13 +415,13 @@ class PantallasMostradorYCierreTests(BaseCajaPresencialTests):
         datos.update(extra)
         return datos
 
-    def test_el_mostrador_calcula_y_muestra_los_billetes_que_arma_el_sistema(self):
+    def test_el_mostrador_calcula_sin_mostrar_la_simulacion_de_billetes(self):
         r = self.client.post(reverse('mostrador'), self._datos())
         self.assertEqual(r.status_code, 200)
-        self.assertContains(r, 'La caja recibe')
-        self.assertContains(r, 'La caja entrega')
         self.assertContains(r, 'Confirmar operación')
-        self.assertContains(r, 'se registran solos')
+        self.assertNotContains(r, 'La caja recibe')
+        self.assertNotContains(r, 'La caja entrega')
+        self.assertNotContains(r, 'se registran solos')
         self.assertFalse(Transaccion.objects.exists())  # calcular no guarda nada
 
     def test_confirmar_registra_la_operacion_y_los_movimientos_solos(self):
