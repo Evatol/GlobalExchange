@@ -56,7 +56,7 @@ if [ "$(wc -w <<<"$PADRES")" -gt 1 ]; then
     echo "Merge: $PADRES"
 fi
 git log -1 --format='Author: %an <%ae>'
-echo "Sun Nov 8 23:43:00 2026 -0300"
+echo "Date: Sun Nov 8 23:43:00 2026 -0300"
 echo
 if [ "$QUEDARSE" = "si" ]; then
     echo "OK: el repositorio está parado en el tag '$TAG'."
