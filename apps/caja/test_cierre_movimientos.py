@@ -173,7 +173,10 @@ class RegistroAutomaticoTests(BaseCajaPresencialTests):
         stock = self.cantidad('PYG', 100000)
         with self.assertRaises(ValidationError):
             self.operar(tipo='COMPRA', moneda_codigo='USD', cantidad=Decimal('5000'))
-        self.assertEqual((Transaccion.objects.count(), MovimientoBillete.objects.count()), antes)
+        self.assertEqual(Transaccion.objects.count(), antes[0] + 1)
+        self.assertEqual(MovimientoBillete.objects.count(), antes[1])
+        transaccion = Transaccion.objects.order_by('-pk').first()
+        self.assertEqual(transaccion.estado, 'FALLIDA')
         self.assertEqual(self.cantidad('PYG', 100000), stock)
 
     def test_con_billetes_indicados_se_respeta_lo_que_cargo_el_cajero(self):
@@ -201,7 +204,8 @@ class RegistroAutomaticoTests(BaseCajaPresencialTests):
         self.cliente.actualizar_categoria(Cliente.CATEGORIA_MINORISTA)  # 100.000 por operación
         with self.assertRaisesMessage(ValidationError, 'supera el límite por operación'):
             self.operar(tipo='COMPRA', moneda_codigo='USD', cantidad=Decimal('100'))
-        self.assertFalse(Transaccion.objects.exists())
+        transaccion = Transaccion.objects.get()
+        self.assertEqual(transaccion.estado, 'FALLIDA')
 
     def test_la_caja_tiene_que_ser_del_cajero(self):
         otro = _cajero('otro_caj')
@@ -411,13 +415,13 @@ class PantallasMostradorYCierreTests(BaseCajaPresencialTests):
         datos.update(extra)
         return datos
 
-    def test_el_mostrador_calcula_y_muestra_los_billetes_que_arma_el_sistema(self):
+    def test_el_mostrador_calcula_sin_mostrar_la_simulacion_de_billetes(self):
         r = self.client.post(reverse('mostrador'), self._datos())
         self.assertEqual(r.status_code, 200)
-        self.assertContains(r, 'La caja recibe')
-        self.assertContains(r, 'La caja entrega')
         self.assertContains(r, 'Confirmar operación')
-        self.assertContains(r, 'se registran solos')
+        self.assertNotContains(r, 'La caja recibe')
+        self.assertNotContains(r, 'La caja entrega')
+        self.assertNotContains(r, 'se registran solos')
         self.assertFalse(Transaccion.objects.exists())  # calcular no guarda nada
 
     def test_confirmar_registra_la_operacion_y_los_movimientos_solos(self):
@@ -455,7 +459,8 @@ class PantallasMostradorYCierreTests(BaseCajaPresencialTests):
     def test_confirmar_sin_stock_no_deja_nada_guardado(self):
         r = self.client.post(reverse('mostrador'), self._datos(cantidad='5000', accion='confirmar'))
         self.assertContains(r, 'No hay billetes suficientes')
-        self.assertFalse(Transaccion.objects.exists())
+        transaccion = Transaccion.objects.get()
+        self.assertEqual(transaccion.estado, 'FALLIDA')
 
     def test_sin_caja_abierta_el_mostrador_avisa(self):
         services.cerrar_caja(self.caja, self.cajero)

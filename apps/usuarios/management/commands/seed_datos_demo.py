@@ -10,6 +10,11 @@ billetes, una sucursal con ``cajero_demo`` asignado y su caja abierta con una
 carga inicial de billetes (solo la primera vez: si ya se abrió o cerró, no se
 toca).
 
+También deja listas las terminales de autoservicio (cada una es una sucursal
+con su propio cajero técnico, su caja abierta y su stock inicial de billetes)
+y algunas operaciones exitosas de ``cliente_demo`` con su factura emitida,
+para poder consultar y descargar facturas.
+
 Complementa a ``seed_usuarios_demo``, que crea los usuarios en Keycloak:
 ese deja las credenciales listas, este deja con qué operar.
 
@@ -31,9 +36,10 @@ from django.contrib.auth.models import Group, User
 from apps.banco import services as banco
 from apps.banco.models import CuentaBancaria
 from apps.caja import services as caja_services
-from apps.caja.models import AsignacionCajero, Billete, Caja, LimiteStock, Sucursal
+from apps.caja.models import AsignacionCajero, Billete, Caja, LimiteStock, Sucursal, Terminal
 from apps.divisas.models import Moneda, TasaCambio
-from apps.transacciones.models import MedioPagoCliente, MetodoPago
+from apps.facturacion.models import Factura
+from apps.transacciones.models import MedioPagoCliente, MetodoPago, Transaccion
 from apps.usuarios.models import Cliente, Usuario
 
 MONEDAS = [
@@ -66,6 +72,23 @@ LIMITES_STOCK = {
 }
 CAJERO_DEMO = 'cajero_demo'
 SUCURSAL_DEMO = ('Casa Central', 'Asunción')
+
+# Terminales de autoservicio (E4-195): cada una es una sucursal con su propio
+# cajero técnico, su caja abierta y su stock de billetes.
+# (nombre de la sucursal, dirección, usuario del cajero técnico)
+TERMINALES = [
+    ('Terminal Autoservicio Centro', 'Asunción, Shopping Centro', 'terminal_centro'),
+]
+
+# Operaciones exitosas de ejemplo de cliente_demo, cada una con su factura.
+# (tipo, código de moneda, cantidad). Se reconocen por la marca de abajo, que
+# es lo que permite no duplicarlas al volver a correr el comando.
+OPERACIONES_DEMO = [
+    ('COMPRA', 'USD', Decimal('100')),
+    ('VENTA', 'EUR', Decimal('50')),
+    ('COMPRA', 'BRL', Decimal('200')),
+]
+MARCA_OPERACION_DEMO = 'Operación de demostración (seed_datos_demo)'
 
 METODOS_PAGO = [
     ('Efectivo', MetodoPago.TIPO_EFECTIVO),
@@ -105,7 +128,8 @@ MEDIOS_DEL_CLIENTE = [
 class Command(BaseCommand):
     help = (
         'Carga datos de demostración (monedas, cotizaciones, métodos de pago, '
-        'clientes y su asociación) para poder probar el sistema. Idempotente.'
+        'clientes, terminales, cajas con stock y facturas de ejemplo) para '
+        'poder probar el sistema. Idempotente.'
     )
 
     def add_arguments(self, parser):
@@ -199,13 +223,14 @@ class Command(BaseCommand):
             self.stdout.write(f'  {medio.alias}: {"creado" if creado else "ya existía"} ({detalle})')
 
         self._cargar_caja_demo()
+        self._cargar_terminales()
+        self._cargar_facturas_demo(usuario, principal, metodos['Efectivo'])
 
         self.stdout.write(self.style.SUCCESS(
             f'\nListo. {username} puede operar sobre "{principal.nombre}" '
             f'(comisión de {principal.get_preferencia_tipo_cambio_display()}, '
             f'{_limite(principal)}).'
         ))
-
 
     def _cargar_caja_demo(self):
         """Moneda local, denominaciones, sucursal, cajero y caja abierta."""
@@ -225,20 +250,40 @@ class Command(BaseCommand):
         sucursal, _ = Sucursal.objects.get_or_create(
             nombre=SUCURSAL_DEMO[0], defaults={'direccion': SUCURSAL_DEMO[1]},
         )
-        # El login con el grupo del rol cajero, como lo deja la sincronización
-        # con Keycloak: sin él no se puede asignar a la sucursal (RF105).
+        caja, detalle = self._cajero_y_caja(sucursal, CAJERO_DEMO)
+        self.stdout.write(f'  Caja #{caja.pk} de {CAJERO_DEMO} en {sucursal.nombre}: {detalle}')
+
+        # get_or_create: si el administrador ya cambio los limites, no se pisan.
+        for moneda_codigo, (minimo, maximo) in LIMITES_STOCK.items():
+            moneda = Moneda.objects.filter(codigo=moneda_codigo).first()
+            if moneda is not None:
+                LimiteStock.objects.get_or_create(
+                    moneda=moneda, defaults={'minimo': minimo, 'maximo': maximo},
+                )
+        self.stdout.write(f'  Límites de stock: {LimiteStock.objects.count()} monedas')
+
+    def _cajero_y_caja(self, sucursal, username):
+        """Deja asignado a ``sucursal`` a un cajero y su caja.
+
+        Crea el login con el grupo del rol cajero (como lo deja la
+        sincronización con Keycloak: sin él no se puede asignar a la sucursal,
+        RF105), el ``Usuario`` de negocio, la asignación y la caja. La caja se
+        abre con la carga inicial de billetes solo la primera vez: si ya se
+        abrió (o cerró), no se toca, y por eso correr el comando de nuevo no
+        duplica el stock. Devuelve ``(caja, detalle)``.
+        """
         login, _ = User.objects.get_or_create(
-            username=CAJERO_DEMO, defaults={'email': f'{CAJERO_DEMO}@example.com'},
+            username=username, defaults={'email': f'{username}@example.com'},
         )
         login.groups.add(Group.objects.get_or_create(name='cajero')[0])
         cajero, _ = Usuario.objects.get_or_create(
-            username=CAJERO_DEMO,
+            username=username,
             defaults={
-                'email': f'{CAJERO_DEMO}@example.com', 'nombres': 'Cajero', 'apellidos': 'Demo',
+                'email': f'{username}@example.com', 'nombres': 'Cajero', 'apellidos': 'Demo',
             },
         )
         AsignacionCajero.objects.get_or_create(sucursal=sucursal, usuario=cajero)
-        caja, creada = Caja.objects.get_or_create(
+        caja, _ = Caja.objects.get_or_create(
             sucursal=sucursal, cajero=cajero,
             defaults={'saldo_inicial': Decimal('0'), 'saldo_actual': Decimal('0')},
         )
@@ -250,16 +295,90 @@ class Command(BaseCommand):
             detalle = f'abierta con {BILLETES_POR_DENOMINACION} billetes de cada denominación'
         else:
             detalle = f'ya estaba {caja.estado.lower()}'
-        self.stdout.write(f'  Caja #{caja.pk} de {CAJERO_DEMO} en {sucursal.nombre}: {detalle}')
+        return caja, detalle
 
-        # get_or_create: si el administrador ya cambio los limites, no se pisan.
-        for moneda_codigo, (minimo, maximo) in LIMITES_STOCK.items():
-            moneda = Moneda.objects.filter(codigo=moneda_codigo).first()
-            if moneda is not None:
-                LimiteStock.objects.get_or_create(
-                    moneda=moneda, defaults={'minimo': minimo, 'maximo': maximo},
+    def _cargar_terminales(self):
+        """Terminales de autoservicio (``Terminal``): cada una con su sucursal, su caja
+        abierta y su stock de billetes.
+
+        Idempotente: una terminal se identifica por su nombre y no se vuelve a cargar su
+        stock. Si la base ya tenía la terminal como una caja suelta de una sucursal (la
+        carga de demostración anterior al modelo ``Terminal``), se adopta esa misma caja
+        con su stock, sin duplicarla.
+        """
+        self.stdout.write(self.style.MIGRATE_HEADING('Terminales de autoservicio:'))
+        for nombre, direccion, username in TERMINALES:
+            sucursal, _ = Sucursal.objects.get_or_create(
+                nombre=nombre, defaults={'direccion': direccion},
+            )
+            terminal = Terminal.objects.filter(nombre=nombre).first()
+            if terminal is not None:
+                detalle = f'ya existía (caja #{terminal.caja_id} {terminal.caja.estado.lower()})'
+            else:
+                heredada = Caja.objects.filter(
+                    sucursal=sucursal, cajero__username=username, terminal__isnull=True,
+                    estado='ABIERTA',
+                ).first()
+                if heredada is not None:
+                    terminal = Terminal.objects.create(
+                        nombre=nombre, sucursal=sucursal, estado=Terminal.ACTIVA, caja=heredada,
+                    )
+                    detalle = f'adoptó la caja #{heredada.pk} que ya tenía su stock'
+                else:
+                    terminal = caja_services.crear_terminal(
+                        nombre, sucursal, Terminal.ACTIVA,
+                        stock_inicial={
+                            b.id: BILLETES_POR_DENOMINACION
+                            for b in Billete.objects.filter(estado=True)
+                        },
+                    )
+                    detalle = (
+                        f'caja #{terminal.caja_id} abierta con {BILLETES_POR_DENOMINACION} '
+                        f'billetes de cada denominación'
+                    )
+            self.stdout.write(f'  {nombre}: {detalle}')
+
+    def _cargar_facturas_demo(self, usuario, cliente, metodo):
+        """Operaciones exitosas de ejemplo, cada una con su factura emitida.
+
+        Cada operación se identifica por su marca en ``observacion`` y cada
+        factura por su transacción (la relación es uno a uno), así que volver
+        a correr el comando no crea nada nuevo. Son datos de demostración: no
+        mueven stock ni cuentas.
+        """
+        self.stdout.write(self.style.MIGRATE_HEADING('Operaciones y facturas de ejemplo:'))
+        for tipo, codigo, cantidad in OPERACIONES_DEMO:
+            moneda = Moneda.objects.filter(codigo=codigo).first()
+            tasa = (
+                moneda.tasas.filter(estado=True).order_by('-fecha_hora').first()
+                if moneda is not None else None
+            )
+            if tasa is None:
+                self.stdout.write(f'  {tipo} {codigo}: sin cotización vigente, se omite')
+                continue
+
+            marca = f'{MARCA_OPERACION_DEMO}: {tipo} {codigo}'
+            transaccion = Transaccion.objects.filter(observacion=marca).first()
+            creada = transaccion is None
+            if creada:
+                transaccion = Transaccion(
+                    usuario=usuario, cliente=cliente, moneda=moneda, metodo_pago=metodo,
+                    tipo=tipo, cantidad=cantidad, tasa_cambio=tasa.tasa_para(tipo),
+                    modalidad='DIGITAL', observacion=marca,
                 )
-        self.stdout.write(f'  Límites de stock: {LimiteStock.objects.count()} monedas')
+                transaccion.calcular_tasas_y_comisiones()
+                transaccion.estado = 'EXITOSA'
+                transaccion.save()
+            factura = Factura.objects.filter(transaccion=transaccion).first()
+            factura_creada = factura is None
+            if factura_creada:
+                factura = Factura(transaccion=transaccion)
+                factura.generar()  # con su número correlativo, como las que emite el sistema
+            self.stdout.write(
+                f'  {tipo} {cantidad} {codigo}: operación '
+                f'{"creada" if creada else "ya existía"}, factura #{factura.pk} '
+                f'{"emitida" if factura_creada else "ya existía"}'
+            )
 
 
 def _limite(cliente):

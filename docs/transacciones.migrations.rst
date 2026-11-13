@@ -12,6 +12,14 @@ transacciones.migrations.0001\_initial module
    :show-inheritance:
    :undoc-members:
 
+transacciones.migrations.0006\_estado\_anulada module
+-----------------------------------------------------
+
+.. automodule:: apps.transacciones.migrations.0006_estado_anulada
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 Module contents
 ---------------
 

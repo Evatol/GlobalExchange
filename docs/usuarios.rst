@@ -123,3 +123,19 @@ Module contents
    :members:
    :show-inheritance:
    :undoc-members:
+
+Bloqueo de operación en terminales
+-----------------------------------
+
+El perfil de negocio ``Usuario`` mantiene dos conceptos distintos:
+``estado`` indica si el perfil está activo y ``bloqueado`` indica si un
+administrador impide que ese perfil opere desde terminales. El bloqueo no
+deshabilita el usuario de Django ni la cuenta de Keycloak; Keycloak continúa
+autenticando las credenciales. La administración del bloqueo está en
+``/api/usuarios/roles/`` y solo admite peticiones POST de un administrador.
+
+Al entrar al flujo de operación del kiosco se valida el rol ``usuario_final``,
+el estado y bloqueo del perfil, y que tenga clientes activos asociados. Si no
+cumple, la aplicación devuelve HTTP 403 con un mensaje explicativo. Un único
+cliente se selecciona automáticamente; si hay varios, se muestra un selector
+que solo acepta clientes activos asociados al usuario.

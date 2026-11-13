@@ -1,7 +1,8 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
-from .models import AsignacionCajero, Sucursal
+from . import services
+from .models import AsignacionCajero, Billete, Sucursal, Terminal
 
 
 class SucursalSerializer(serializers.ModelSerializer):
@@ -15,6 +16,81 @@ class SucursalSerializer(serializers.ModelSerializer):
         model = Sucursal
         fields = ['id', 'nombre', 'direccion', 'estado']
         read_only_fields = ['id']
+
+
+class TerminalSerializer(serializers.ModelSerializer):
+    """Terminal de autoservicio con caja e inventario inicial propios."""
+
+    sucursal_nombre = serializers.CharField(source='sucursal.nombre', read_only=True)
+    caja_id = serializers.IntegerField(read_only=True)
+    stock_inicial = serializers.DictField(
+        child=serializers.IntegerField(min_value=0),
+        write_only=True,
+        required=False,
+        default=dict,
+    )
+
+    class Meta:
+        model = Terminal
+        fields = [
+            'id', 'nombre', 'sucursal', 'sucursal_nombre', 'estado', 'caja_id',
+            'stock_inicial',
+        ]
+        read_only_fields = ['id', 'caja_id']
+
+    def validate(self, attrs):
+        actual = self.instance
+        sucursal = attrs.get('sucursal', getattr(actual, 'sucursal', None))
+        estado = attrs.get('estado', getattr(actual, 'estado', Terminal.ACTIVA))
+        if actual is not None and 'stock_inicial' in self.initial_data:
+            raise serializers.ValidationError({
+                'stock_inicial': 'El stock inicial solo se define al crear la terminal.'
+            })
+        stock_inicial = attrs.get('stock_inicial', {})
+        if actual is None and stock_inicial:
+            try:
+                billete_ids = {int(billete_id) for billete_id in stock_inicial}
+            except (TypeError, ValueError):
+                raise serializers.ValidationError({
+                    'stock_inicial': 'Los identificadores de denominación deben ser números.'
+                })
+            activos = set(
+                Billete.objects.filter(pk__in=billete_ids, estado=True)
+                .values_list('pk', flat=True)
+            )
+            if activos != billete_ids:
+                raise serializers.ValidationError({
+                    'stock_inicial': 'El stock solo puede cargarse en denominaciones activas.'
+                })
+        if sucursal is not None and not sucursal.estado and (
+            actual is None or sucursal != actual.sucursal or estado == Terminal.ACTIVA
+        ):
+            raise serializers.ValidationError({
+                'sucursal': 'La sucursal debe estar activa para asignar o activar una terminal.'
+            })
+        return attrs
+
+    def create(self, validated_data):
+        """Crea la terminal junto con la caja y el stock inicial."""
+        stock_inicial = validated_data.pop('stock_inicial', {})
+        try:
+            return services.crear_terminal(
+                stock_inicial=stock_inicial, **validated_data
+            )
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict if hasattr(
+                exc, 'message_dict'
+            ) else exc.messages)
+
+    def update(self, instance, validated_data):
+        """Actualiza la terminal y mantiene su caja en la misma sucursal."""
+        validated_data.pop('stock_inicial', None)
+        try:
+            return services.actualizar_terminal(instance, validated_data)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict if hasattr(
+                exc, 'message_dict'
+            ) else exc.messages)
 
 
 class AsignacionCajeroSerializer(serializers.ModelSerializer):

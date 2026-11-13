@@ -36,6 +36,31 @@ facturacion.models module
    :show-inheritance:
    :undoc-members:
 
+facturacion.emision module
+--------------------------
+
+.. automodule:: apps.facturacion.emision
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+facturacion.proveedores module
+------------------------------
+
+.. automodule:: apps.facturacion.proveedores
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+facturacion.services module
+---------------------------
+
+.. automodule:: apps.facturacion.services
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+
 facturacion.tests module
 ------------------------
 
@@ -43,6 +68,7 @@ facturacion.tests module
    :members:
    :show-inheritance:
    :undoc-members:
+
 
 facturacion.urls module
 -----------------------

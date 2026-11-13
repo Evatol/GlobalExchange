@@ -6,6 +6,8 @@ from django.core.mail import send_mail
 from keycloak import KeycloakAdmin, KeycloakOpenID
 from keycloak.exceptions import KeycloakAuthenticationError, KeycloakError
 
+from .models import Usuario
+
 
 def generate_random_password(length=12):
     """Genera una contraseña aleatoria y segura."""
@@ -60,15 +62,25 @@ def listar_usuarios_con_roles():
     ninguno de los 3 roles de negocio asignado (ej. recién autoregistrado).
     """
     admin = _keycloak_admin()
+    usuarios_keycloak = admin.get_users(query={'max': 200})
+    usuarios_negocio = {
+        usuario.username: usuario
+        for usuario in Usuario.objects.filter(
+            username__in=[u.get('username', '') for u in usuarios_keycloak]
+        )
+    }
     usuarios = []
-    for u in admin.get_users(query={'max': 200}):
+    for u in usuarios_keycloak:
         roles_usuario = {r['name'] for r in admin.get_realm_roles_of_user(u['id'])}
         rol_actual = next((r for r in ROLES_NEGOCIO if r in roles_usuario), None)
+        perfil = usuarios_negocio.get(u.get('username', ''))
         usuarios.append({
             'id': u['id'],
             'username': u.get('username', ''),
             'email': u.get('email', ''),
             'rol': rol_actual,
+            'bloqueado': perfil.bloqueado if perfil else False,
+            'perfil_existente': perfil is not None,
         })
     return sorted(usuarios, key=lambda u: u['username'])
 

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editar terminal - GlobalExchange</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="{% url 'menu_principal' %}">GlobalExchange</a>
+            <a href="{% url 'gestion_terminales' %}" class="btn btn-outline-light btn-sm">Volver a Terminales</a>
+        </div>
+    </nav>
+    <main class="container my-5">
+        <div class="row justify-content-center">
+            <div class="col-md-7 col-lg-5">
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        <h2 class="h4 mb-3">Editar {{ terminal.nombre }}</h2>
+                        {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+                        <form method="post">
+                            {% csrf_token %}
+                            <div class="mb-3">
+                                <label class="form-label" for="nombre">Nombre o identificador</label>
+                                <input class="form-control" id="nombre" name="nombre" value="{{ terminal.nombre }}" maxlength="100" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label" for="sucursal">Sucursal</label>
+                                <select class="form-select" id="sucursal" name="sucursal" required>
+                                    {% if not terminal.sucursal.estado %}
+                                    <option value="{{ terminal.sucursal_id }}" selected>{{ terminal.sucursal.nombre }} (inactiva)</option>
+                                    {% endif %}
+                                    {% for sucursal in sucursales %}
+                                    <option value="{{ sucursal.id }}" {% if sucursal.id == terminal.sucursal_id %}selected{% endif %}>{{ sucursal.nombre }}</option>
+                                    {% endfor %}
+                                </select>
+                                {% if not terminal.sucursal.estado %}
+                                <div class="form-text">La sucursal actual está inactiva; elegí una sucursal activa para mover o activar la terminal.</div>
+                                {% endif %}
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label" for="estado">Estado</label>
+                                <select class="form-select" id="estado" name="estado">
+                                    {% for valor, etiqueta in estados %}
+                                    <option value="{{ valor }}" {% if valor == terminal.estado %}selected{% endif %}>{{ etiqueta }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <button class="btn btn-primary w-100" type="submit">Guardar cambios</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+</body>
+</html>

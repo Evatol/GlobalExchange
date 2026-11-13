@@ -1,0 +1,17 @@
+{% extends 'caja/terminal_base.html' %}
+
+{% block contenido %}
+<div class="row justify-content-center">
+    <div class="col-md-8 col-lg-6">
+        <div class="card shadow-sm border-0 text-center">
+            <div class="card-body p-5">
+                <p class="text-uppercase text-muted small mb-1">GlobalExchange Autoservicio</p>
+                <h1 class="h3">{{ terminal.nombre }}</h1>
+                <p class="text-muted">{{ terminal.sucursal.nombre }}</p>
+                <div class="alert alert-warning" role="alert">{{ bloqueo }}</div>
+                <p class="mb-0">No es posible iniciar una operación en este momento.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% extends 'caja/terminal_base.html' %}
+
+{% block contenido %}
+<div class="row justify-content-center">
+    <div class="col-md-8 col-lg-6">
+        <div class="card shadow-sm border-0">
+            <div class="card-body p-4">
+                {% if clientes %}
+                    <h2 class="h4 mb-1">¿Con qué cliente querés operar?</h2>
+                    <p class="text-muted">Tu usuario está asociado a más de un cliente.</p>
+                    {% if error %}
+                        <div class="alert alert-danger py-2">{{ error }}</div>
+                    {% endif %}
+                    <form method="post">
+                        {% csrf_token %}
+                        <div class="list-group mb-3">
+                            {% for c in clientes %}
+                            <label class="list-group-item d-flex align-items-center gap-3">
+                                <input class="form-check-input mt-0" type="radio" name="cliente" value="{{ c.pk }}"
+                                       {% if c.pk == cliente_activo.pk %}checked{% endif %} required>
+                                <span>
+                                    <strong>{{ c.nombre }}</strong><br>
+                                    <small class="text-muted">{{ c.documento }} · {{ c.get_categoria_display }}</small>
+                                </span>
+                            </label>
+                            {% endfor %}
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-lg w-100">Continuar</button>
+                    </form>
+                {% else %}
+                    <h2 class="h4 mb-3">No podés operar con este usuario</h2>
+                    <div class="alert alert-warning" role="alert">
+                        {% if todos_inactivos %}
+                            Los clientes asociados a tu usuario están dados de baja.
+                        {% else %}
+                            Tu usuario no está asociado a ningún cliente.
+                        {% endif %}
+                        Acercate a una sucursal para que un administrador lo resuelva.
+                    </div>
+                    <form action="{% url 'oidc_logout' %}" method="post" class="m-0">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-secondary btn-lg w-100">Salir</button>
+                    </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

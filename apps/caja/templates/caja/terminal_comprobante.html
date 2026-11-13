@@ -1,0 +1,68 @@
+{% extends 'caja/terminal_base.html' %}
+
+{% block contenido %}
+<div class="row justify-content-center">
+    <div class="col-md-8 col-lg-6">
+        <div class="card shadow-sm border-0">
+            <div class="card-body p-4">
+                {% if t.estado == 'EXITOSA' %}
+                    <div class="text-center mb-3">
+                        <h2 class="h4 text-success mb-1">Operación realizada</h2>
+                        <p class="text-muted mb-0">Comprobante de la operación #{{ t.pk }}</p>
+                    </div>
+                {% else %}
+                    <div class="alert alert-warning" role="alert">
+                        La operación #{{ t.pk }} está <strong>{{ t.get_estado_display|lower }}</strong>.
+                    </div>
+                {% endif %}
+
+                <table class="table table-sm mb-3">
+                    <tr><th>Cliente</th><td class="text-end">{{ t.cliente.nombre }}</td></tr>
+                    <tr><th>Fecha</th><td class="text-end">{{ t.fecha_hora|date:"d/m/Y H:i" }}</td></tr>
+                    <tr><th>Operación</th><td class="text-end">{{ t.get_tipo_display }}</td></tr>
+                    {% if t.tipo == 'CAMBIO' %}
+                    <tr><th>Entregaste</th><td class="text-end">{{ t.cantidad|floatformat:"2g" }} {{ t.moneda.codigo }}</td></tr>
+                    <tr><th>Recibiste</th><td class="text-end">{{ t.cantidad_destino|floatformat:"2g" }} {{ t.moneda_destino.codigo }}</td></tr>
+                    {% else %}
+                    <tr><th>{% if t.tipo == 'COMPRA' %}Compraste{% else %}Vendiste{% endif %}</th><td class="text-end">{{ t.cantidad|floatformat:"2g" }} {{ t.moneda.codigo }}</td></tr>
+                    <tr><th>Tasa</th><td class="text-end">{{ t.tasa_cambio|floatformat:"2g" }} Gs</td></tr>
+                    {% endif %}
+                    <tr><th>Comisión ({{ t.comision_porcentaje|floatformat:"2" }}%)</th><td class="text-end">{{ t.monto_comision|floatformat:"0g" }} Gs</td></tr>
+                    {% if t.tipo != 'CAMBIO' %}
+                    <tr class="table-light"><th>{% if t.tipo == 'COMPRA' %}Total pagado{% else %}Total recibido{% endif %}</th><td class="text-end"><strong>{{ t.monto_total|floatformat:"0g" }} Gs</strong></td></tr>
+                    {% endif %}
+                </table>
+
+                {% if billetes.recibidos or billetes.entregados %}
+                <div class="row mb-3">
+                    <div class="col-6">
+                        <h6 class="text-success">Billetes que ingresaste</h6>
+                        {% for x in billetes.recibidos %}
+                            <div class="d-flex justify-content-between small"><span>{{ x.cantidad }} × {{ x.denominacion|floatformat:"-2g" }} {{ x.moneda }}</span><span class="text-muted">{{ x.subtotal|floatformat:"-2g" }}</span></div>
+                        {% empty %}<span class="text-muted small">—</span>{% endfor %}
+                    </div>
+                    <div class="col-6">
+                        <h6 class="text-danger">Billetes que recibiste</h6>
+                        {% for x in billetes.entregados %}
+                            <div class="d-flex justify-content-between small"><span>{{ x.cantidad }} × {{ x.denominacion|floatformat:"-2g" }} {{ x.moneda }}</span><span class="text-muted">{{ x.subtotal|floatformat:"-2g" }}</span></div>
+                        {% empty %}<span class="text-muted small">—</span>{% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
+                {% if t.estado == 'EXITOSA' and usuario.email %}
+                <p class="text-muted small">La factura electrónica se envía a <strong>{{ usuario.email }}</strong>.</p>
+                {% endif %}
+
+                <div class="d-grid gap-2">
+                    <a href="{% url 'terminal_operar' terminal.pk %}" class="btn btn-primary btn-lg">Nueva operación</a>
+                    <form action="{% url 'oidc_logout' %}" method="post" class="m-0">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-secondary btn-lg w-100">Terminar y salir</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

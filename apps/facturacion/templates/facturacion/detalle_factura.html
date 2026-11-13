@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GlobalExchange - Factura {{ factura.numero }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="{% url 'menu_principal' %}">GlobalExchange</a>
+            <div class="d-flex align-items-center text-white">
+                <span class="me-3">Bienvenido, <strong>{{ usuario.username }}</strong></span>
+                <a href="{% url 'lista_facturas' %}" class="btn btn-outline-light btn-sm">Volver a Facturas</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container my-5">
+        <div class="row">
+            <div class="col-md-12 text-center mb-4">
+                <h2>Factura {{ factura.numero }}</h2>
+                <p class="text-muted">Emitida el {{ factura.fecha|date:"d/m/Y" }}</p>
+            </div>
+        </div>
+
+        <div class="row g-4">
+            <div class="col-md-6">
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Factura</h5>
+                        <table class="table table-sm mb-0">
+                            <tr><th>Número</th><td>{{ factura.numero }}</td></tr>
+                            <tr><th>Fecha</th><td>{{ factura.fecha|date:"d/m/Y" }}</td></tr>
+                            <tr>
+                                <th>Estado</th>
+                                <td>
+                                    {% if factura.esta_emitida %}
+                                        <span class="badge bg-success">{{ factura.estado }}</span>
+                                    {% elif factura.estado == 'ANULADA' %}
+                                        <span class="badge bg-danger">{{ factura.estado }}</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">{{ factura.estado }}</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            <tr><th>Monto facturado (Gs.)</th><td>{{ factura.monto|floatformat:2 }}</td></tr>
+                        </table>
+                    </div>
+                </div>
+
+                {% if nota %}
+                <div class="card shadow-sm border-0 mb-4 border-danger">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Nota de crédito</h5>
+                        <p class="small text-muted">Esta factura fue anulada con una nota de crédito por el monto total.</p>
+                        <table class="table table-sm mb-0">
+                            <tr><th>Número</th><td>{{ nota.numero }}</td></tr>
+                            <tr><th>Estado</th><td>
+                                {% if nota.esta_emitida %}<span class="badge bg-success">{{ nota.estado }}</span>
+                                {% else %}<span class="badge bg-warning text-dark">{{ nota.estado }}</span>{% endif %}
+                            </td></tr>
+                            <tr><th>Monto acreditado (Gs.)</th><td>{{ nota.monto|floatformat:2 }}</td></tr>
+                            <tr><th>Motivo</th><td>{{ nota.motivo }}</td></tr>
+                        </table>
+                    </div>
+                </div>
+                {% endif %}
+
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Cliente</h5>
+                        <table class="table table-sm mb-0">
+                            <tr><th>Nombre / razón social</th><td>{% if cliente.razon_social %}{{ cliente.razon_social }}{% else %}{{ cliente.nombre }}{% endif %}</td></tr>
+                            <tr><th>Documento / RUC</th><td>{{ cliente.documento }}</td></tr>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="card shadow-sm border-0">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Transacción #{{ transaccion.id }}</h5>
+                        <table class="table table-sm mb-0">
+                            <tr><th>Operación</th><td>{{ transaccion.get_tipo_display }}</td></tr>
+                            <tr><th>Fecha y hora</th><td>{{ transaccion.fecha_hora|date:"d/m/Y H:i" }}</td></tr>
+                            <tr><th>Moneda</th><td>{{ transaccion.moneda.codigo }}</td></tr>
+                            <tr><th>Cantidad</th><td>{{ transaccion.cantidad|floatformat:2 }}</td></tr>
+                            <tr><th>Tasa de cambio aplicada</th><td>{{ transaccion.tasa_cambio|floatformat:2 }}</td></tr>
+                            <tr><th>Subtotal (Gs.)</th><td>{{ transaccion.subtotal|floatformat:2 }}</td></tr>
+                            <tr><th>Comisión</th><td>{{ transaccion.comision_porcentaje|floatformat:2 }} % = {{ transaccion.monto_comision|floatformat:2 }} Gs.</td></tr>
+                            <tr><th>Total (Gs.)</th><td><strong>{{ transaccion.monto_total|floatformat:2 }}</strong></td></tr>
+                            <tr><th>Método de pago</th><td>{{ transaccion.metodo_pago.nombre }}</td></tr>
+                            <tr><th>Modalidad</th><td>{{ transaccion.modalidad }}</td></tr>
+                            {% if transaccion.moneda_destino %}
+                            <tr><th>Divisa recibida</th><td>{{ transaccion.moneda_destino.codigo }}</td></tr>
+                            <tr><th>Tasa de la divisa recibida</th><td>{{ transaccion.tasa_cambio_destino|floatformat:2 }}</td></tr>
+                            <tr><th>Cantidad recibida</th><td>{{ transaccion.cantidad_destino|floatformat:2 }}</td></tr>
+                            {% endif %}
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="text-center mt-4">
+            {% if puede_descargar %}
+                <a href="{% url 'descargar_factura_pdf' factura.id %}" class="btn btn-success">Descargar PDF</a>
+            {% endif %}
+            {% if puede_descargar_nota %}
+                <a href="{% url 'descargar_nota_credito_pdf' factura.id %}" class="btn btn-outline-danger">Descargar nota de crédito</a>
+            {% endif %}
+            <a href="{% url 'lista_facturas' %}" class="btn btn-outline-secondary">Volver al listado</a>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

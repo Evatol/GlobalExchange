@@ -16,6 +16,7 @@
 services:
   postgres:
     image: postgres:16
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME:-Global_Exchange}
       POSTGRES_USER: ${DB_USER:-postgres}
@@ -30,6 +31,7 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:latest
+    restart: unless-stopped
     command: start-dev
     environment:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-admin}
@@ -43,9 +45,18 @@ services:
   web:
     build: .
     command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3
+    restart: unless-stopped
     depends_on:
-      - postgres
-      - keycloak
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/divisas/')" ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     environment:
       DEBUG: "False"
       ALLOWED_HOSTS: 127.0.0.1,localhost
@@ -83,6 +94,22 @@ services:
       # el pago externo. Con un proveedor real (o plata de verdad) debe ir en "false":
       # deja "pagar" sin pagar.
       PASARELA_SIMULADA_ACTIVA: ${PASARELA_SIMULADA_ACTIVA:-true}
+      # Stripe (apps.pasarela.stripe_pago), con claves de PRUEBA. Salen del .env de
+      # quien levanta el compose (git lo ignora y .dockerignore no lo mete en la
+      # imagen): nunca van en el repositorio. Sin STRIPE_SECRET_KEY no hay Stripe y
+      # las compras siguen con la pasarela simulada.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+
+      # Facturación electrónica (apps.facturacion). Por defecto el proveedor simulado,
+      # que no necesita nada. Con Factura Segura, el token sale del .env de quien
+      # levanta el compose (nunca va en el repositorio). Ver docs/facturacion.md.
+      FACTURACION_PROVEEDOR: ${FACTURACION_PROVEEDOR:-simulado}
+      FACTURA_SEGURA_TOKEN: ${FACTURA_SEGURA_TOKEN:-}
+      FACTURA_SEGURA_URL: ${FACTURA_SEGURA_URL:-https://apitest.facturasegura.com.py/misife00/v1/esi}
+      FACTURACION_SIMULADOR_DISPONIBLE: ${FACTURACION_SIMULADOR_DISPONIBLE:-true}
+      FACTURACION_ENVIAR_CORREO: ${FACTURACION_ENVIAR_CORREO:-true}
 
       # Sin TLS real en este ambiente (ver nota arriba del archivo).
       SECURE_SSL_REDIRECT: "False"

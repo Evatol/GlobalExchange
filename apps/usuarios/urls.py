@@ -16,6 +16,7 @@ from .views import (
     mi_perfil_view,
     mis_clientes,
     seleccionar_cliente_view,
+    usuario_bloqueo_view,
 )
 
 router = DefaultRouter()
@@ -30,6 +31,11 @@ urlpatterns = [
     path('cliente-activo/', cliente_activo, name='cliente_activo'),
     path('roles/', gestion_roles_view, name='gestion_roles'),
     path('roles/asignar/', asignar_rol_view, name='asignar_rol'),
+    path(
+        'roles/<str:username>/bloqueo/',
+        usuario_bloqueo_view,
+        name='usuario_bloqueo',
+    ),
 
     # Pantalla propia de gestión de Clientes (HTML), con asociación de
     # usuarios (RF42) incluida. Administrador/analista.

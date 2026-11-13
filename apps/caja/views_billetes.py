@@ -141,7 +141,9 @@ class CajaViewSet(
       opcional (ver ``CerrarCajaSerializer``).
     """
 
-    queryset = Caja.objects.select_related('sucursal', 'cajero').order_by('sucursal__nombre', 'id')
+    queryset = Caja.objects.filter(terminal__isnull=True).select_related(
+        'sucursal', 'cajero'
+    ).order_by('sucursal__nombre', 'id')
     serializer_class = CajaSerializer
     permission_classes = [SoloAdministrador]
 

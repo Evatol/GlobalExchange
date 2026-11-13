@@ -1,6 +1,7 @@
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
+from django.views.decorators.http import require_POST
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
@@ -154,6 +155,20 @@ def asignar_rol_view(request):
         rol = request.POST.get('rol')
         if username and rol in services.ROLES_NEGOCIO:
             services.asignar_rol_negocio(username, rol)
+    return redirect('gestion_roles')
+
+
+@login_required
+@require_POST
+def usuario_bloqueo_view(request, username):
+    """Bloquea o desbloquea un perfil de negocio; no modifica Keycloak."""
+    if not _es_administrador(request.user):
+        raise PermissionDenied('Esta acción es solo para administradores.')
+    perfil = get_object_or_404(Usuario, username=username)
+    valor = request.POST.get('bloqueado')
+    if valor not in ('true', 'false'):
+        raise PermissionDenied('El estado de bloqueo solicitado no es válido.')
+    perfil.actualizar_bloqueo(valor == 'true')
     return redirect('gestion_roles')
 
 

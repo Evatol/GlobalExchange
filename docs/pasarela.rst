@@ -12,6 +12,14 @@ pasarela.apps module
    :show-inheritance:
    :undoc-members:
 
+pasarela.stripe\_pago module
+----------------------------
+
+.. automodule:: apps.pasarela.stripe_pago
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 pasarela.tests module
 ---------------------
 

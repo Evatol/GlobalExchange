@@ -47,7 +47,6 @@ class Sucursal(models.Model):
     def consultar_cajas(self):
         return self.cajas.all()
 
-
     def __str__(self):
         return self.nombre
 
@@ -58,6 +57,7 @@ class Sucursal(models.Model):
     def desactivar(self):
         self.estado = False
         self.save()
+
 
 class Caja(models.Model):
     id = models.AutoField(primary_key=True)
@@ -96,6 +96,11 @@ class Caja(models.Model):
                     {'cajero': 'El cajero no está asignado a la sucursal de esta caja.'}
                 )
 
+    def validar_abierta(self):
+        """Validación Tickets E4-196 y E4-197: Impide operar o anular sobre una caja cerrada."""
+        if self.estado == 'CERRADA':
+            raise ValidationError('La caja se encuentra cerrada.')
+
     def abrir(self):
         # La apertura de RF106 (fecha, carga inicial de billetes) pasa por
         # apps.caja.services.abrir_caja; este método queda por compatibilidad.
@@ -111,6 +116,32 @@ class Caja(models.Model):
 
     def __str__(self):
         return f'Caja #{self.id}'
+
+
+class Terminal(models.Model):
+    """Punto de autoservicio con caja e inventario de billetes propios."""
+
+    ACTIVA = 'ACTIVA'
+    INACTIVA = 'INACTIVA'
+    MANTENIMIENTO = 'MANTENIMIENTO'
+    ESTADOS = [
+        (ACTIVA, 'Activa'),
+        (INACTIVA, 'Inactiva'),
+        (MANTENIMIENTO, 'Mantenimiento'),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    nombre = models.CharField(max_length=100, unique=True)
+    sucursal = models.ForeignKey(
+        Sucursal, on_delete=models.PROTECT, related_name='terminales'
+    )
+    estado = models.CharField(max_length=20, choices=ESTADOS, default=ACTIVA)
+    caja = models.OneToOneField(
+        Caja, on_delete=models.PROTECT, related_name='terminal'
+    )
+
+    def __str__(self):
+        return self.nombre
 
 
 class Billete(models.Model):
@@ -162,6 +193,18 @@ class StockBillete(models.Model):
     def subtotal(self):
         return self.billete.denominacion * self.cantidad
 
+    def descontar(self, cantidad_a_descontar):
+        """Ticket E4-197: Disminuye el stock físico. Lanza error si no hay suficiente."""
+        if cantidad_a_descontar > self.cantidad:
+            raise ValidationError(f'Stock insuficiente para el billete de {self.billete}.')
+        self.cantidad -= cantidad_a_descontar
+        self.save()
+
+    def incrementar(self, cantidad_a_incrementar):
+        """Tickets E4-194/E4-196: Aumenta el stock físico (usado al recibir billetes o anular)."""
+        self.cantidad += cantidad_a_incrementar
+        self.save()
+
     def __str__(self):
         return f'{self.caja} - {self.billete}: {self.cantidad}'
 
@@ -208,6 +251,7 @@ class MovimientoBillete(models.Model):
 
     def __str__(self):
         return f'Movimiento #{self.id}'
+
 
 class AsignacionCajero(models.Model):
     """Vincula un usuario cajero con una sucursal presencial (RF105, RF109).
@@ -300,6 +344,7 @@ class DetalleArqueo(models.Model):
     def diferencia(self):
         return self.cantidad_contada - self.cantidad_esperada
 
+
 class CierreCaja(models.Model):
     """Cierre de una caja (E4-100): foto del balance de la sesión que termina.
 
@@ -361,8 +406,8 @@ class LimiteStock(models.Model):
     ``denominación × cantidad`` de sus billetes, en la propia moneda (no en
     guaraníes). Un límite vacío (``None``) significa "sin límite de ese lado".
 
-    * ``BAJO``: el stock llegó al mínimo o quedó por debajo (``stock <= minimo``).
-    * ``ALTO``: el stock llegó al máximo o lo superó (``stock >= maximo``).
+    - ``BAJO``: el stock llegó al mínimo o quedó por debajo (``stock <= minimo``).
+    - ``ALTO``: el stock llegó al máximo o lo superó (``stock >= maximo``).
     """
 
     NIVEL_BAJO = 'BAJO'

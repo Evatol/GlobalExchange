@@ -5,6 +5,8 @@ from urllib.parse import urlencode
 from django.conf import settings
 from django.urls import reverse
 
+from . import sesion
+
 
 def provider_logout_url(request):
     """Devuelve la URL de logout de Keycloak a la que redirigir tras el logout local.
@@ -12,13 +14,27 @@ def provider_logout_url(request):
     ``mozilla-django-oidc`` la invoca desde ``OIDCLogoutView.post()`` (setting
     ``OIDC_OP_LOGOUT_URL_METHOD``). El objetivo es cerrar también la sesión SSO en
     Keycloak y volver a ``LOGOUT_REDIRECT_URL``; como ese destino no está logueado,
-    el usuario termina viendo de nuevo la pantalla de login de Keycloak.
+    el usuario termina viendo de nuevo la pantalla de login de Keycloak. En una sesión
+    de quiosco vuelve a la pantalla de inicio de la terminal.
 
     Se manda ``id_token_hint`` cuando está disponible (logout sin pantalla de
     confirmación); si no, se manda ``client_id`` para que Keycloak valide el
     ``post_logout_redirect_uri``.
     """
-    redirect_uri = request.build_absolute_uri(settings.LOGOUT_REDIRECT_URL)
+    terminal_id = sesion.terminal_activa(request)
+    if terminal_id is not None:
+        # Sesión de quiosco (E4-193): al cerrar, ya sea por el botón o por inactividad,
+        # se vuelve a la pantalla de inicio de la terminal, lista para el próximo cliente.
+        return url_de_cierre_de_sesion(request, reverse('terminal_inicio', args=[terminal_id]))
+    return url_de_cierre_de_sesion(request, settings.LOGOUT_REDIRECT_URL)
+
+
+def url_de_cierre_de_sesion(request, destino):
+    """URL de logout de Keycloak que, al terminar, vuelve a ``destino`` (una ruta de la
+    aplicación). La usa el autoservicio para volver a su pantalla de inicio al cerrar la
+    sesión de un cliente. Hay que pedirla antes de cerrar la sesión local, porque el
+    ``id_token`` sale de ella."""
+    redirect_uri = request.build_absolute_uri(destino)
     params = {'post_logout_redirect_uri': redirect_uri}
 
     id_token = request.session.get('oidc_id_token')
